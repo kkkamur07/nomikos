@@ -534,19 +534,58 @@ def _envelope(pieces: list[Polygon]) -> tuple[Polygon, Polygon]:
     return upper, lower
 
 
-def merge_polygons(primary: Polygon, fragment: Polygon) -> Polygon:
-    """One outline around two pieces of the same text line.
+def convex_hull(points: Polygon) -> Polygon:
+    """The smallest convex ring around a cloud of points, counter-clockwise.
 
-    Not a general polygon union, and it does not need to be. The two inputs are
-    already known to sit on one baseline, so the merged outline is the top edge
-    of both pieces followed by the bottom edge of both, walked back. Joining the
-    chains bridges the gap by construction, which is the part that matters: the
-    reference implementation had to add an explicit bridging band because a
-    buffer round trip on its own silently dropped the fragment.
+    Andrew's monotone chain, which needs no dependency and no tolerance. This is
+    only ever the fallback: an envelope hugs a text line far more tightly, and a
+    hull over a curved line swallows whatever sits inside its bulge. It is here
+    because the fallback has to stay a *simple* polygon once more than two pieces
+    can be handed in, and concatenating the pieces does not.
     """
-    upper, lower = _envelope([primary, fragment])
+    unique = sorted({(float(point[0]), float(point[1])) for point in points})
+    if len(unique) < 3:
+        return [[round(x, 1), round(y, 1)] for x, y in unique]
+
+    def turn(origin: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - origin[0]) * (b[1] - origin[1]) - (a[1] - origin[1]) * (b[0] - origin[0])
+
+    def chain(ordered: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for point in ordered:
+            while len(out) >= 2 and turn(out[-2], out[-1], point) <= 0:
+                out.pop()
+            out.append(point)
+        return out
+
+    hull = chain(unique)[:-1] + chain(unique[::-1])[:-1]
+    return [[round(x, 1), round(y, 1)] for x, y in hull]
+
+
+def merge_polygon_group(pieces: list[Polygon]) -> Polygon:
+    """One outline around any number of pieces of one text line.
+
+    Not a general polygon union, and it does not need to be. The pieces are
+    already known to belong together, so the merged outline is the top edge of
+    all of them followed by the bottom edge of all of them, walked back. Joining
+    the chains bridges the gaps by construction, which is the part that matters:
+    the reference implementation had to add an explicit bridging band because a
+    buffer round trip on its own silently dropped the fragment.
+
+    Where the pieces touch or overlap this is their union; where they do not it
+    is the union plus the columns between them, which is tighter than a hull and
+    is what someone merging a broken line is asking for. The hull is the
+    fallback for the degenerate case where every point shares one x and there is
+    no envelope to build.
+    """
+    usable = [piece for piece in pieces if len(piece) >= 3]
+    if not usable:
+        return _dedupe([[round(p[0], 1), round(p[1], 1)] for piece in pieces for p in piece])
+    if len(usable) == 1:
+        return _dedupe([[round(p[0], 1), round(p[1], 1)] for p in usable[0]])
+    upper, lower = _envelope(usable)
     if len(upper) < 2:
-        return _dedupe([[round(p[0], 1), round(p[1], 1)] for p in primary + fragment])
+        return convex_hull([point for piece in usable for point in piece])
     # Where the outline is a single point tall the two chains meet at one
     # vertex. At the two outer ends that is the ring's turning point and is
     # walked once, on the way out. Anywhere in between it belongs to neither
@@ -565,6 +604,11 @@ def merge_polygons(primary: Polygon, fragment: Polygon) -> Polygon:
     return _dedupe([[round(p[0], 1), round(p[1], 1)] for p in merged])
 
 
+def merge_polygons(primary: Polygon, fragment: Polygon) -> Polygon:
+    """The two-piece case, which is all the fragment finder ever offers."""
+    return merge_polygon_group([primary, fragment])
+
+
 def _dedupe(points: Polygon) -> Polygon:
     out: Polygon = []
     for point in points:
@@ -575,11 +619,15 @@ def _dedupe(points: Polygon) -> Polygon:
     return out
 
 
-def merge_baselines(primary: Polygon, fragment: Polygon) -> Polygon:
-    """Both baselines as one, left to right, without near-duplicate points."""
+def merge_baseline_group(baselines: list[Polygon]) -> Polygon:
+    """Every baseline as one, left to right, without near-duplicate points.
+
+    A piece with no baseline of its own contributes nothing rather than a
+    placeholder, so merging a line with a stray blot that kraken gave no
+    baseline leaves the line's own baseline intact.
+    """
     points = sorted(
-        [[float(p[0]), float(p[1])] for p in primary]
-        + [[float(p[0]), float(p[1])] for p in fragment]
+        [[float(p[0]), float(p[1])] for baseline in baselines for p in baseline if len(p) == 2]
     )
     if not points:
         return []
@@ -590,6 +638,11 @@ def merge_baselines(primary: Polygon, fragment: Polygon) -> Polygon:
     if len(out) < 2:
         out = [points[0], points[-1]]
     return [[round(p[0], 1), round(p[1], 1)] for p in out]
+
+
+def merge_baselines(primary: Polygon, fragment: Polygon) -> Polygon:
+    """The two-piece case, which is all the fragment finder ever offers."""
+    return merge_baseline_group([primary, fragment])
 
 
 def find_fragments(segments: list[Segment], stats: PageStats) -> list[FragmentMerge]:
