@@ -27,6 +27,13 @@ baseline from one this module invented.
 
 ``BASELINE_HEIGHT_FRACTION`` is measured, not guessed: see
 ``docs/inference/training-data-loop.md``.
+
+Everything leaves here as **integers**. PAGE's ``PointsType`` is a list of
+integer pairs, and kraken's ``parse_page_coords`` calls ``int()`` on each
+component, so a single ``330.52`` makes the whole file unreadable. Rounding is
+done here rather than in the formatter because rounding is not a display choice:
+it can collapse two baseline vertices onto one x, or a polygon onto a line, and
+the invariants those would break are this module's to keep.
 """
 
 from __future__ import annotations
@@ -64,33 +71,135 @@ _COLLINEAR_TOLERANCE = 0.5
 
 @dataclass(frozen=True)
 class LineExportGeometry:
-    """The two point lists one ``TextLine`` is written from."""
+    """The two point lists one ``TextLine`` is written from, in integer pixels."""
 
-    coords: list[list[float]]
-    baseline: list[list[float]]
+    coords: list[list[int]]
+    baseline: list[list[int]]
     baseline_derived: bool
 
 
-def resolve_line_geometry(line: object) -> LineExportGeometry:
-    """The polygon and the baseline to export for ``line``.
+def resolve_line_geometry(
+    line: object, *, bounds: tuple[int, int] | None = None
+) -> LineExportGeometry:
+    """The polygon and the baseline to export for ``line``, rounded to whole pixels.
 
     ``Coords`` prefers the mask, because that is the boundary the editor shows and
     the one a human corrects; ``line.points`` is the fallback, and a degenerate
     geometry of one or two points is squared off into its bounding rectangle so the
     element is never written with fewer vertices than a polygon has.
+
+    ``bounds`` is the page's ``(width, height)`` when it is known. Coordinates are
+    clamped into it: a vertex a few pixels off the edge of the scan is a vertex no
+    trainer can crop to, and the schema has nothing to say about it.
     """
     mask_points = geometry_points(getattr(line, "mask", None))
     raw_points = _as_points(getattr(line, "points", None))
-    coords = _as_polygon(mask_points or raw_points)
+    coords = quantize_polygon(_as_polygon(mask_points or raw_points), bounds=bounds)
+    # The same polygon the file will carry, in the float form the geometry helpers
+    # work in. Every test below is made against this one rather than the unrounded
+    # input, so an invariant that holds here holds in the exported file.
+    polygon = [[float(x), float(y)] for x, y in coords]
 
     stored = geometry_points(getattr(line, "baseline", None))
-    if _is_usable_baseline(stored, coords, mask_points, raw_points):
-        ordered = _clip_to_polygon(_left_to_right(stored), coords)
-        if len(ordered) >= 2:
-            return LineExportGeometry(coords=coords, baseline=ordered, baseline_derived=False)
+    if _is_usable_baseline(stored, polygon, mask_points, raw_points):
+        # Clipped against the *quantized* polygon, because that is the one the
+        # containment invariant has to hold against once both are written. The
+        # length is checked before quantizing as well as after: a baseline clipped
+        # away to nothing must fall through to a derived one, not be replaced by
+        # the two-point fallback, which would label a guess as a measurement.
+        clipped = _clip_to_polygon(_left_to_right(stored), polygon)
+        if len(clipped) >= 2:
+            ordered = quantize_baseline(clipped, coords)
+            if len(ordered) >= 2:
+                return LineExportGeometry(coords=coords, baseline=ordered, baseline_derived=False)
     return LineExportGeometry(
-        coords=coords, baseline=derive_baseline(coords), baseline_derived=True
+        coords=coords,
+        baseline=quantize_baseline(derive_baseline(polygon), coords),
+        baseline_derived=True,
     )
+
+
+def quantize_polygon(
+    points: list[list[float]], *, bounds: tuple[int, int] | None = None
+) -> list[list[int]]:
+    """Whole-pixel polygon vertices, still at least three of them.
+
+    Rounding can fold neighbouring vertices onto each other, and a simplified
+    kraken boundary that is only a pixel or two tall can round flat. Duplicates go
+    (kraken's own parser drops consecutive ones anyway), and anything left with
+    fewer than three distinct vertices is squared off into its bounding rectangle,
+    one pixel wide or tall at minimum.
+    """
+    rounded = _dedupe([_clamp([round(x), round(y)], bounds) for x, y in points])
+    if len(rounded) >= 3:
+        return rounded
+    return _clamped_rectangle(rounded, bounds)
+
+
+def quantize_baseline(baseline: list[list[float]], polygon: list[list[int]]) -> list[list[int]]:
+    """Whole-pixel baseline vertices that still read left to right, inside ``polygon``.
+
+    Three things can go wrong at once when a float baseline is rounded: two
+    vertices can land on the same x, which makes the polyline double back; a
+    vertex can round a half pixel outside the polygon it was measured inside; and
+    a short baseline can collapse to a single point. All three are fixed here
+    rather than discovered by a trainer.
+    """
+    if not polygon:
+        return [[round(x), round(y)] for x, y in baseline]
+    xs = [point[0] for point in polygon]
+    ys = [point[1] for point in polygon]
+    left, right = min(xs), max(xs)
+    top, bottom = min(ys), max(ys)
+
+    kept: list[list[int]] = []
+    for x, y in baseline:
+        point = [min(max(round(x), left), right), min(max(round(y), top), bottom)]
+        if kept and point[0] <= kept[-1][0]:
+            # Two vertices on one x. The first wins: dropping the later one keeps
+            # the run strictly increasing without moving anything off the line.
+            continue
+        kept.append(point)
+    if len(kept) >= 2:
+        return kept
+    y = min(max(round(top + BASELINE_HEIGHT_FRACTION * (bottom - top)), top), bottom)
+    return [[left, y], [right, y]] if right > left else [[left, y], [left + 1, y]]
+
+
+def _dedupe(points: list[list[int]]) -> list[list[int]]:
+    unique: list[list[int]] = []
+    for point in points:
+        if point not in unique:
+            unique.append(point)
+    return unique
+
+
+def _clamp(point: list[int], bounds: tuple[int, int] | None) -> list[int]:
+    x, y = point
+    if bounds is None:
+        return [x, y]
+    width, height = bounds
+    return [min(max(x, 0), max(width - 1, 0)), min(max(y, 0), max(height - 1, 0))]
+
+
+def _clamped_rectangle(points: list[list[int]], bounds: tuple[int, int] | None) -> list[list[int]]:
+    if not points:
+        return []
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    left, top = min(xs), min(ys)
+    right, bottom = max(max(xs), left + 1), max(max(ys), top + 1)
+    corners = [[left, top], [right, top], [right, bottom], [left, bottom]]
+    # Clamping could re-collapse the rectangle against the page edge, so a shape
+    # pinned to the boundary is nudged inwards instead of outwards.
+    if bounds is not None:
+        width, height = bounds
+        if right > width - 1:
+            left, right = max(width - 2, 0), max(width - 1, 1)
+        if bottom > height - 1:
+            top, bottom = max(height - 2, 0), max(height - 1, 1)
+        corners = [[left, top], [right, top], [right, bottom], [left, bottom]]
+    return corners
 
 
 def _is_usable_baseline(

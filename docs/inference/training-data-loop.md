@@ -76,8 +76,8 @@ Three write paths store something in `Line.baseline` that is not a measurement:
 * Nothing at all, on rows that predate those paths.
 
 All three are replaced at export time by a derived baseline, and the line is
-marked `custom="...; baseline:derived"` so a trainer can tell it from a
-measurement. The manifest counts them per page under
+marked `custom="nomikos {...; baseline:derived;}"` so a trainer can tell it from
+a measurement. The manifest counts them per page under
 `lines.derived_baseline`.
 
 **The fraction is 0.68 of the polygon's height, measured downwards from the top.**
@@ -127,6 +127,40 @@ invent a structure nobody drew. A page with two or more regions also gets a PAGE
 the regions as the 2019-07-15 schema requires. Lines belonging to no block go
 into a trailing `region_<part>_unassigned`.
 
+Every `TextRegion` carries a `Coords`, even a region holding no lines: kraken
+puts a boundary-less region in `missing_region_ids` and drops it, taking its
+lines with it, so a two-column page would read back as no regions at all. The
+boundary is the block's box when there is one, otherwise the bounding box of the
+lines inside, otherwise the page.
+
+### What kraken 7 will and will not parse
+
+Two rules that a schema validator does not state but kraken enforces, both found
+by running `kraken.lib.xml.XMLPage` over a real export:
+
+* **`custom` is Transkribus grammar**, `tag {key:value; key:value;}`.
+  `parse_page_custom` splits on `}` and then on `{` and unpacks two values, so a
+  bare `source:kraken; kind:polygon` raises `ValueError` and fails the whole
+  file, not just that line. Everything this export has to say about a line goes
+  under one `nomikos` tag: `custom="nomikos {source:manual; kind:polygon;
+  baseline:derived;}"`.
+* **Coordinates are integers.** PAGE's `PointsType` is integer pairs and kraken
+  calls `int()` on each component, so one decimal fails the file. Coordinates are
+  rounded, and clamped into the image, at the single place points are formatted.
+  Rounding can break the invariants that make a baseline a baseline, so it is
+  followed by: vertices that collapse onto one x are dropped, a polygon left with
+  fewer than three distinct vertices is squared off to its bounding rectangle,
+  and the baseline is pulled back inside the polygon's box.
+
+The tags kraken gives meaning to are deliberately **not** written. `structure
+{type:...;}` sets the class a segmenter trains per line or region, and there is
+no line typology in this data model to put there; `readingOrder {index:N;}`
+duplicates the `ReadingOrder` element, and kraken 7.1.1's line-level branch is
+unreachable anyway (it tests `'index' not in reg_cus['readingOrder']` against a
+list of dicts, which is always true). With no `structure` tag, `_get_type`
+returns its default, so **`ketos segtrain` sees every line as class `default`**
+and each region as its `type` attribute, `paragraph`.
+
 ## Checking an export
 
 Without kraken, in the test suite or a script:
@@ -138,6 +172,11 @@ result = validate_page_xml(open("0001.xml", "rb").read())
 assert result.problems == []
 ```
 
+It checks the shape of the file, never the manuscript. Lines with an empty
+`Unicode` are counted in `result.lines_without_text` rather than faulted: a page
+can be segmented and only half transcribed, and that export still trains a
+segmenter.
+
 With kraken 7, in an environment that has it (the repo deliberately does not
 depend on it):
 
@@ -146,7 +185,9 @@ python scripts/platform/check_page_xml_with_kraken.py path/to/unpacked-export/
 ```
 
 It loads each file with `kraken.lib.xml.XMLPage`, prints line and region counts,
-and names any line kraken reads without a baseline or a boundary.
+and names any line kraken reads without a baseline or a boundary. Run on kraken
+7.1.1 over the 33 recon pages, all 33 load with no findings and kraken counts
+back exactly what went in: 2831 lines and 33 regions.
 
 ## Training
 

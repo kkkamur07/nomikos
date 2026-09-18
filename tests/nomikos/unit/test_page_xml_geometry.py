@@ -15,6 +15,8 @@ import pytest
 from backend.annotation.application.page_xml_geometry import (
     BASELINE_HEIGHT_FRACTION,
     derive_baseline,
+    quantize_baseline,
+    quantize_polygon,
     resolve_line_geometry,
 )
 from backend.document.infrastructure.orm_models import LineGeometryKind, LineSource
@@ -55,7 +57,7 @@ def test_line_with_only_points_uses_them_as_coords_and_derives_a_baseline() -> N
 
     assert geometry.coords == BOX
     assert geometry.baseline_derived is True
-    assert [point[1] for point in geometry.baseline] == [113.6, 113.6]
+    assert [point[1] for point in geometry.baseline] == [114, 114]
 
 
 def test_hand_drawn_box_with_no_baseline_at_all_gets_one() -> None:
@@ -121,8 +123,9 @@ def test_a_baseline_overhanging_its_polygon_is_clipped_with_its_slope_kept() -> 
     )
 
     assert geometry.baseline_derived is False
-    # Cut at x=10 and x=110, with y interpolated along the original slope.
-    assert geometry.baseline == [[10.0, 108.0 + 10.0 / 12.0], [110.0, 108.0 + 110.0 / 12.0]]
+    # Cut at x=10 and x=110, with y interpolated along the original slope and
+    # then rounded: 108 + 10/12 -> 109, 108 + 110/12 -> 117.
+    assert geometry.baseline == [[10, 109], [110, 117]]
 
 
 def test_a_baseline_below_its_polygon_is_clamped_into_it() -> None:
@@ -130,7 +133,7 @@ def test_a_baseline_below_its_polygon_is_clamped_into_it() -> None:
         _line(points=BOX, baseline={"points": [[12.0, 118.0], [108.0, 128.0]]})
     )
 
-    assert [point[1] for point in geometry.baseline] == [118.0, 120.0]
+    assert [point[1] for point in geometry.baseline] == [118, 120]
 
 
 def test_a_baseline_entirely_beside_its_polygon_is_replaced_not_clipped() -> None:
@@ -155,6 +158,7 @@ def test_derived_baseline_sits_at_the_measured_fraction_of_the_height() -> None:
 
     expected = 100.0 + BASELINE_HEIGHT_FRACTION * 20.0
     assert all(point[1] == pytest.approx(expected) for point in baseline)
+    assert expected == pytest.approx(113.6)
 
 
 def test_derived_baseline_follows_a_sloping_polygon() -> None:
@@ -186,3 +190,69 @@ def test_a_straight_line_collapses_back_to_two_points() -> None:
 
 def test_a_degenerate_polygon_still_yields_two_points() -> None:
     assert len(derive_baseline([[5.0, 5.0], [5.0, 5.0], [5.0, 5.0]])) == 2
+
+
+def test_a_polygon_comes_out_as_whole_pixels() -> None:
+    """PAGE's PointsType is integer pairs, and kraken calls ``int()`` on every one."""
+    assert quantize_polygon([[10.4, 100.4], [110.6, 100.4], [110.6, 120.6], [9.6, 120.6]]) == [
+        [10, 100],
+        [111, 100],
+        [111, 121],
+        [10, 121],
+    ]
+
+
+def test_rounding_a_sliver_polygon_flat_squares_it_off() -> None:
+    """A one-pixel-tall boundary can round to a line, which is not a polygon any more."""
+    coords = quantize_polygon([[10.1, 100.2], [110.4, 100.1], [110.2, 100.4], [10.3, 100.3]])
+
+    assert len(coords) >= 3
+    assert {point[1] for point in coords} == {100, 101}
+
+
+def test_a_polygon_is_clamped_into_the_image() -> None:
+    coords = quantize_polygon(
+        [[-4.0, -2.0], [900.0, -2.0], [900.0, 900.0], [-4.0, 900.0]], bounds=(600, 800)
+    )
+
+    assert coords == [[0, 0], [599, 0], [599, 799], [0, 799]]
+
+
+def test_a_polygon_pinned_to_the_page_edge_keeps_three_points() -> None:
+    coords = quantize_polygon([[599.4, 799.2], [599.6, 799.4]], bounds=(600, 800))
+
+    assert len(coords) >= 3
+    assert all(0 <= x <= 599 and 0 <= y <= 799 for x, y in coords)
+
+
+_BOX = [[10, 100], [110, 100], [110, 120], [10, 120]]
+
+
+def test_baseline_vertices_that_round_onto_one_x_are_dropped() -> None:
+    """Rounding must not make the polyline double back on itself."""
+    baseline = quantize_baseline([[12.4, 114.0], [12.4, 115.0], [108.0, 115.0]], _BOX)
+
+    assert baseline == [[12, 114], [108, 115]]
+    assert all(
+        later[0] > earlier[0] for earlier, later in zip(baseline, baseline[1:], strict=False)
+    )
+
+
+def test_a_baseline_rounded_outside_its_polygon_is_pulled_back_in() -> None:
+    baseline = quantize_baseline([[9.6, 120.4], [110.4, 120.4]], _BOX)
+
+    assert baseline == [[10, 120], [110, 120]]
+
+
+def test_a_baseline_that_collapses_to_one_point_is_rebuilt() -> None:
+    """Better a derived segment across the polygon than a one-point Baseline."""
+    baseline = quantize_baseline([[12.1, 114.0], [12.2, 114.0]], _BOX)
+
+    assert baseline == [[10, 114], [110, 114]]
+
+
+def test_a_baseline_in_a_polygon_one_pixel_wide_still_has_two_points() -> None:
+    baseline = quantize_baseline([[10.0, 100.0]], [[10, 100], [10, 101], [11, 101]])
+
+    assert len(baseline) == 2
+    assert baseline[1][0] > baseline[0][0]

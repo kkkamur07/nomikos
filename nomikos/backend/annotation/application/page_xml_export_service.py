@@ -27,7 +27,12 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.annotation.application.page_xml_geometry import resolve_line_geometry
+from backend.annotation.application.line_geometry import geometry_points
+from backend.annotation.application.page_xml_geometry import (
+    LineExportGeometry,
+    quantize_polygon,
+    resolve_line_geometry,
+)
 from backend.core.exceptions import NotFoundError
 from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
@@ -266,32 +271,47 @@ class PageXmlExportService:
         if len(grouped) > 1:
             _append_reading_order(page, [region_id for region_id, _ in grouped])
 
+        bounds = (width, height) if width is not None and height is not None else None
         counts = PageLineCounts()
-        for region_id, region_lines in grouped:
+        for (region_id, region_lines), block in zip(
+            grouped, _blocks_for(grouped, blocks), strict=True
+        ):
             region = SubElement(
                 page,
                 _page_tag("TextRegion"),
                 {"id": region_id, "type": "paragraph"},
             )
-            for line in region_lines:
-                counts = self._append_text_line(region, line, counts)
+            geometries = [resolve_line_geometry(line, bounds=bounds) for line in region_lines]
+            # ``Coords`` first: PAGE fixes the order of a TextRegion's children, and
+            # kraken drops a region that has none at all, which would make a
+            # two-column page read back as zero regions.
+            SubElement(
+                region,
+                _page_tag("Coords"),
+                {"points": _points(_region_polygon(block, geometries, bounds))},
+            )
+            for line, geometry in zip(region_lines, geometries, strict=True):
+                counts = self._append_text_line(region, line, geometry, counts)
 
         return tostring(root, encoding="utf-8", xml_declaration=True), counts
 
     def _append_text_line(
-        self, region: Element, line: Line, counts: PageLineCounts
+        self,
+        region: Element,
+        line: Line,
+        geometry: LineExportGeometry,
+        counts: PageLineCounts,
     ) -> PageLineCounts:
-        geometry = resolve_line_geometry(line)
-        custom = f"source:{line.source.value}; kind:{line.kind.value}"
+        values = [f"source:{line.source.value}", f"kind:{line.kind.value}"]
         if geometry.baseline_derived:
             # The one claim in this file a trainer must be able to distrust. A
             # derived baseline is a guess from the polygon, so it is labelled here
             # rather than left to look like a measurement.
-            custom = f"{custom}; baseline:derived"
+            values.append("baseline:derived")
         text_line = SubElement(
             region,
             _page_tag("TextLine"),
-            {"id": f"line_{line.id}", "custom": custom},
+            {"id": f"line_{line.id}", "custom": _custom(values)},
         )
         SubElement(text_line, _page_tag("Coords"), {"points": _points(geometry.coords)})
         if geometry.baseline:
@@ -352,14 +372,84 @@ def _xsi_tag(name: str) -> str:
     return str(QName(XSI_NAMESPACE, name))
 
 
-def _points(points: list[list[float]]) -> str:
-    return " ".join(f"{_format_coord(point[0])},{_format_coord(point[1])}" for point in points)
+def _points(points: list[list[int]]) -> str:
+    """A PAGE ``points`` attribute: whole pixels, always.
+
+    ``PointsType`` in the schema is a list of integer pairs, and kraken's
+    ``parse_page_coords`` calls ``int()`` on each component, so one ``330.52``
+    makes the file unreadable rather than slightly imprecise. The rounding itself
+    happens in ``page_xml_geometry``, where the invariants it can break are kept;
+    this is the guard that nothing reaches the attribute without it.
+    """
+    return " ".join(f"{round(point[0])},{round(point[1])}" for point in points)
 
 
-def _format_coord(value: float) -> str:
-    if float(value).is_integer():
-        return str(int(value))
-    return str(value)
+#: The tag every ``custom`` string this exporter writes lives under.
+#:
+#: PAGE says nothing about what goes in ``custom``; the de-facto grammar is
+#: Transkribus's ``tag {key:value; key:value;} tag2 {...}``, and kraken's
+#: ``parse_page_custom`` implements exactly that, splitting on ``}`` and then on
+#: ``{``. A bare ``source:manual; kind:polygon`` has no braces, so that split
+#: raises and the whole file fails to load. Our keys sit under our own tag name
+#: so that they cannot collide with the two tags kraken gives meaning to.
+_CUSTOM_TAG = "nomikos"
+
+
+def _custom(values: list[str]) -> str:
+    """``nomikos {source:manual; kind:polygon;}`` - the grammar kraken can parse.
+
+    Deliberately *only* this tag. kraken reads ``structure {type:...;}`` as the
+    line or region class and ``readingOrder {index:N;}`` as an explicit order, and
+    we emit neither:
+
+    * ``structure`` on a line would set the segmenter's class for that line.
+      Nothing in this data model records a line typology, and with no
+      ``structure`` kraken's ``_get_type`` already returns ``default``, so
+      emitting ``structure {type:default;}`` would add a claim without adding
+      information. On a region kraken only consults it when the region carries no
+      ``type`` attribute, and ours always carries ``type="paragraph"``.
+    * ``readingOrder`` duplicates the PAGE ``ReadingOrder`` element we already
+      write, which kraken parses. At line level kraken 7.1.1 cannot act on it
+      anyway: it tests ``'index' not in reg_cus['readingOrder']`` against a list
+      of dicts, which is always true, so the branch only logs.
+    """
+    body = "".join(f"{value}; " for value in values).rstrip()
+    return f"{_CUSTOM_TAG} {{{body}}}"
+
+
+def _blocks_for(grouped: list[tuple[str, list[Line]]], blocks: list[Block]) -> list[Block | None]:
+    """The block behind each region, or ``None`` for one this export synthesised."""
+    by_region = {f"region_{block.id}": block for block in blocks}
+    return [by_region.get(region_id) for region_id, _ in grouped]
+
+
+def _region_polygon(
+    block: Block | None,
+    geometries: list[LineExportGeometry],
+    bounds: tuple[int, int] | None,
+) -> list[list[int]]:
+    """The boundary a ``TextRegion`` carries.
+
+    The block's own box when there is one, because that is the shape somebody drew
+    or the segmenter emitted. Otherwise the bounding box of the lines inside,
+    which is the honest answer for a region this export invented to hold lines
+    that belong to no block. A region with neither falls back to the page.
+    """
+    box = quantize_polygon(geometry_points(getattr(block, "box", None)), bounds=bounds)
+    if len(box) >= 3:
+        return box
+    corners = [point for geometry in geometries for point in geometry.coords]
+    if corners:
+        xs = [x for x, _ in corners]
+        ys = [y for _, y in corners]
+        return [
+            [min(xs), min(ys)],
+            [max(xs), min(ys)],
+            [max(xs), max(ys)],
+            [min(xs), max(ys)],
+        ]
+    width, height = bounds if bounds is not None else (1, 1)
+    return [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]]
 
 
 def _group_lines_by_region(

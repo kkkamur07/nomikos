@@ -34,6 +34,11 @@ class PageXmlValidation:
     line_count: int = 0
     region_count: int = 0
     derived_baseline_count: int = 0
+    #: Lines whose ``TextEquiv/Unicode`` is present but empty. Counted, not faulted:
+    #: a page can be segmented and only half transcribed, and that export is still a
+    #: valid file and still trains a segmenter. A recognition run is what cares, so
+    #: it gets a number to filter on rather than a failed file.
+    lines_without_text: int = 0
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -70,6 +75,15 @@ def validate_page_xml(xml: bytes | str) -> PageXmlValidation:
     _check_reading_order(page, regions, result)
 
     for region in regions:
+        region_id = region.get("id") or "<unnamed region>"
+        _check_custom(region, region_id, result)
+        region_coords = region.find("p:Coords", _NS)
+        if region_coords is None:
+            # kraken drops a region with no boundary, so a page that looks like two
+            # columns here reads back as zero regions there.
+            result.problems.append(f"{region_id}: TextRegion has no Coords")
+        else:
+            _check_integer_points(region_coords, region_id, result)
         for text_line in region.findall("p:TextLine", _NS):
             result.line_count += 1
             _check_text_line(text_line, result)
@@ -94,11 +108,60 @@ def _check_reading_order(page: Element, regions: list[Element], result: PageXmlV
         result.problems.append(f"ReadingOrder omits regions {sorted(str(m) for m in missing)}")
 
 
+#: The tags kraken's ``page.py`` acts on. Writing one is a claim about the line or
+#: region class, or about reading order, so an exporter has to mean it.
+_KRAKEN_TAGS = frozenset({"structure", "readingOrder", "split"})
+
+
+def _check_custom(element: Element, label: str, result: PageXmlValidation) -> dict[str, str]:
+    """``custom`` parses under the Transkribus grammar kraken implements.
+
+    kraken's ``parse_page_custom`` splits on ``}`` and then on ``{``, so a
+    brace-less string raises ``ValueError`` and takes the whole file down with it.
+    That is not something it recovers from, which is why this is a problem and not
+    a note.
+    """
+    custom = element.get("custom")
+    if custom is None:
+        return {}
+    values: dict[str, str] = {}
+    for chunk in (part for part in custom.split("}") if part.strip()):
+        if "{" not in chunk:
+            result.problems.append(f"{label}: custom {custom!r} is not `tag {{key:value;}}`")
+            return {}
+        tag, _, body = chunk.partition("{")
+        if tag.strip() in _KRAKEN_TAGS:
+            result.problems.append(f"{label}: custom claims the kraken tag {tag.strip()!r}")
+        for pair in (item.strip() for item in body.split(";") if item.strip()):
+            key, _, value = pair.partition(":")
+            values[key.strip()] = value.strip()
+    return values
+
+
+def _check_integer_points(element: Element | None, label: str, result: PageXmlValidation) -> None:
+    """PAGE's ``PointsType`` is integer pairs, and kraken calls ``int()`` on each one.
+
+    A float coordinate is not a rounding difference to a reader, it is a
+    ``ValueError`` that fails the file.
+    """
+    if element is None:
+        return
+    for pair in (element.get("points") or "").split():
+        for component in pair.split(","):
+            try:
+                int(component)
+            except ValueError:
+                result.problems.append(f"{label}: non-integer coordinate {component!r}")
+                return
+
+
 def _check_text_line(text_line: Element, result: PageXmlValidation) -> None:
     line_id = text_line.get("id") or "<unnamed>"
-    custom = text_line.get("custom") or ""
-    if "baseline:derived" in custom:
+    if _check_custom(text_line, line_id, result).get("baseline") == "derived":
         result.derived_baseline_count += 1
+
+    _check_integer_points(text_line.find("p:Coords", _NS), line_id, result)
+    _check_integer_points(text_line.find("p:Baseline", _NS), line_id, result)
 
     coords = _points(text_line.find("p:Coords", _NS))
     if len(coords) < 3:
@@ -121,7 +184,7 @@ def _check_text_line(text_line: Element, result: PageXmlValidation) -> None:
     if unicode_element is None:
         result.problems.append(f"{line_id}: no TextEquiv/Unicode")
     elif not (unicode_element.text or "").strip():
-        result.problems.append(f"{line_id}: TextEquiv/Unicode is empty")
+        result.lines_without_text += 1
 
 
 def _points(element: Element | None) -> list[tuple[float, float]]:

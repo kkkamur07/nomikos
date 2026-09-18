@@ -213,7 +213,7 @@ def test_a_hand_drawn_box_gets_a_derived_baseline_marked_in_custom() -> None:
     text_line = root.find(".//p:TextLine", PAGE_NS)
     assert "baseline:derived" in text_line.get("custom")
     baseline = text_line.find("p:Baseline", PAGE_NS).get("points")
-    assert baseline == "1,113.6 99,113.6"
+    assert baseline == "1,114 99,114"
     assert counts.derived_baseline == 1
     assert counts.manual == 1
     assert counts.manual_geometry == 1
@@ -290,7 +290,8 @@ def test_an_empty_page_renders_one_empty_region_and_zero_counts() -> None:
 
     regions = root.findall(".//p:TextRegion", PAGE_NS)
     assert len(regions) == 1
-    assert list(regions[0]) == []
+    # A boundary but no lines: kraken drops a region that has no Coords at all.
+    assert [child.tag.split("}")[-1] for child in regions[0]] == ["Coords"]
     assert counts.total == 0
 
 

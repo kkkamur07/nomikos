@@ -7,8 +7,10 @@ from backend.annotation.application.page_xml_validation import (
     validate_page_xml,
 )
 
+_REGION_COORDS = '<Coords points="0,0 600,0 600,800 0,800"/>'
+
 _GOOD_LINE = """
-    <TextLine id="line_1" custom="source:kraken; kind:polygon">
+    <TextLine id="line_1" custom="nomikos {source:kraken; kind:polygon;}">
       <Coords points="10,100 110,100 110,120 10,120"/>
       <Baseline points="12,114 108,115"/>
       <TextEquiv><Unicode>ἐν ἀρχῇ</Unicode></TextEquiv>
@@ -17,7 +19,7 @@ _GOOD_LINE = """
 
 
 def _page(lines: str = _GOOD_LINE, *, reading_order: str = "", regions: str = "") -> str:
-    body = regions or f'<TextRegion id="r1">{lines}</TextRegion>'
+    body = regions or f'<TextRegion id="r1">{_REGION_COORDS}{lines}</TextRegion>'
     return (
         f'<?xml version="1.0" encoding="utf-8"?>'
         f'<PcGts xmlns="{PAGE_XML_NAMESPACE}">'
@@ -37,7 +39,7 @@ def test_a_well_formed_page_passes_and_is_counted() -> None:
 
 
 def test_a_derived_baseline_is_counted_from_the_custom_string() -> None:
-    line = _GOOD_LINE.replace("kind:polygon", "kind:polygon; baseline:derived")
+    line = _GOOD_LINE.replace("kind:polygon;", "kind:polygon; baseline:derived;")
 
     assert validate_page_xml(_page(line)).derived_baseline_count == 1
 
@@ -107,10 +109,14 @@ def test_a_baseline_outside_the_polygon_box_is_reported() -> None:
     )
 
 
-def test_a_line_without_text_is_reported() -> None:
+def test_a_line_without_text_is_counted_not_faulted() -> None:
+    """A segmented page can be only half transcribed, and that file is still valid."""
     line = _GOOD_LINE.replace("<Unicode>ἐν ἀρχῇ</Unicode>", "<Unicode></Unicode>")
 
-    assert "line_1: TextEquiv/Unicode is empty" in validate_page_xml(_page(line)).problems
+    result = validate_page_xml(_page(line))
+
+    assert result.ok
+    assert result.lines_without_text == 1
 
 
 def test_a_line_without_a_text_equiv_is_reported() -> None:
@@ -133,7 +139,10 @@ def test_a_reading_order_pointing_at_a_missing_region_is_reported() -> None:
 
 
 def test_a_reading_order_that_forgets_a_region_is_reported() -> None:
-    regions = f'<TextRegion id="r1">{_GOOD_LINE}</TextRegion><TextRegion id="r2"/>'
+    regions = (
+        f'<TextRegion id="r1">{_REGION_COORDS}{_GOOD_LINE}</TextRegion>'
+        f'<TextRegion id="r2">{_REGION_COORDS}</TextRegion>'
+    )
     reading_order = (
         '<ReadingOrder><OrderedGroup id="ro">'
         '<RegionRefIndexed index="0" regionRef="r1"/>'
@@ -154,3 +163,77 @@ def test_every_bad_line_is_reported_not_only_the_first() -> None:
 
     assert result.line_count == 3
     assert result.problems == ["line_2: no Baseline", "line_3: no Baseline"]
+
+
+def test_a_custom_string_without_braces_is_reported() -> None:
+    """The grammar kraken 7.1 implements, checked here so nobody needs kraken to find it.
+
+    ``parse_page_custom`` splits on ``{`` and unpacks two values, so the old
+    ``source:kraken; kind:polygon`` raised ValueError and failed the whole file.
+    """
+    line = _GOOD_LINE.replace(
+        'custom="nomikos {source:kraken; kind:polygon;}"',
+        'custom="source:kraken; kind:polygon"',
+    )
+
+    result = validate_page_xml(_page(line))
+
+    assert any("is not `tag {key:value;}`" in problem for problem in result.problems)
+
+
+def test_a_region_custom_without_braces_is_reported() -> None:
+    regions = (
+        f'<TextRegion id="r1" custom="type:paragraph">{_REGION_COORDS}{_GOOD_LINE}</TextRegion>'
+    )
+
+    result = validate_page_xml(_page(regions=regions))
+
+    assert any("r1: custom" in problem for problem in result.problems)
+
+
+def test_claiming_a_tag_kraken_acts_on_is_reported() -> None:
+    """``structure`` and ``readingOrder`` change what kraken thinks a line is."""
+    for tag in ("structure {type:default;}", "readingOrder {index:0;}"):
+        line = _GOOD_LINE.replace(
+            'custom="nomikos {source:kraken; kind:polygon;}"', f'custom="{tag}"'
+        )
+
+        result = validate_page_xml(_page(line))
+
+        assert any("custom claims the kraken tag" in problem for problem in result.problems)
+
+
+def test_a_fractional_coordinate_in_coords_is_reported() -> None:
+    """PAGE's PointsType is integer pairs, and kraken calls ``int()`` on each one."""
+    line = _GOOD_LINE.replace(
+        'points="10,100 110,100 110,120 10,120"', 'points="10,100.5 110,100 110,120 10,120"'
+    )
+
+    result = validate_page_xml(_page(line))
+
+    assert any("non-integer coordinate '100.5'" in problem for problem in result.problems)
+
+
+def test_a_fractional_coordinate_in_a_baseline_is_reported() -> None:
+    line = _GOOD_LINE.replace('points="12,114 108,115"', 'points="12,113.6 108,113.6"')
+
+    result = validate_page_xml(_page(line))
+
+    assert any("non-integer coordinate '113.6'" in problem for problem in result.problems)
+
+
+def test_a_fractional_coordinate_in_a_region_boundary_is_reported() -> None:
+    regions = f'<TextRegion id="r1"><Coords points="0,0 600,0 600,799.5 0,799.5"/>{_GOOD_LINE}</TextRegion>'
+
+    result = validate_page_xml(_page(regions=regions))
+
+    assert any("r1: non-integer coordinate '799.5'" in problem for problem in result.problems)
+
+
+def test_a_region_without_coords_is_reported() -> None:
+    """kraken drops a boundary-less region, and every line inside it goes with it."""
+    regions = f'<TextRegion id="r1">{_GOOD_LINE}</TextRegion>'
+
+    result = validate_page_xml(_page(regions=regions))
+
+    assert "r1: TextRegion has no Coords" in result.problems
