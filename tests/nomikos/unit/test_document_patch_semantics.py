@@ -17,6 +17,12 @@ from backend.document.api.schemas import BlockPatchRequest, LinePatchRequest
 from backend.document.application.document_access import PartContext
 from backend.document.application.layout_service import LayoutService
 from backend.document.infrastructure.orm_models import Block, Document, DocumentPart, Line
+from backend.users.infrastructure.orm_models import User
+
+
+def _user() -> User:
+    """A real user row: the service stamps ``updated_by`` with its id."""
+    return User(id=uuid.uuid4(), email="editor@example.test")
 
 
 class _Session:
@@ -96,7 +102,7 @@ async def test_patch_line_clears_block_id_when_explicitly_null(monkeypatch) -> N
 
     patched = await service.patch_part_line(
         _Session(),
-        object(),
+        _user(),
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -117,7 +123,7 @@ async def test_patch_line_leaves_block_id_alone_when_omitted(monkeypatch) -> Non
 
     patched = await service.patch_part_line(
         _Session(),
-        object(),
+        _user(),
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -146,7 +152,7 @@ async def test_patch_line_locks_the_part(monkeypatch) -> None:
 
     await service.patch_part_line(
         _Session(),
-        object(),
+        _user(),
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -168,7 +174,7 @@ async def test_delete_line_locks_the_part(monkeypatch) -> None:
     )
 
     await service.delete_part_line(
-        _Session(), object(), uuid.uuid4(), part.document_id, part.id, line.id
+        _Session(), _user(), uuid.uuid4(), part.document_id, part.id, line.id
     )
 
     assert repository.locks == 1

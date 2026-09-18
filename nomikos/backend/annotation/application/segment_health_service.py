@@ -174,6 +174,12 @@ class SegmentHealthService:
                     points=points,
                     source=original.source,
                     source_metadata=original.source_metadata,
+                    # Both halves of a split come from the same proposed line, so
+                    # both keep its origin. The provenance diff then reports one
+                    # corrected entry carrying two live ids, which is what a split
+                    # is, rather than one correction and one phantom human line.
+                    segmentation_run_id=original.segmentation_run_id,
+                    run_external_id=original.run_external_id,
                     manual_geometry=True,
                     order=original.order,
                 )

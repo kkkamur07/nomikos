@@ -181,6 +181,7 @@ class LayoutService:
             mask=mask or {"points": points},
             source=LineSource.manual,
             manual_geometry=True,
+            updated_by=user.id,
         )
         session.add(line)
         await session.commit()
@@ -217,6 +218,12 @@ class LayoutService:
             setattr(line, key, value)
         line.manual_geometry = True
         line.source = LineSource.manual
+        # ``updated_at`` looks after itself (``onupdate`` on the column); this is the
+        # half that needs a caller, and every path that sets it already holds the
+        # user. The origin columns are untouched on purpose: a line a human redrew is
+        # still the line the model proposed, and losing that link is exactly what
+        # made a correction indistinguishable from a fresh drawing.
+        line.updated_by = user.id
         await session.commit()
         return await self._line_or_404(session, part.id, line.id)
 
@@ -363,6 +370,12 @@ class LayoutService:
                 line.kraken_ceiling = prior.kraken_ceiling
             source_value = source.value if hasattr(source, "value") else source
             line.manual_geometry = source_value == "manual"
+            # A row that existed keeps its origin columns untouched, because they are
+            # not in ``LineUpsertRequest`` at all. ``source_metadata`` is, which is
+            # why the link does not live there: the editor posts the whole page on
+            # every save, so a client that sent its own metadata would otherwise
+            # rewrite the provenance of every line on the page.
+            line.updated_by = user.id
 
             await self._ground_truth.write(session, line, ground_truth, data.get("approved_text"))
 

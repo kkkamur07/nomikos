@@ -25,8 +25,14 @@ from backend.document.infrastructure.orm_models import (
     Transcription,
     TranscriptionKind,
 )
+from backend.users.infrastructure.orm_models import User
 
 _POINTS = [[10.0, 10.0], [40.0, 10.0], [40.0, 25.0], [10.0, 25.0]]
+
+
+def _user() -> User:
+    """A real user row: the service stamps ``updated_by`` with its id."""
+    return User(id=uuid.uuid4(), email="editor@example.test")
 
 
 class _Session:
@@ -127,7 +133,7 @@ async def test_replace_part_lines_defaults_kind_and_source_when_omitted(monkeypa
 
     lines = await service.replace_part_lines(
         session,
-        user=object(),
+        user=_user(),
         project_id=document.project_id,
         document_id=document.id,
         part_id=part.id,
@@ -148,7 +154,7 @@ async def test_replace_part_lines_still_honours_explicit_kind_and_source(monkeyp
 
     lines = await service.replace_part_lines(
         session,
-        user=object(),
+        user=_user(),
         project_id=document.project_id,
         document_id=document.id,
         part_id=part.id,
@@ -202,7 +208,7 @@ async def test_omitting_source_leaves_a_kraken_line_kraken(monkeypatch) -> None:
 
     lines = await service.replace_part_lines(
         session,
-        user=object(),
+        user=_user(),
         project_id=document.project_id,
         document_id=document.id,
         part_id=part.id,
@@ -226,7 +232,7 @@ async def test_an_explicit_source_still_overrides_an_existing_line(monkeypatch) 
 
     lines = await service.replace_part_lines(
         session,
-        user=object(),
+        user=_user(),
         project_id=document.project_id,
         document_id=document.id,
         part_id=part.id,
@@ -253,7 +259,7 @@ async def test_replace_part_lines_locks_the_part_before_it_reads(monkeypatch) ->
 
     await service.replace_part_lines(
         session,
-        user=object(),
+        user=_user(),
         project_id=document.project_id,
         document_id=document.id,
         part_id=part.id,

@@ -225,6 +225,13 @@ class TranscriptionService:
             )
             existing_by_line = {row.line_id: row for row in existing_result.scalars().all()}
 
+        # ``seeded_from_transcription_id`` is written on both branches and is the
+        # only record that this ground truth started as a model's guess. Later human
+        # edits go through ``GroundTruthText.write`` and ``patch_ground_truth_line_text``,
+        # which touch ``text`` and ``confidence`` and nothing else, so the note
+        # survives the corrections it is there to describe. Removing the ground truth
+        # removes the row and the note with it, which is correct: there is no longer
+        # an accepted text to attribute.
         for source_row in source_rows:
             target = existing_by_line.get(source_row.line_id)
             if target is None:
@@ -234,11 +241,13 @@ class TranscriptionService:
                         transcription_id=ground_truth.id,
                         text=source_row.text,
                         confidence=None,
+                        seeded_from_transcription_id=source.id,
                     )
                 )
             else:
                 target.text = source_row.text
                 target.confidence = None
+                target.seeded_from_transcription_id = source.id
 
         await session.commit()
         return copied_line_ids
