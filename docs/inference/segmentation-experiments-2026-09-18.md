@@ -5,6 +5,17 @@ the production entry point `nomikos_inference.architectures.blla.run_blla_segmen
 against the pinned `blla-segment@stable` artifact, so the V0 variant reproduces
 production exactly. Nothing here touched the production API.
 
+## What this run settled
+
+1. The scale hypothesis is refuted. Production is already at the right scale.
+   Upscaling and tiling make segmentation worse, not better. See "V5: the scale
+   curve".
+2. Orli beats the current segmenter by a wide margin on the same pages: F1 0.727
+   to 0.852, fragments 116 to 6, and exact column counts 0 of 28 to 25 of 28. It
+   is the largest result in this run. See "Orli".
+3. Post-processing filters on today's output are worth about 0.09 F1 (0.642 to
+   0.735 with crop plus F2, F1, F3). Useful, and much smaller than Orli.
+
 ## The question
 
 The standing hypothesis was:
@@ -51,7 +62,8 @@ the band BLLA was trained in; there was no starvation to fix.
 
 `scripts/segmentation/experiments/score.py` is a standalone CLI that scores any
 directory of predictions in the agreed JSON format. It knows nothing about
-kraken, so the Orli predictions at `out/orli/` score through the same code.
+kraken, so the Orli predictions at `out/orli-fixed/` score through the same
+code, against the same ground truth, with the same matching rule.
 
 A prediction matches a ground-truth line when their baselines overlap
 horizontally over at least half of the ground-truth extent and the median
@@ -201,6 +213,96 @@ Reading these:
   has Greek, Syriac and Armenian Calamari entries and **no Coptic recogniser**,
   so there is nothing to read a candidate line with.
 
+## Orli
+
+Orli (`mittagessen/orli`, Apache-2.0) is the kraken author's end-to-end line
+detector. It predicts baselines directly in reading order. The result here is
+conclusive and positive.
+
+### What we saw first, and why it was wrong
+
+The first attempt looked like a total failure. Orli generated the same line over
+and over until it hit the 200 line cap, and scored F1 0.065. That was not the
+model. It was a mismatch between the code and the published weights.
+
+Orli commit 7bf383e (2026-08-29) forced the curve refinement head to fp32 and
+changed the `inverse_sigmoid` clamp. The published weights (2026-06-05) were
+trained under bf16 semantics. Running those weights through the newer code
+changes the numerics enough that the decoder never emits a stop, so it loops.
+The author confirms this in https://github.com/mittagessen/orli/issues/10 and
+has promised re-fine-tuned weights. Those weights were not on Zenodo as of
+2026-09-18.
+
+### The working recipe
+
+| item | value |
+|---|---|
+| orli commit | 7996f29 (before the fp32 change) |
+| kraken | 7.0.3 |
+| precision | `bf16-true` |
+| device | Apple M4, MPS |
+| peak RSS | about 2.1 GB |
+
+`bf16-mixed` is a no-op here. Orli never enters an autocast region, so the
+mixed setting leaves the model in fp32 and the loop comes back. `bf16-true`
+casts the weights themselves and is the setting that works.
+
+### Measured result
+
+Same 10 pages for both sides: Vatican 1r, 1v, 2r, 2v, 3r and Napoli c 10, c 11,
+c 12, c 13, c 14. 851 ground-truth lines, 28 columns. Scored with the same
+`score.py` and the same matching rule as every other variant.
+`results/v0-same10.csv` and `results/orli-fixed.csv`.
+
+| metric | kraken blla (V0) | Orli pinned |
+|---|---|---|
+| precision | 0.632 | **0.849** |
+| recall | 0.854 | **0.856** |
+| F1 | 0.727 | **0.852** |
+| fragments | 116 | **6** |
+| spurious | 228 | **36** |
+| columns with the exact line count | 0 of 28 (0.000) | **25 of 28 (0.893)** |
+| mean absolute column difference | 10.07 | **0.50** |
+| seconds per page | 43.4 | **37.7** |
+| predicted lines (851 ground truth) | 1167 | **874** |
+
+Per manuscript:
+
+| manuscript | kraken F1 | Orli F1 |
+|---|---|---|
+| Vatican (5 pages) | 0.549 | 0.714 |
+| Napoli (5 pages) | 0.833 | 0.920 |
+
+Both timings were taken on the same machine under the same load, so they are
+comparable with each other. Neither is a production cost model.
+
+Reading order was correct on all 10 pages.
+
+### Independent check on two unseen pages
+
+Two pages that were not in the 10:
+
+| page | ground truth lines | kraken lines | Orli lines |
+|---|---|---|---|
+| vat-7v | 62 | 104 | 63 |
+| c21 | 120 | 167 | 120 |
+
+F1 on those two pages: kraken 0.474, Orli 0.639.
+
+### Caveats
+
+* The ground truth was built by correcting kraken output, so it is biased
+  towards kraken. Orli wins anyway, which makes the margin a lower bound rather
+  than an upper one.
+* 12 pages of one script family. This is not a general verdict on Orli.
+* Orli is PyTorch, not ONNX. The production segmenter runs ONNX on CPU, so Orli
+  needs its own serving path.
+* bf16 on the production CPU inference box is untested. It worked on Apple MPS.
+  That does not carry over on its own.
+* The published weights still need the pinned old commit. Re-fine-tuned weights
+  from the author would remove that pin, and they are not out yet.
+* Licence is Apache-2.0, which is fine for this platform.
+
 ## Overlays
 
 ![Vatican 1r, V0 against V1 plus the F2,F1,F3 chain](../../scripts/segmentation/experiments/out/overlays/vat-1r-v0-vs-best.png)
@@ -216,22 +318,33 @@ there is nothing to crop away.
 
 ## What to do with this
 
-1. Do not build tiling or upscaling. It is the wrong direction and it costs 2x
+1. **Put Orli behind a flag as a second segmenter.** It is the only change here
+   that is worth more than a few points of F1, and it is the only one that moves
+   exact column counts from 0 to 25 of 28. It needs a serving design first,
+   because it is PyTorch and the production path is ONNX on CPU, and bf16 on
+   that box is untested. Pin orli 7996f29 and kraken 7.0.3 until the author
+   publishes re-fine-tuned weights.
+2. Do not build tiling or upscaling. It is the wrong direction and it costs 2x
    to 3x the runtime to be worse.
-2. Ship F2 unconditionally. It is a strict improvement on both manuscripts.
-3. Ship F3. 19 boxes removed per real line lost, and it is the rule that fixes
+3. Ship F2 unconditionally. It is a strict improvement on both manuscripts, and
+   it stays useful for whichever segmenter runs.
+4. Ship F3. 19 boxes removed per real line lost, and it is the rule that fixes
    the Vatican scans specifically.
-4. Treat a per-document crop rectangle as a page-furniture feature, not a
+5. Treat a per-document crop rectangle as a page-furniture feature, not a
    segmentation-quality feature, and expect it to do nothing for manuscripts
-   photographed without a banner.
-5. Automatic pairing is not reachable from geometry alone. The best unfiltered
-   variant gets 3 of 94 columns to the exact transcription count. Only the
-   count-constrained rule moves that number, and it does so by deleting real
-   text 43% of the time, so it belongs behind a confirmation step.
-6. The obvious untested lever is the decoder, not the input: 9.6 of the 11.1
-   seconds and all of the fragmenting live there. The `heatmap_threshold` sweep
-   (V6) was cut for time; a single spot check at 0.40 on Vatican 1r returned
-   zero lines, so the parameter is steep and worth a proper sweep.
+   photographed without a banner. Orli already ignores most of the Vatican
+   furniture (spurious 228 to 36), so the crop matters less if Orli ships.
+6. Automatic pairing is not reachable from today's geometry alone. The best
+   unfiltered kraken variant gets 3 of 94 columns to the exact transcription
+   count, and the count-constrained rule only moves that number by deleting real
+   text 43% of the time, so it belongs behind a confirmation step. Orli reaches
+   25 of 28 columns with no filter at all, which is the real route to automatic
+   pairing.
+7. The obvious untested lever on the kraken path is the decoder, not the input:
+   9.6 of the 11.1 seconds and all of the fragmenting live there. The
+   `heatmap_threshold` sweep (V6) was cut for time; a single spot check at 0.40
+   on Vatican 1r returned zero lines, so the parameter is steep and worth a
+   proper sweep. This is lower priority than item 1.
 
 ## Reproducing
 
@@ -247,3 +360,20 @@ $PY scripts/segmentation/experiments/score.py --pred-dir scripts/segmentation/ex
 
 The ground truth is the extracted `scripts/coptic/pairing-tools-2026-09-18.tar.gz`;
 `run_variants.py --list` prints every variant name.
+
+The two Orli tables come from these, run one after the other:
+
+```
+cd scripts/segmentation/experiments
+$PY score.py --pred-dir out/orli-fixed --gt-dir $GT \
+    --manifest /Users/krishuagarwal/Desktop/Programming/python/greekOCR/scripts/coptic/manifest.json \
+    --repo-root /Users/krishuagarwal/Desktop/Programming/python/greekOCR \
+    --out results/orli-fixed.csv
+$PY score.py --pred-dir out/v0-same10 --gt-dir $GT \
+    --manifest /Users/krishuagarwal/Desktop/Programming/python/greekOCR/scripts/coptic/manifest.json \
+    --repo-root /Users/krishuagarwal/Desktop/Programming/python/greekOCR \
+    --out results/v0-same10.csv
+```
+
+`out/` is git-ignored, so the predictions themselves are local only. The scored
+per-page CSVs are committed under `results/`.

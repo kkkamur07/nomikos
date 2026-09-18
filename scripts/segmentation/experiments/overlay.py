@@ -35,7 +35,14 @@ def draw(gt: gtlib.GTPage, pred_path: Path, scale: float):
     pred = json.loads(pred_path.read_text())
     for line in pred["lines"]:
         canvas.polygon([tuple(p) for p in line["polygon"]], outline=(230, 0, 0))
-        canvas.line([tuple(p) for p in line["baseline"]], fill=(0, 60, 255), width=2)
+        baseline = [tuple(p) for p in line["baseline"]]
+        # Some segmenters (Orli among them) can emit a one-point baseline.
+        # ImageDraw.line needs two coordinates, so draw a dot instead.
+        if len(baseline) >= 2:
+            canvas.line(baseline, fill=(0, 60, 255), width=2)
+        elif len(baseline) == 1:
+            x, y = baseline[0]
+            canvas.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(0, 60, 255))
     size = (int(image.width * scale), int(image.height * scale))
     return image.resize(size, Image.Resampling.LANCZOS), len(pred["lines"])
 
