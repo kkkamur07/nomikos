@@ -1718,6 +1718,87 @@
         "title": "LineGeometryKind",
         "type": "string"
       },
+      "LineMergeConflictDetail": {
+        "description": "The 409 body, which has to name the lines so the client can offer a choice.",
+        "properties": {
+          "code": {
+            "description": "Stable machine-readable error code",
+            "title": "Code",
+            "type": "string"
+          },
+          "line_ids": {
+            "description": "The selected lines that carry transcribed text or a pairing",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Line Ids",
+            "type": "array"
+          },
+          "message": {
+            "description": "Allowlisted user-safe error message",
+            "title": "Message",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Correlation id for support / log lookup",
+            "title": "Ref"
+          }
+        },
+        "required": ["code", "message"],
+        "title": "LineMergeConflictDetail",
+        "type": "object"
+      },
+      "LineMergeConflictResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/LineMergeConflictDetail"
+          }
+        },
+        "required": ["error"],
+        "title": "LineMergeConflictResponse",
+        "type": "object"
+      },
+      "LineMergeRequest": {
+        "description": "Merge the lines a human picked on the canvas, not a pair a detector offered.",
+        "properties": {
+          "keep_text_from": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which line's text and pairing to keep. Required only after a 409, and only ever one of the ids the 409 listed.",
+            "title": "Keep Text From"
+          },
+          "line_ids": {
+            "description": "Two or more lines of this part, in any order",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 2,
+            "title": "Line Ids",
+            "type": "array"
+          }
+        },
+        "required": ["line_ids"],
+        "title": "LineMergeRequest",
+        "type": "object"
+      },
       "LinePatchRequest": {
         "additionalProperties": false,
         "description": "Partial line update.\n\n``block_id`` and ``mask`` back nullable columns, so an explicit ``null`` clears them.\n``order``/``baseline``/``points`` back NOT NULL columns and reject an explicit null.\nAn unrecognised key is refused rather than dropped, so a client is never told it\nwrote a field the handler ignored.",
@@ -11853,6 +11934,147 @@
           }
         ],
         "summary": "Replace Part Lines",
+        "tags": ["documents"]
+      }
+    },
+    "/projects/{project_id}/documents/{document_id}/parts/{part_id}/lines/merge": {
+      "post": {
+        "description": "Fold two or more of this part's lines into one, and answer with the whole list.\n\nThe whole list, rather than the merged row, because the merge renumbers the\nrows below it: the editor already reloads this shape after a history restore\nand after every segment-health fix, so a client can replace its state rather\nthan reconcile a partial answer against orders it cannot recompute.",
+        "operationId": "merge_part_lines_projects__project_id__documents__document_id__parts__part_id__lines_merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Part Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LineMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LineResponse"
+                  },
+                  "title": "Response Merge Part Lines Projects  Project Id  Documents  Document Id  Parts  Part Id  Lines Merge Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineMergeConflictResponse"
+                }
+              }
+            },
+            "description": "Several selected lines carry text or a pairing"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Merge Part Lines",
         "tags": ["documents"]
       }
     },
