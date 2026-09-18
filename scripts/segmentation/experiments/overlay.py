@@ -83,7 +83,11 @@ def main(argv: list[str] | None = None) -> int:
         caption.text((6, 7), f"{args.left}: {nl} lines", fill=(0, 0, 0))
         caption.text((left.width + gap + 6, 7), f"{args.right}: {nr} lines", fill=(0, 0, 0))
         buffer = io.BytesIO()
-        sheet.save(buffer, format="PNG", optimize=True)
+        # Quantising keeps the drawn outlines readable at a size that can be
+        # committed; the scans themselves are photographic and do not compress.
+        sheet.convert("P", palette=Image.Palette.ADAPTIVE, colors=48).save(
+            buffer, format="PNG", optimize=True
+        )
         data = buffer.getvalue()
         if len(data) <= args.max_kb * 1024:
             args.out.parent.mkdir(parents=True, exist_ok=True)
