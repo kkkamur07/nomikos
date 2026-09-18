@@ -3,4 +3,5 @@ export const PAGE_EDITOR_SHORTCUTS = {
   RECTANGLE: "B",
   POLYGON: "P",
   DELETE: "⌫",
+  MERGE: "M",
 } as const;

@@ -9,3 +9,4 @@ export { usePageEditorJobQueue } from "./usePageEditorJobQueue";
 export { usePageEditorRunState } from "./usePageEditorRunState";
 export { usePairingState } from "./usePairingState";
 export { useSegmentHealth } from "./useSegmentHealth";
+export { useSegmentMerge } from "./useSegmentMerge";

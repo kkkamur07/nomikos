@@ -33,6 +33,8 @@ import { segmentNumbersById, segmentsInNumberOrder } from "./segmentNumbering";
 import { resetPanVelocityTracking } from "../../utils/zoomPanVelocity";
 import { useZoomLayerHint } from "../../utils/zoomLayerHint";
 import { PageEditorCanvasIsland } from "./PageEditorCanvasIsland";
+import { PageEditorMergeBar } from "./PageEditorMergeBar";
+import { isAdditiveClick } from "./segmentSelection";
 import { useSmoothWheelZoom } from "./useSmoothWheelZoom";
 
 const ZOOM_ANIMATION_MS = 220;
@@ -58,6 +60,8 @@ type CanvasSurfaceProps = {
   layout: PartLayoutResponse;
   lines: LineResponse[];
   selectedSegmentId: string | null;
+  /** Segments picked for a group action, empty unless there are two or more. */
+  selectedSegmentIds: string[];
   pairedSegmentIds: Set<string>;
   drawingRectangle: boolean;
   drawingPolygon: boolean;
@@ -74,7 +78,8 @@ type CanvasSurfaceProps = {
   onPolygonPoint: (point: LinePoint) => void;
   onPolygonComplete: () => void;
   onSelectLine: (lineId: string) => void;
-  onSelectSegment: (lineId: string) => void;
+  /** ``additive`` is a shift-click or cmd/ctrl-click: toggle, do not replace. */
+  onSelectSegment: (lineId: string, additive: boolean) => void;
   segmentVertexEditEnabled: boolean;
   /**
    * Space is held, so the pointer belongs to the pan gesture no matter which
@@ -105,6 +110,7 @@ function CanvasSurfaceInner({
   layout,
   lines,
   selectedSegmentId,
+  selectedSegmentIds,
   pairedSegmentIds,
   drawingRectangle,
   drawingPolygon,
@@ -187,6 +193,10 @@ function CanvasSurfaceInner({
   const isVertexInteracting = pendingVertexIndex !== null || isDraggingVertex;
   const orderedLines = useMemo(() => segmentsInNumberOrder(lines), [lines]);
   const segmentNumbers = useMemo(() => segmentNumbersById(lines), [lines]);
+  const mergeGroup = useMemo(
+    () => new Set(selectedSegmentIds),
+    [selectedSegmentIds],
+  );
   const activateWithKeyboard = (
     event: KeyboardEvent<SVGElement>,
     activate: () => void,
@@ -297,13 +307,18 @@ function CanvasSurfaceInner({
           ))}
         {orderedLines.map((line) => {
           const selected = line.id === selectedSegmentId;
+          const grouped = mergeGroup.has(line.id);
+          // A group member reads as selected. Only the anchor is *the* selected
+          // segment, though: vertex editing and the transcription strip are
+          // about one segment and must not follow a group of six.
+          const highlighted = selected || grouped;
           const paired = pairedSegmentIds.has(line.id);
-          const fill = selected
+          const fill = highlighted
             ? segmentFill(180, 0, 0)
             : paired
               ? segmentFill(4, 120, 87)
               : segmentFill(180, 83, 9);
-          const strokeColor = selected
+          const strokeColor = highlighted
             ? "var(--red, #b40000)"
             : paired
               ? "rgba(4, 120, 87, 0.75)"
@@ -318,10 +333,19 @@ function CanvasSurfaceInner({
               className="pe-segment-shape"
               role="button"
               tabIndex={0}
-              aria-label={`Segment ${segmentNumbers.get(line.id)}${paired ? ", paired" : ""}`}
-              aria-current={selected ? "true" : undefined}
+              aria-label={`Segment ${segmentNumbers.get(line.id)}${paired ? ", paired" : ""}${grouped ? ", selected for merge" : ""}`}
+              aria-current={highlighted ? "true" : undefined}
               onClick={(event) => {
                 event.stopPropagation();
+                const additive = isAdditiveClick(event);
+                // A modified click is always about the group. Without this an
+                // additive click on the segment already selected would insert a
+                // vertex instead of dropping it back out of the group.
+                if (additive) {
+                  onSelectVertex(null);
+                  onSelectSegment(line.id, true);
+                  return;
+                }
                 if (
                   selected &&
                   segmentVertexEditEnabled &&
@@ -339,15 +363,17 @@ function CanvasSurfaceInner({
                   }
                 }
                 onSelectVertex(null);
-                onSelectSegment(line.id);
+                onSelectSegment(line.id, false);
               }}
               onKeyDown={(event) =>
-                activateWithKeyboard(event, () => onSelectSegment(line.id))
+                activateWithKeyboard(event, () =>
+                  onSelectSegment(line.id, event.shiftKey),
+                )
               }
               points={points(segmentPoints)}
               fill={fill}
               stroke={strokeColor}
-              strokeWidth={strokeWidth(selected ? 2.2 : paired ? 1.8 : 1.6)}
+              strokeWidth={strokeWidth(highlighted ? 2.2 : paired ? 1.8 : 1.6)}
               style={
                 selected && segmentVertexEditEnabled
                   ? { pointerEvents: "all", cursor: "copy" }
@@ -519,6 +545,11 @@ type PageEditorCanvasProps = Omit<
   onPickDrawMode: (mode: "rectangle" | "polygon") => void;
   canDelete: boolean;
   onDeleteSelected: () => void;
+  /** Merge bar, shown only while two or more segments are picked. */
+  mergeBusy: boolean;
+  mergeError: string | null;
+  onMergeSelected: () => void;
+  onClearMergeSelection: () => void;
   selectedVertexIndex: number | null;
   onSelectedVertexChange: (vertexIndex: number | null) => void;
   commitSignal: number;
@@ -529,6 +560,10 @@ type PageEditorCanvasProps = Omit<
 };
 
 export function PageEditorCanvas({
+  mergeBusy,
+  mergeError,
+  onMergeSelected,
+  onClearMergeSelection,
   imageUrl,
   imageAlt,
   imageWidth,
@@ -536,6 +571,7 @@ export function PageEditorCanvas({
   layout,
   lines,
   selectedSegmentId,
+  selectedSegmentIds,
   pairedSegmentIds,
   drawingRectangle,
   drawingPolygon,
@@ -933,6 +969,13 @@ export function PageEditorCanvas({
               onResetZoom={() => resetTransform()}
               panOverride={spaceHeld}
             />
+            <PageEditorMergeBar
+              count={selectedSegmentIds.length}
+              busy={mergeBusy}
+              error={mergeError}
+              onMerge={onMergeSelected}
+              onClear={onClearMergeSelection}
+            />
             <TransformComponent
               wrapperStyle={{
                 width: "100%",
@@ -950,6 +993,7 @@ export function PageEditorCanvas({
                 layout={layout}
                 lines={lines}
                 selectedSegmentId={selectedSegmentId}
+                selectedSegmentIds={selectedSegmentIds}
                 pairedSegmentIds={pairedSegmentIds}
                 drawingRectangle={drawingRectangle}
                 drawingPolygon={drawingPolygon}

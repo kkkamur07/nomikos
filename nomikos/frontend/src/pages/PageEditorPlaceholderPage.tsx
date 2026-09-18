@@ -5,6 +5,11 @@ import { invalidateAfter } from "../api/resources";
 import { useHostPreference } from "../inference";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { PageEditorCanvas } from "../components/page-editor/PageEditorCanvas";
+import { PageEditorMergeConflictDialog } from "../components/page-editor/PageEditorMergeConflictDialog";
+import {
+  inPageOrder,
+  prunedGroup,
+} from "../components/page-editor/segmentSelection";
 import {
   PageEditorPageRail,
   PageEditorPageRailTab,
@@ -36,6 +41,7 @@ import {
   usePageEditorRunState,
   usePairingState,
   useSegmentHealth,
+  useSegmentMerge,
 } from "../components/page-editor/hooks";
 import {
   loadPageRailOpen,
@@ -210,6 +216,43 @@ export function PageEditorPlaceholderPage() {
     subscribeToJobCompletion: jobQueue.subscribeToJobCompletion,
   });
 
+  const segmentMerge = useSegmentMerge({
+    projectId,
+    documentId,
+    partId,
+    setLines,
+    setTextLines,
+    setPairingProgress,
+    // The group is gone once it has been merged; the survivor stays selected so
+    // the strip shows the text that was kept rather than nothing at all.
+    onMerged: (survivingLineId) => {
+      pairing.setSelectedSegmentIds([]);
+      pairing.setSelectedSegmentId(survivingLineId);
+      setSelectedVertexIndex(null);
+    },
+  });
+
+  const mergeSelectedSegments = useCallback(() => {
+    const group = inPageOrder(
+      pairing.selectedSegmentIds,
+      lines.map((line) => line.id),
+    );
+    if (group.length < 2) return;
+    void segmentMerge.mergeSegments(group);
+  }, [pairing.selectedSegmentIds, lines, segmentMerge]);
+
+  // A merge, a delete or a re-segment replaces the line list. Ids the group
+  // still names would be a 404 on the next merge, so they go with them.
+  useEffect(() => {
+    const kept = prunedGroup(
+      pairing.selectedSegmentIds,
+      lines.map((line) => line.id),
+    );
+    if (kept !== pairing.selectedSegmentIds) {
+      pairing.setSelectedSegmentIds(kept);
+    }
+  }, [lines, pairing]);
+
   const {
     selectedLineId,
     setSelectedLineId,
@@ -233,6 +276,7 @@ export function PageEditorPlaceholderPage() {
   const {
     selectedSegmentId,
     setSelectedSegmentId,
+    setSelectedSegmentIds,
     approvedTextDraft,
     setApprovedTextDraft,
     transcriptionSaveMessage,
@@ -261,12 +305,12 @@ export function PageEditorPlaceholderPage() {
   const pairedIds = useMemo(() => segmentIdsWithGroundTruth(lines), [lines]);
   const stripVisible = Boolean(selectedSegment) && !stripDismissed;
 
-  function handleSelectSegment(lineId: string) {
+  function handleSelectSegment(lineId: string, additive = false) {
     setSelectedLineId(null);
     setSaveMessage(null);
     setStripDismissed(false);
     setSelectedVertexIndex(null);
-    selectSegment(lineId);
+    selectSegment(lineId, additive);
   }
 
   function handleRemoveSelectedVertex() {
@@ -318,10 +362,16 @@ export function PageEditorPlaceholderPage() {
     setVertexCommitSignal((value) => value + 1);
     setSelectedVertexIndex(null);
     setSelectedSegmentId(null);
+    setSelectedSegmentIds([]);
     setSelectedLineId(null);
     setApprovedTextDraft("");
     setStripDismissed(false);
-  }, [setSelectedSegmentId, setSelectedLineId, setApprovedTextDraft]);
+  }, [
+    setSelectedSegmentId,
+    setSelectedSegmentIds,
+    setSelectedLineId,
+    setApprovedTextDraft,
+  ]);
 
   function completeDraftPolygon() {
     if (draftPolygon.length >= 3) {
@@ -343,6 +393,10 @@ export function PageEditorPlaceholderPage() {
             }
           : undefined,
     onEscape: handlePanSelect,
+    onMerge:
+      pairing.selectedSegmentIds.length >= 2
+        ? mergeSelectedSegments
+        : undefined,
     onUndo: () => void undoEdit(),
     onRedo: () => void redoEdit(),
     onEnter:
@@ -492,7 +546,15 @@ export function PageEditorPlaceholderPage() {
                 layout={layout}
                 lines={lines}
                 selectedSegmentId={selectedSegmentId}
+                selectedSegmentIds={pairing.selectedSegmentIds}
                 pairedSegmentIds={pairedIds}
+                mergeBusy={segmentMerge.merging}
+                mergeError={segmentMerge.mergeError}
+                onMergeSelected={mergeSelectedSegments}
+                onClearMergeSelection={() => {
+                  pairing.setSelectedSegmentIds([]);
+                  segmentMerge.setMergeError(null);
+                }}
                 settings={canvasSettings}
                 drawingRectangle={drawMode === "rectangle"}
                 drawingPolygon={drawMode === "polygon"}
@@ -637,6 +699,15 @@ export function PageEditorPlaceholderPage() {
             ocrRunning={ocrRunning}
             ocrScope={ocrScope}
             backgroundJobsActive={runState.backgroundJobsActive}
+          />
+
+          <PageEditorMergeConflictDialog
+            open={segmentMerge.conflict !== null}
+            lineIds={segmentMerge.conflict?.lineIds ?? []}
+            lines={lines}
+            busy={segmentMerge.merging}
+            onCancel={segmentMerge.dismissConflict}
+            onKeep={segmentMerge.resolveConflict}
           />
         </div>
       )}
