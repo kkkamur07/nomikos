@@ -5,7 +5,7 @@ describes". A chapter export is that, N times, in one archive, so the rendering 
 reused rather than restated: :class:`_PositionalPageXmlExport` below is the same service
 the per-page route calls, with one method overridden.
 
-Two things differ at document scale, both deliberate:
+Three things differ at document scale, all deliberate:
 
 * entries are named by page position (``0001.xml`` next to ``0001.webp``) rather than by
   document title. Inside one archive the position is what tells pages apart, the title
@@ -17,22 +17,32 @@ Two things differ at document scale, both deliberate:
   then sent. An eighteen-page chapter of manuscript scans is tens of megabytes; holding
   all of it to hand back one ``bytes`` is the difference between a request that costs
   one page of memory and one that costs a chapter.
+* the archive carries a ``manifest.json``. This is the archive a training set is built
+  from, and a folder of numbered XML files does not say which document it came from,
+  which pages were in it, or which of its baselines this platform invented rather than
+  measured. The manifest is the last entry written, once every page's counts are known,
+  and it states the "corrected" rule it was produced under rather than leaving the
+  reader to infer it from the file list.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.annotation.application.page_xml_export_service import (
+    PAGE_XML_NAMESPACE,
     PageXmlBundle,
     PageXmlExportService,
 )
+from backend.annotation.application.page_xml_geometry import BASELINE_HEIGHT_FRACTION
 from backend.document.application.document_export_selection import (
     PAGE_NUMBER_DIGITS,
     DocumentExportSelection,
@@ -43,6 +53,28 @@ from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.orm_models import Document, DocumentPart
 from backend.users.infrastructure.orm_models import User
+
+#: The archive entry that says what the other entries are. Named for what it is rather
+#: than for the document, so a script sweeping a folder of these archives looks for one
+#: name.
+MANIFEST_FILENAME = "manifest.json"
+
+#: Bumped when the manifest's shape changes in a way a reader has to notice.
+MANIFEST_VERSION = 1
+
+#: What this export means by a page a human has corrected, stated in the manifest so
+#: that a training set carries its own definition.
+#:
+#: Deliberately the conservative half of what the data model could support. ``reviewed``
+#: is a flag somebody set on purpose from the editor, which is the only signal here that
+#: means "I have looked at this page and I am done with it"; ground-truth text on at
+#: least one line is the evidence that the looking produced something. Neither
+#: ``manual_geometry`` nor pairing qualifies on its own: a page can have hand-drawn boxes
+#: because somebody started and stopped, and pairing an imported transcription to lines
+#: is a step on the way to ground truth, not a signature under it.
+CORRECTED_RULE = (
+    "part.reviewed is true and the page has at least one line carrying ground-truth text"
+)
 
 
 @dataclass(frozen=True)
@@ -91,11 +123,15 @@ class DocumentPageXmlExportService:
         )
         return DocumentZipExport(
             filename=document_download_name(selection.document.name, "page-xml.zip"),
-            chunks=self._stream(session, selection),
+            chunks=self._stream(session, selection, reviewed_only=reviewed_only),
         )
 
     async def _stream(
-        self, session: AsyncSession, selection: DocumentExportSelection
+        self,
+        session: AsyncSession,
+        selection: DocumentExportSelection,
+        *,
+        reviewed_only: bool,
     ) -> AsyncIterator[bytes]:
         renderer = _PositionalPageXmlExport(
             selection.page_numbers,
@@ -103,6 +139,7 @@ class DocumentPageXmlExportService:
             document_service=self._document_service,
         )
         sink = _ZipSink()
+        pages: list[dict[str, object]] = []
         with ZipFile(sink, "w") as archive:
             for part in selection.parts:
                 bundle = await renderer.render_bundle(session, selection.document, part)
@@ -111,9 +148,20 @@ class DocumentPageXmlExportService:
                 # scan into the archive is CPU work that would otherwise stall every
                 # other in-flight request.
                 await asyncio.to_thread(_write_bundle, archive, bundle)
+                pages.append(_manifest_page(selection, part, bundle))
                 chunk = sink.drain()
                 if chunk:
                     yield chunk
+            archive.writestr(
+                MANIFEST_FILENAME,
+                json.dumps(
+                    _manifest(selection, pages, reviewed_only=reviewed_only),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                compress_type=ZIP_DEFLATED,
+            )
         # The central directory, written when the archive closed.
         yield sink.drain()
 
@@ -150,6 +198,56 @@ class _PositionalPageXmlExport(PageXmlExportService):
 
     async def _stem(self, session: AsyncSession, document: Document, part: DocumentPart) -> str:
         return f"{self._page_numbers[part.id]:0{PAGE_NUMBER_DIGITS}d}"
+
+
+def _manifest_page(
+    selection: DocumentExportSelection, part: DocumentPart, bundle: PageXmlBundle
+) -> dict[str, object]:
+    counts = bundle.line_counts
+    return {
+        "page_number": selection.page_number(part),
+        "part_id": str(part.id),
+        "xml": bundle.xml_filename,
+        "image": bundle.image_filename,
+        "reviewed": bool(part.reviewed),
+        "corrected": bool(part.reviewed) and counts.ground_truth > 0,
+        "lines": counts.as_dict(),
+    }
+
+
+def _manifest(
+    selection: DocumentExportSelection,
+    pages: list[dict[str, object]],
+    *,
+    reviewed_only: bool,
+) -> dict[str, object]:
+    """What the archive holds, and under which rule.
+
+    ``corrected_pages`` is reported rather than enforced. ``reviewed_only`` is the
+    filter three document exports share, and narrowing it here alone would make the
+    PAGE XML, the PDF and the text export disagree about what a reviewed chapter is.
+    A reader that wants only corrected pages has, in this file, everything it needs
+    to drop the rest without a second request.
+    """
+    return {
+        "manifest_version": MANIFEST_VERSION,
+        "generator": "Nomikos",
+        "created": datetime.now(UTC).isoformat(),
+        "page_xml_namespace": PAGE_XML_NAMESPACE,
+        "document": {
+            "id": str(selection.document.id),
+            "name": selection.document.name,
+        },
+        "reviewed_only": reviewed_only,
+        "corrected_rule": CORRECTED_RULE,
+        "derived_baseline": {
+            "height_fraction": BASELINE_HEIGHT_FRACTION,
+            "marked_in_xml_as": "TextLine/@custom contains 'baseline:derived'",
+        },
+        "page_count": len(pages),
+        "corrected_page_count": sum(1 for page in pages if page["corrected"]),
+        "pages": pages,
+    }
 
 
 def _write_bundle(archive: ZipFile, bundle: PageXmlBundle) -> None:
