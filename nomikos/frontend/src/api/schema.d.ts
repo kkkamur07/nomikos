@@ -1367,6 +1367,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{project_id}/documents/{document_id}/parts/{part_id}/segmentation-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List Segmentation Runs */
+    get: operations["list_segmentation_runs_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{project_id}/documents/{document_id}/parts/{part_id}/segmentation-runs/diff": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Segmentation Run Diff */
+    get: operations["segmentation_run_diff_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_diff_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{project_id}/documents/{document_id}/parts/{part_id}/transcribe": {
     parameters: {
       query?: never;
@@ -1722,6 +1756,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** AddedLineResponse */
+    AddedLineResponse: {
+      /**
+       * Line Id
+       * Format: uuid
+       */
+      line_id: string;
+      /** Order */
+      order: number;
+      /** Points */
+      points: number[][];
+    };
     /**
      * AgentVersionNotice
      * @description What the platform makes of a served agent's version.
@@ -2054,6 +2100,29 @@ export interface components {
       /** Copied Line Ids */
       copied_line_ids: string[];
     };
+    /** CorrectedLineResponse */
+    CorrectedLineResponse: {
+      /** External Id */
+      external_id: string;
+      /** Human Points */
+      human_points: number[][][];
+      /** Line Ids */
+      line_ids: string[];
+      /** Model Points */
+      model_points: number[][];
+    };
+    /**
+     * DeletedLineResponse
+     * @description A proposed line with no live counterpart: removed, or absorbed by a merge.
+     */
+    DeletedLineResponse: {
+      /** External Id */
+      external_id: string;
+      /** Model Points */
+      model_points: number[][];
+      /** Order */
+      order: number;
+    };
     /** DeviceResponse */
     DeviceResponse: {
       /** Helper Version */
@@ -2181,6 +2250,10 @@ export interface components {
       published: boolean;
       /** Reviewed */
       reviewed: boolean;
+      /** Reviewed At */
+      reviewed_at?: string | null;
+      /** Reviewed By */
+      reviewed_by?: string | null;
       /** Width */
       width: number | null;
     };
@@ -3474,6 +3547,63 @@ export interface components {
        */
       upper_id: string;
     };
+    /** SegmentationDiffResponse */
+    SegmentationDiffResponse: {
+      /** Added */
+      added?: components["schemas"]["AddedLineResponse"][];
+      /** Corrected */
+      corrected?: components["schemas"]["CorrectedLineResponse"][];
+      /** Deleted */
+      deleted?: components["schemas"]["DeletedLineResponse"][];
+      run: components["schemas"]["SegmentationRunResponse"];
+      /** Unchanged */
+      unchanged?: components["schemas"]["UnchangedLineResponse"][];
+    };
+    /**
+     * SegmentationRunResponse
+     * @description One recorded run. The model fields are the copies taken when it happened.
+     */
+    SegmentationRunResponse: {
+      /** Block Count */
+      block_count: number;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Created By Job Id */
+      created_by_job_id: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Image Height */
+      image_height: number | null;
+      /** Image Width */
+      image_width: number | null;
+      /** Line Count */
+      line_count: number;
+      /** Model Artifact Ref */
+      model_artifact_ref: string | null;
+      /** Model Name */
+      model_name: string | null;
+      /** Model Provider */
+      model_provider: string | null;
+      /** Params */
+      params: {
+        [key: string]: unknown;
+      };
+      /**
+       * Part Id
+       * Format: uuid
+       */
+      part_id: string;
+      /** Registry Model Id */
+      registry_model_id: string | null;
+      /** Registry Tag */
+      registry_tag: string | null;
+    };
     /**
      * ShareUserRequest
      * @description Who to share with, named exactly one of three ways.
@@ -3595,6 +3725,16 @@ export interface components {
       kind: components["schemas"]["TranscriptionKind"];
       /** Name */
       name: string;
+    };
+    /** UnchangedLineResponse */
+    UnchangedLineResponse: {
+      /** External Id */
+      external_id: string;
+      /**
+       * Line Id
+       * Format: uuid
+       */
+      line_id: string;
     };
     /** UserResponse */
     UserResponse: {
@@ -10888,6 +11028,183 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["LineResponse"][];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
+  list_segmentation_runs_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+        part_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SegmentationRunResponse"][];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
+  segmentation_run_diff_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_diff_get: {
+    parameters: {
+      query?: {
+        /** @description Which recorded run to compare against. Defaults to the latest. */
+        run_id?: string | null;
+      };
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+        part_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SegmentationDiffResponse"];
         };
       };
       /** @description Not authenticated */

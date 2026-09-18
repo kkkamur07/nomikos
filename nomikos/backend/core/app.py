@@ -42,6 +42,7 @@ from backend.document.api.documents import router as documents_router
 from backend.document.api.media import router as media_router
 from backend.document.api.public import router as public_router
 from backend.document.api.public_media import router as public_media_router
+from backend.document.api.segmentation_runs import router as segmentation_runs_router
 from backend.document.api.signed_media import router as signed_media_router
 from backend.document.infrastructure.media_gc import media_gc_loop
 from backend.jobs.api.device_claim import router as device_claim_router
@@ -377,6 +378,7 @@ def create_app() -> FastAPI:
     app.include_router(document_batch_router)
     app.include_router(annotation_history_router)
     app.include_router(segment_health_router)
+    app.include_router(segmentation_runs_router)
     app.include_router(media_router)
     app.include_router(public_router)
     app.include_router(public_media_router)
