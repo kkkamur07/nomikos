@@ -14,6 +14,7 @@ from backend.document.infrastructure.orm_models import (
     Transcription,
     TranscriptionKind,
 )
+from backend.ml.application.model_identity import EMPTY_MODEL_IDENTITY, ModelIdentity
 from nomikos_inference.contracts.transcribe import TranscribeRunResponse
 
 
@@ -67,6 +68,7 @@ class TranscribeMergeService:
         lines_with_output: list[tuple[Line, TranscribeRunResponse]],
         commit: bool = True,
         layer_name: str | None = None,
+        model_identity: ModelIdentity | None = None,
     ) -> dict:
         # Load the part locked, not with ``session.get``. Segment health decides a
         # merge or a deletion from a snapshot of which lines carry text, and
@@ -83,11 +85,24 @@ class TranscribeMergeService:
             if job_id is not None
             else "Local model transcription"
         )
+        # Identity is copied onto the layer, not left to the FK. ``created_by_job_id``
+        # is ``ON DELETE SET NULL`` and finished jobs are user-deletable, so the join
+        # that used to be the only answer to "which model wrote this" disappears on the
+        # first history clear and leaves a layer named after a job id that no longer
+        # exists. A copy also freezes the answer: editing the registry row afterwards
+        # cannot retroactively change whose output this was.
+        identity = model_identity or EMPTY_MODEL_IDENTITY
         layer = Transcription(
             document_id=document_id,
             name=resolved_name,
             kind=TranscriptionKind.model,
             created_by_job_id=job_id,
+            model_name=identity.name,
+            model_provider=identity.provider,
+            model_artifact_ref=identity.artifact_ref,
+            registry_model_id=identity.registry_model_id,
+            registry_tag=identity.registry_tag,
+            model_params=dict(identity.params or {}),
         )
         session.add(layer)
         session.flush()
