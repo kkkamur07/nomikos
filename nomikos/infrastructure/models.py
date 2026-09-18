@@ -9,6 +9,7 @@ from backend.document.infrastructure.orm_models import (  # noqa: F401
     LineTranscription,
     MediaDeletionIntent,
     PageTranscriptionLine,
+    SegmentationRun,
     Transcription,
 )
 from backend.jobs.infrastructure.orm_models import Job  # noqa: F401
