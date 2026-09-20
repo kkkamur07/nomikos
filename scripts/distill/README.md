@@ -8,8 +8,9 @@ mode for the full training run on the GPU box.
 ## Environment
 
 Use the same environment the teacher was trained in: torch with CUDA,
-transformers 5.x and pillow. From this repo you can also provision it with
-`uv sync --frozen --group train` (needs a CUDA torch build).
+transformers 5.x and pillow. The repo's uv configuration pins CPU torch
+wheels on Linux, so on the GPU box use the teacher's environment
+(CUDA torch, transformers 5.x, pillow) rather than `uv sync`.
 
 ## Commands
 
@@ -49,6 +50,17 @@ python scripts/distill/distill_trocr.py --teacher <TEACHER_DIR> \
 
 After an interruption, resume with the same command plus `--resume`
 (checkpoint state lives in `<out>/last.pt`).
+
+Useful flags:
+
+- `--max-val-samples N` bounds the time of each evaluation (evaluation
+decodes the whole validation set greedily every `--eval-every` optimizer
+steps and at each epoch end).
+- `--grad-accum K` reaches a larger effective batch size (training steps
+are optimizer steps).
+- `--encoder-init deit-tiny` initialises the encoder from pretrained
+weights (needs network once to fetch the weights).
+- `--temperature` and `--alpha` tune the distillation mix.
 
 ## Reading metrics
 

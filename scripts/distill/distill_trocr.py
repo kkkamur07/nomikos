@@ -396,13 +396,13 @@ def check_param_range(total: int) -> None:
 
 def load_split(
     data_dirs: list[Path], gt_file: str, image_subdir: str, cap: int | None
-) -> Dataset:
+) -> tuple[Dataset, list[DistillLineDataset]]:
     datasets = [DistillLineDataset(d, gt_file, image_subdir) for d in data_dirs]
     combined: Dataset = (ConcatDataset(datasets) if len(datasets) > 1
                          else datasets[0])
     if cap is not None:
         combined = Subset(combined, range(min(cap, len(combined))))
-    return combined
+    return combined, datasets
 
 
 def dry_run(
@@ -453,6 +453,7 @@ def evaluate(
     loader: DataLoader,
     device: torch.device,
     max_target_length: int,
+    use_bf16: bool = False,
 ) -> dict[str, float]:
     """Greedy-decode the val set and score CER, WER, exact match and CE."""
     model.eval()
@@ -460,14 +461,17 @@ def evaluate(
     predictions: list[str] = []
     ce_sum = 0.0
     ce_tokens = 0
+    context = (torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+               if use_bf16 else nullcontext())
     for batch in loader:
         pixel_values = batch["pixel_values"].to(device)
         labels = batch["labels"].to(device)
-        outputs = model(pixel_values=pixel_values, labels=labels)
-        ce_sum += float(outputs.loss) * int((labels != -100).sum())
+        with context:
+            outputs = model(pixel_values=pixel_values, labels=labels)
+            generated = model.generate(
+                pixel_values, max_length=max_target_length, num_beams=1)
+        ce_sum += float(outputs.loss.float()) * int((labels != -100).sum())
         ce_tokens += int((labels != -100).sum())
-        generated = model.generate(
-            pixel_values, max_length=max_target_length, num_beams=1)
         texts = processor.tokenizer.batch_decode(
             generated, skip_special_tokens=True,
             clean_up_tokenization_spaces=False)
@@ -493,9 +497,11 @@ def run_eval_and_save(
     state: dict[str, Any],
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LambdaLR,
+    use_bf16: bool = False,
 ) -> None:
     metrics = evaluate(
-        student, processor, val_loader, device, args.max_target_length)
+        student, processor, val_loader, device, args.max_target_length,
+        use_bf16)
     record = {"type": "eval", "step": step, **metrics}
     log(f"eval step={step} cer={metrics['cer']:.4f} wer={metrics['wer']:.4f} "
         f"exact_match={metrics['exact_match']:.4f} "
@@ -559,10 +565,14 @@ def train(args: argparse.Namespace) -> None:
         json.dump(resolved, handle, indent=2)
 
     collate = make_collator(processor, args.max_target_length)
-    train_ds = load_split(
+    train_ds, train_parts = load_split(
         args.data_dir, args.train_gt, args.image_subdir, args.max_train_samples)
-    val_ds = load_split(
+    val_ds, val_parts = load_split(
         args.data_dir, args.val_gt, args.image_subdir, args.max_val_samples)
+    for data_dir, part in zip(args.data_dir, train_parts, strict=True):
+        log(f"data {data_dir} train={len(part)} missing={part.missing}")
+    for data_dir, part in zip(args.data_dir, val_parts, strict=True):
+        log(f"data {data_dir} val={len(part)} missing={part.missing}")
     loader_kwargs = {"batch_size": args.batch_size, "collate_fn": collate,
                      "num_workers": args.num_workers}
     train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)  # type: ignore[arg-type]
@@ -603,13 +613,15 @@ def train(args: argparse.Namespace) -> None:
     with open(args.out / "metrics.jsonl", "a", encoding="utf-8") as handle:
         _jsonl_fh = handle
         teacher_metrics = evaluate(
-            teacher, processor, val_loader, device, args.max_target_length)
+            teacher, processor, val_loader, device, args.max_target_length,
+            use_bf16)
         log(f"teacher cer={teacher_metrics['cer']:.4f} "
             f"wer={teacher_metrics['wer']:.4f} "
             f"exact_match={teacher_metrics['exact_match']:.4f}",
             {"type": "teacher_eval", **teacher_metrics})
 
         step = start_step
+        micro = 0
         optimizer.zero_grad()
         stop = False
         for _epoch in range(int(args.epochs)):
@@ -635,28 +647,31 @@ def train(args: argparse.Namespace) -> None:
                         args.temperature, args.alpha)
                     loss = loss / args.grad_accum
                 loss.backward()
-                if (step + 1) % args.grad_accum == 0:
+                micro += 1
+                if micro % args.grad_accum == 0:
                     torch.nn.utils.clip_grad_norm_(
                         student.parameters(), args.max_grad_norm)
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
-                if (step + 1) % args.log_every == 0 or step + 1 == total_steps:
-                    lr = optimizer.param_groups[0]["lr"]
-                    log(f"step={step + 1} lr={lr:.2e} "
-                        f"loss={float(loss) * args.grad_accum:.4f} "
-                        f"loss_kd={float(loss_kd):.4f} "
-                        f"loss_ce={float(loss_ce):.4f}",
-                        {"type": "train", "step": step + 1, "lr": lr,
-                         "loss": float(loss) * args.grad_accum,
-                         "loss_kd": float(loss_kd),
-                         "loss_ce": float(loss_ce)})
-                step += 1
-                if step % args.eval_every == 0:
-                    run_eval_and_save(student, processor, val_loader, device,
-                                      args, step, state, optimizer, scheduler)
+                    step += 1
+                    if step % args.log_every == 0 or step == total_steps:
+                        lr = optimizer.param_groups[0]["lr"]
+                        log(f"step={step} lr={lr:.2e} "
+                            f"loss={float(loss) * args.grad_accum:.4f} "
+                            f"loss_kd={float(loss_kd):.4f} "
+                            f"loss_ce={float(loss_ce):.4f}",
+                            {"type": "train", "step": step, "lr": lr,
+                             "loss": float(loss) * args.grad_accum,
+                             "loss_kd": float(loss_kd),
+                             "loss_ce": float(loss_ce)})
+                    if step % args.eval_every == 0:
+                        run_eval_and_save(student, processor, val_loader,
+                                          device, args, step, state,
+                                          optimizer, scheduler, use_bf16)
             run_eval_and_save(student, processor, val_loader, device,
-                              args, step, state, optimizer, scheduler)
+                              args, step, state, optimizer, scheduler,
+                              use_bf16)
         _jsonl_fh = None
 
     final_dir = args.out / "final"

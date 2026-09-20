@@ -86,6 +86,7 @@ def test_distill_smoke(tmp_path: Path) -> None:
         "--no-bf16", "--num-workers", "0",
     ], cwd=tmp_path)
     assert result.returncode == 0, result.stderr[-4000:]
+    assert "missing=0" in result.stdout
 
     records = [(out_dir / "metrics.jsonl").read_text(
         encoding="utf-8").splitlines()]
@@ -103,6 +104,31 @@ def test_distill_smoke(tmp_path: Path) -> None:
     with torch.no_grad():
         generated = model.generate(pixel_values, max_length=50, num_beams=1)
     assert torch.is_tensor(generated) and generated.ndim == 2
+
+
+def test_grad_accum_counts_optimizer_steps(tmp_path: Path) -> None:
+    teacher_dir = make_teacher_dir(tmp_path / "teacher")
+    data_dir = make_data_dir(tmp_path / "data")
+    out_dir = tmp_path / "out"
+    result = run_script([
+        "--teacher", str(teacher_dir), "--data-dir", str(data_dir),
+        "--out", str(out_dir), "--mode", "smoke",
+        "--max-steps", "3", "--eval-every", "3", "--log-every", "1",
+        "--batch-size", "2", "--grad-accum", "2", "--warmup-ratio", "0",
+        "--enc-hidden", "64", "--enc-layers", "1", "--enc-heads", "2",
+        "--dec-dim", "64", "--dec-layers", "1", "--dec-heads", "2",
+        "--dec-ffn", "128", "--embed-init", "pca",
+        "--no-bf16", "--num-workers", "0",
+    ], cwd=tmp_path)
+    assert result.returncode == 0, result.stderr[-4000:]
+
+    parsed = [json.loads(line) for line in (out_dir / "metrics.jsonl")
+              .read_text(encoding="utf-8").splitlines()]
+    train_records = [r for r in parsed if r.get("type") == "train"]
+    assert [r["step"] for r in train_records] == [1, 2, 3]
+    assert train_records[-1]["lr"] < train_records[0]["lr"]
+    eval_records = [r for r in parsed if r.get("type") == "eval"]
+    assert any(r["step"] == 3 for r in eval_records)
 
 
 def test_param_check_defaults(tmp_path: Path) -> None:
