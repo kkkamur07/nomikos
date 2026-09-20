@@ -50,93 +50,143 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Distil a fine-tuned TrOCR-base teacher into a small student."
     )
-    parser.add_argument("--teacher", type=Path, required=True,
-                        help="Teacher checkpoint directory.")
-    parser.add_argument("--data-dir", type=Path, action="append", required=True,
-                        help="Data directory with image/ and gt_*.txt (repeatable).")
-    parser.add_argument("--out", type=Path, required=True,
-                        help="Output directory for checkpoints and metrics.")
-    parser.add_argument("--mode", choices=["smoke", "live"], required=True,
-                        help="smoke: tiny debug run; live: full training.")
-    parser.add_argument("--train-gt", default="gt_train.txt",
-                        help="Train manifest file name.")
-    parser.add_argument("--val-gt", default="gt_val.txt",
-                        help="Validation manifest file name.")
-    parser.add_argument("--image-subdir", default="image",
-                        help="Image subdirectory name inside each data dir.")
-    parser.add_argument("--enc-hidden", type=int, default=192,
-                        help="Student encoder hidden size.")
-    parser.add_argument("--enc-layers", type=int, default=12,
-                        help="Student encoder layers.")
-    parser.add_argument("--enc-heads", type=int, default=3,
-                        help="Student encoder attention heads.")
-    parser.add_argument("--dec-dim", type=int, default=256,
-                        help="Student decoder model dimension.")
-    parser.add_argument("--dec-layers", type=int, default=4,
-                        help="Student decoder layers.")
-    parser.add_argument("--dec-heads", type=int, default=4,
-                        help="Student decoder attention heads.")
-    parser.add_argument("--dec-ffn", type=int, default=1024,
-                        help="Student decoder FFN dimension.")
-    parser.add_argument("--encoder-init", choices=["scratch", "deit-tiny"],
-                        default="scratch",
-                        help="Init student encoder from scratch or deit-tiny.")
-    parser.add_argument("--embed-init", choices=["pca", "random"], default="pca",
-                        help="Init student token embedding via PCA or randomly.")
-    parser.add_argument("--param-check", action="store_true",
-                        help="Print student parameter counts and exit.")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print dataset stats and parameter counts, then exit.")
-    parser.add_argument("--temperature", type=float, default=2.5,
-                        help="Distillation temperature.")
-    parser.add_argument("--alpha", type=float, default=0.65,
-                        help="Weight of the KD loss (1-alpha for cross-entropy).")
+    parser.add_argument("--teacher", type=Path, required=True, help="Teacher checkpoint directory.")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        action="append",
+        required=True,
+        help="Data directory with image/ and gt_*.txt (repeatable).",
+    )
+    parser.add_argument(
+        "--out", type=Path, required=True, help="Output directory for checkpoints and metrics."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["smoke", "live"],
+        required=True,
+        help="smoke: tiny debug run; live: full training.",
+    )
+    parser.add_argument("--train-gt", default="gt_train.txt", help="Train manifest file name.")
+    parser.add_argument("--val-gt", default="gt_val.txt", help="Validation manifest file name.")
+    parser.add_argument(
+        "--image-subdir", default="image", help="Image subdirectory name inside each data dir."
+    )
+    parser.add_argument("--enc-hidden", type=int, default=192, help="Student encoder hidden size.")
+    parser.add_argument("--enc-layers", type=int, default=12, help="Student encoder layers.")
+    parser.add_argument("--enc-heads", type=int, default=3, help="Student encoder attention heads.")
+    parser.add_argument("--dec-dim", type=int, default=256, help="Student decoder model dimension.")
+    parser.add_argument("--dec-layers", type=int, default=4, help="Student decoder layers.")
+    parser.add_argument("--dec-heads", type=int, default=4, help="Student decoder attention heads.")
+    parser.add_argument("--dec-ffn", type=int, default=1024, help="Student decoder FFN dimension.")
+    parser.add_argument(
+        "--encoder-init",
+        choices=["scratch", "deit-tiny"],
+        default="scratch",
+        help="Init student encoder from scratch or deit-tiny.",
+    )
+    parser.add_argument(
+        "--embed-init",
+        choices=["pca", "random"],
+        default="pca",
+        help="Init student token embedding via PCA or randomly.",
+    )
+    parser.add_argument(
+        "--param-check", action="store_true", help="Print student parameter counts and exit."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print dataset stats and parameter counts, then exit.",
+    )
+    parser.add_argument("--temperature", type=float, default=2.5, help="Distillation temperature.")
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.65,
+        help="Weight of the KD loss (1-alpha for cross-entropy).",
+    )
     parser.add_argument("--lr", type=float, default=3e-4, help="Peak learning rate.")
-    parser.add_argument("--weight-decay", type=float, default=0.05,
-                        help="AdamW weight decay.")
-    parser.add_argument("--warmup-ratio", type=float, default=0.05,
-                        help="Fraction of steps for linear warmup.")
-    parser.add_argument("--max-grad-norm", type=float, default=1.0,
-                        help="Gradient clipping norm.")
-    parser.add_argument("--batch-size", type=int, default=None,
-                        help="Per-device batch size (default: 8 smoke, 32 live).")
-    parser.add_argument("--grad-accum", type=int, default=1,
-                        help="Gradient accumulation steps.")
-    parser.add_argument("--epochs", type=int, default=None,
-                        help="Epochs (default: 30 in both modes).")
-    parser.add_argument("--max-steps", type=int, default=None,
-                        help="Cap on training steps (default: 30 smoke, none live).")
-    parser.add_argument("--eval-every", type=int, default=None,
-                        help="Evaluate every N steps (default: 15 smoke, 500 live).")
-    parser.add_argument("--log-every", type=int, default=None,
-                        help="Log every N steps (default: 5 smoke, 50 live).")
-    parser.add_argument("--max-target-length", type=int, default=50,
-                        help="Maximum label length including EOS.")
-    parser.add_argument("--num-workers", type=int, default=4,
-                        help="DataLoader workers.")
+    parser.add_argument("--weight-decay", type=float, default=0.05, help="AdamW weight decay.")
+    parser.add_argument(
+        "--warmup-ratio", type=float, default=0.05, help="Fraction of steps for linear warmup."
+    )
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Gradient clipping norm.")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Per-device batch size (default: 8 smoke, 32 live).",
+    )
+    parser.add_argument("--grad-accum", type=int, default=1, help="Gradient accumulation steps.")
+    parser.add_argument(
+        "--epochs", type=int, default=None, help="Epochs (default: 30 in both modes)."
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Cap on training steps (default: 30 smoke, none live).",
+    )
+    parser.add_argument(
+        "--eval-every",
+        type=int,
+        default=None,
+        help="Evaluate every N steps (default: 15 smoke, 500 live).",
+    )
+    parser.add_argument(
+        "--log-every", type=int, default=None, help="Log every N steps (default: 5 smoke, 50 live)."
+    )
+    parser.add_argument(
+        "--max-target-length", type=int, default=50, help="Maximum label length including EOS."
+    )
+    parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers.")
     parser.add_argument("--seed", type=int, default=1111, help="Random seed.")
-    parser.add_argument("--max-train-samples", type=int, default=None,
-                        help="Cap train samples (default: 256 smoke, all live).")
-    parser.add_argument("--max-val-samples", type=int, default=None,
-                        help="Cap val samples (default: 64 smoke, all live).")
-    parser.add_argument("--bf16", dest="bf16", action="store_true", default=True,
-                        help="Use bfloat16 for the teacher and student on CUDA.")
-    parser.add_argument("--no-bf16", dest="bf16", action="store_false",
-                        help="Disable bfloat16.")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume from <out>/last.pt.")
+    parser.add_argument(
+        "--max-train-samples",
+        type=int,
+        default=None,
+        help="Cap train samples (default: 256 smoke, all live).",
+    )
+    parser.add_argument(
+        "--max-val-samples",
+        type=int,
+        default=None,
+        help="Cap val samples (default: 64 smoke, all live).",
+    )
+    parser.add_argument(
+        "--bf16",
+        dest="bf16",
+        action="store_true",
+        default=True,
+        help="Use bfloat16 for the teacher and student on CUDA.",
+    )
+    parser.add_argument("--no-bf16", dest="bf16", action="store_false", help="Disable bfloat16.")
+    parser.add_argument("--resume", action="store_true", help="Resume from <out>/last.pt.")
     return parser
 
 
 def apply_mode_presets(args: argparse.Namespace) -> None:
     """Fill unset training-size flags from the smoke/live presets."""
     presets = {
-        "smoke": {"batch_size": 8, "epochs": 30, "max_steps": 30,
-                  "eval_every": 15, "log_every": 5,
-                  "max_train_samples": 256, "max_val_samples": 64},
-        "live": {"batch_size": 32, "epochs": 30, "max_steps": None,
-                 "eval_every": 500, "log_every": 50,
-                 "max_train_samples": None, "max_val_samples": None},
+        "smoke": {
+            "batch_size": 8,
+            "epochs": 30,
+            "max_steps": 30,
+            "eval_every": 15,
+            "log_every": 5,
+            "max_train_samples": 256,
+            "max_val_samples": 64,
+        },
+        "live": {
+            "batch_size": 32,
+            "epochs": 30,
+            "max_steps": None,
+            "eval_every": 500,
+            "log_every": 50,
+            "max_train_samples": None,
+            "max_val_samples": None,
+        },
     }
     for key, value in presets[args.mode].items():
         if getattr(args, key) is None:
@@ -174,9 +224,7 @@ class DistillLineDataset(Dataset):
         return {"image": image, "text": text}
 
 
-def make_collator(
-    processor: TrOCRProcessor, max_target_length: int
-) -> Any:
+def make_collator(processor: TrOCRProcessor, max_target_length: int) -> Any:
     """Batch images and labels with the repo label convention."""
     tokenizer = processor.tokenizer
     if tokenizer.eos_token_id is None or tokenizer.pad_token_id is None:
@@ -218,8 +266,7 @@ def patch_encoder_decoder_ids(
     subconfig, but the encoder-decoder forward reads them top-level.
     """
     decoder = config.decoder
-    defaults = (("decoder_start_token_id", 2), ("pad_token_id", 1),
-                ("eos_token_id", 2))
+    defaults = (("decoder_start_token_id", 2), ("pad_token_id", 1), ("eos_token_id", 2))
     for name, default in defaults:
         try:
             getattr(config, name)
@@ -247,14 +294,16 @@ def build_student(
     config = VisionEncoderDecoderConfig.from_encoder_decoder_configs(enc_cfg, dec_cfg)
     teacher_decoder = teacher.config.decoder
     config.decoder_start_token_id = getattr(
-        teacher.config, "decoder_start_token_id",
-        getattr(teacher_decoder, "decoder_start_token_id", 2))
+        teacher.config,
+        "decoder_start_token_id",
+        getattr(teacher_decoder, "decoder_start_token_id", 2),
+    )
     config.pad_token_id = getattr(
-        teacher.config, "pad_token_id",
-        getattr(teacher_decoder, "pad_token_id", 1))
+        teacher.config, "pad_token_id", getattr(teacher_decoder, "pad_token_id", 1)
+    )
     config.eos_token_id = getattr(
-        teacher.config, "eos_token_id",
-        getattr(teacher_decoder, "eos_token_id", 2))
+        teacher.config, "eos_token_id", getattr(teacher_decoder, "eos_token_id", 2)
+    )
     return VisionEncoderDecoderModel(config)
 
 
@@ -288,9 +337,7 @@ def find_embed_weight(
     model: torch.nn.Module, vocab_size: int, embed_dim: int
 ) -> torch.nn.Parameter | None:
     for name, param in model.named_parameters():
-        if tuple(param.shape) == (vocab_size, embed_dim) and (
-            "embed" in name or "shared" in name
-        ):
+        if tuple(param.shape) == (vocab_size, embed_dim) and ("embed" in name or "shared" in name):
             return param
     return None
 
@@ -324,19 +371,15 @@ def init_embed_pca(
                 if "embed" in _name or "shared" in _name or "lm_head" in _name:
                     param.copy_(projected)
                     copied += 1
-    log(f"embed-init pca: explained variance ratio {explained:.4f}, "
-        f"copied into {copied} tensor(s)")
+    log(f"embed-init pca: explained variance ratio {explained:.4f}, copied into {copied} tensor(s)")
 
 
-def init_encoder_deit(
-    student: VisionEncoderDecoderModel, args: argparse.Namespace
-) -> None:
+def init_encoder_deit(student: VisionEncoderDecoderModel, args: argparse.Namespace) -> None:
     """Load deit-tiny weights into the student encoder, resizing positions."""
     from transformers import DeiTModel
 
     reference = DeiTModel.from_pretrained("facebook/deit-tiny-patch16-224").config
-    expected = (reference.hidden_size, reference.num_hidden_layers,
-                reference.num_attention_heads)
+    expected = (reference.hidden_size, reference.num_hidden_layers, reference.num_attention_heads)
     actual = (args.enc_hidden, args.enc_layers, args.enc_heads)
     if expected != actual:
         raise SystemExit(
@@ -357,8 +400,9 @@ def init_encoder_deit(
         raise SystemExit("Student position embeddings are not a square grid.")
     cls_token, grid = donor_pos[:, :1, :], donor_pos[:, 1:, :]
     grid = grid.reshape(1, donor_grid, donor_grid, -1).permute(0, 3, 1, 2)
-    grid = F.interpolate(grid, size=(student_grid, student_grid),
-                         mode="bicubic", align_corners=False)
+    grid = F.interpolate(
+        grid, size=(student_grid, student_grid), mode="bicubic", align_corners=False
+    )
     grid = grid.permute(0, 2, 3, 1).reshape(1, student_grid * student_grid, -1)
     target[pos_key].copy_(torch.cat([cls_token, grid], dim=1))
     copied = 1
@@ -380,15 +424,13 @@ def report_param_counts(student: VisionEncoderDecoderModel) -> int:
     total, encoder, decoder = count_params(student)
     vocab_size = int(student.config.decoder.vocab_size)
     tied = tied_embed_size(student, vocab_size)
-    log(f"params total={total} encoder={encoder} decoder={decoder} "
-        f"tied_embed={tied}")
+    log(f"params total={total} encoder={encoder} decoder={decoder} tied_embed={tied}")
     return total
 
 
 def check_param_range(total: int) -> None:
     if MIN_PARAMS <= total <= MAX_PARAMS:
-        log(f"param-check passed: {total} within "
-            f"[{MIN_PARAMS}, {MAX_PARAMS}]")
+        log(f"param-check passed: {total} within [{MIN_PARAMS}, {MAX_PARAMS}]")
     else:
         log(f"param-check FAILED: {total} outside [{MIN_PARAMS}, {MAX_PARAMS}]")
         raise SystemExit(1)
@@ -398,8 +440,7 @@ def load_split(
     data_dirs: list[Path], gt_file: str, image_subdir: str, cap: int | None
 ) -> tuple[Dataset, list[DistillLineDataset]]:
     datasets = [DistillLineDataset(d, gt_file, image_subdir) for d in data_dirs]
-    combined: Dataset = (ConcatDataset(datasets) if len(datasets) > 1
-                         else datasets[0])
+    combined: Dataset = ConcatDataset(datasets) if len(datasets) > 1 else datasets[0]
     if cap is not None:
         combined = Subset(combined, range(min(cap, len(combined))))
     return combined, datasets
@@ -412,12 +453,13 @@ def dry_run(
     for data_dir in args.data_dir:
         train_ds = DistillLineDataset(data_dir, args.train_gt, args.image_subdir)
         val_ds = DistillLineDataset(data_dir, args.val_gt, args.image_subdir)
-        log(f"{data_dir}: train={len(train_ds)} val={len(val_ds)} "
-            f"missing_train={train_ds.missing} missing_val={val_ds.missing}")
+        log(
+            f"{data_dir}: train={len(train_ds)} val={len(val_ds)} "
+            f"missing_train={train_ds.missing} missing_val={val_ds.missing}"
+        )
         for name, text in train_ds.samples[:3]:
             log(f"  sample {name}\t{text}")
-        first_image = Image.open(
-            train_ds.image_dir / train_ds.samples[0][0]).convert("RGB")
+        first_image = Image.open(train_ds.image_dir / train_ds.samples[0][0]).convert("RGB")
         log(f"  first image size={first_image.size}")
     student = build_student(teacher, args)
     check_param_range(report_param_counts(student))
@@ -439,8 +481,9 @@ def distillation_loss(
     teacher_masked = teacher_flat[mask]
     soft_teacher = F.softmax(teacher_masked / temperature, dim=-1)
     log_soft_student = F.log_softmax(student_masked / temperature, dim=-1)
-    loss_kd = (F.kl_div(log_soft_student, soft_teacher, reduction="batchmean")
-               * temperature * temperature)
+    loss_kd = (
+        F.kl_div(log_soft_student, soft_teacher, reduction="batchmean") * temperature * temperature
+    )
     loss_ce = F.cross_entropy(student_flat, labels_flat, ignore_index=-100)
     total = alpha * loss_kd + (1.0 - alpha) * loss_ce
     return total, loss_kd, loss_ce
@@ -461,25 +504,25 @@ def evaluate(
     predictions: list[str] = []
     ce_sum = 0.0
     ce_tokens = 0
-    context = (torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-               if use_bf16 else nullcontext())
+    context = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16) if use_bf16 else nullcontext()
+    )
     for batch in loader:
         pixel_values = batch["pixel_values"].to(device)
         labels = batch["labels"].to(device)
         with context:
             outputs = model(pixel_values=pixel_values, labels=labels)
-            generated = model.generate(
-                pixel_values, max_length=max_target_length, num_beams=1)
+            generated = model.generate(pixel_values, max_length=max_target_length, num_beams=1)
         ce_sum += float(outputs.loss.float()) * int((labels != -100).sum())
         ce_tokens += int((labels != -100).sum())
         texts = processor.tokenizer.batch_decode(
-            generated, skip_special_tokens=True,
-            clean_up_tokenization_spaces=False)
+            generated, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
         decoded_labels = labels.clone()
         decoded_labels[decoded_labels == -100] = processor.tokenizer.pad_token_id
         refs = processor.tokenizer.batch_decode(
-            decoded_labels, skip_special_tokens=True,
-            clean_up_tokenization_spaces=False)
+            decoded_labels, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
         predictions.extend(texts)
         references.extend(refs)
     metrics = compute_text_metrics(references, predictions)
@@ -499,20 +542,25 @@ def run_eval_and_save(
     scheduler: torch.optim.lr_scheduler.LambdaLR,
     use_bf16: bool = False,
 ) -> None:
-    metrics = evaluate(
-        student, processor, val_loader, device, args.max_target_length,
-        use_bf16)
+    metrics = evaluate(student, processor, val_loader, device, args.max_target_length, use_bf16)
     record = {"type": "eval", "step": step, **metrics}
-    log(f"eval step={step} cer={metrics['cer']:.4f} wer={metrics['wer']:.4f} "
+    log(
+        f"eval step={step} cer={metrics['cer']:.4f} wer={metrics['wer']:.4f} "
         f"exact_match={metrics['exact_match']:.4f} "
-        f"val_loss_ce={metrics['val_loss_ce']:.4f}", record)
+        f"val_loss_ce={metrics['val_loss_ce']:.4f}",
+        record,
+    )
     state["step"] = step
-    torch.save(state | {
-        "student": student.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "scheduler": scheduler.state_dict(),
-        "best_cer": state["best_cer"],
-    }, args.out / "last.pt")
+    torch.save(
+        state
+        | {
+            "student": student.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "best_cer": state["best_cer"],
+        },
+        args.out / "last.pt",
+    )
     if metrics["cer"] < state["best_cer"]:
         state["best_cer"] = metrics["cer"]
         best_dir = args.out / "best"
@@ -550,14 +598,15 @@ def train(args: argparse.Namespace) -> None:
     student.train()
 
     args.out.mkdir(parents=True, exist_ok=True)
-    with open(args.out / "run_config.json", "w",
-              encoding="utf-8") as handle:
+    with open(args.out / "run_config.json", "w", encoding="utf-8") as handle:
+
         def stringify(value: Any) -> Any:
             if isinstance(value, Path):
                 return str(value)
             if isinstance(value, (list, tuple)):
                 return [stringify(item) for item in value]
             return value
+
         resolved = {k: stringify(v) for k, v in vars(args).items()}
         resolved["param_total"] = total
         resolved["param_encoder"] = encoder
@@ -566,20 +615,24 @@ def train(args: argparse.Namespace) -> None:
 
     collate = make_collator(processor, args.max_target_length)
     train_ds, train_parts = load_split(
-        args.data_dir, args.train_gt, args.image_subdir, args.max_train_samples)
+        args.data_dir, args.train_gt, args.image_subdir, args.max_train_samples
+    )
     val_ds, val_parts = load_split(
-        args.data_dir, args.val_gt, args.image_subdir, args.max_val_samples)
+        args.data_dir, args.val_gt, args.image_subdir, args.max_val_samples
+    )
     for data_dir, part in zip(args.data_dir, train_parts, strict=True):
         log(f"data {data_dir} train={len(part)} missing={part.missing}")
     for data_dir, part in zip(args.data_dir, val_parts, strict=True):
         log(f"data {data_dir} val={len(part)} missing={part.missing}")
-    loader_kwargs = {"batch_size": args.batch_size, "collate_fn": collate,
-                     "num_workers": args.num_workers}
+    loader_kwargs = {
+        "batch_size": args.batch_size,
+        "collate_fn": collate,
+        "num_workers": args.num_workers,
+    }
     train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)  # type: ignore[arg-type]
     val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)  # type: ignore[arg-type]
 
-    steps_per_epoch = max(
-        1, math.ceil(len(train_ds) / (args.batch_size * args.grad_accum)))
+    steps_per_epoch = max(1, math.ceil(len(train_ds) / (args.batch_size * args.grad_accum)))
     if args.max_steps is not None:
         total_steps = int(args.max_steps)
     else:
@@ -594,15 +647,13 @@ def train(args: argparse.Namespace) -> None:
         progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
         return 0.5 * (1.0 + math.cos(math.pi * min(max(progress, 0.0), 1.0)))
 
-    optimizer = torch.optim.AdamW(
-        student.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(student.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_factor)
 
     state: dict[str, Any] = {"best_cer": float("inf"), "step": 0}
     start_step = 0
     if args.resume and (args.out / "last.pt").is_file():
-        checkpoint = torch.load(args.out / "last.pt", map_location=device,
-                                weights_only=False)
+        checkpoint = torch.load(args.out / "last.pt", map_location=device, weights_only=False)
         student.load_state_dict(checkpoint["student"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
@@ -613,12 +664,14 @@ def train(args: argparse.Namespace) -> None:
     with open(args.out / "metrics.jsonl", "a", encoding="utf-8") as handle:
         _jsonl_fh = handle
         teacher_metrics = evaluate(
-            teacher, processor, val_loader, device, args.max_target_length,
-            use_bf16)
-        log(f"teacher cer={teacher_metrics['cer']:.4f} "
+            teacher, processor, val_loader, device, args.max_target_length, use_bf16
+        )
+        log(
+            f"teacher cer={teacher_metrics['cer']:.4f} "
             f"wer={teacher_metrics['wer']:.4f} "
             f"exact_match={teacher_metrics['exact_match']:.4f}",
-            {"type": "teacher_eval", **teacher_metrics})
+            {"type": "teacher_eval", **teacher_metrics},
+        )
 
         step = start_step
         micro = 0
@@ -633,45 +686,68 @@ def train(args: argparse.Namespace) -> None:
                     break
                 pixel_values = batch["pixel_values"].to(device)
                 labels = batch["labels"].to(device)
-                context = (torch.autocast(device_type="cuda",
-                                          dtype=torch.bfloat16)
-                           if use_bf16 else nullcontext())
+                context = (
+                    torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                    if use_bf16
+                    else nullcontext()
+                )
                 with context:
-                    student_out = student(
-                        pixel_values=pixel_values, labels=labels)
+                    student_out = student(pixel_values=pixel_values, labels=labels)
                     with torch.no_grad():
-                        teacher_out = teacher(
-                            pixel_values=pixel_values, labels=labels)
+                        teacher_out = teacher(pixel_values=pixel_values, labels=labels)
                     loss, loss_kd, loss_ce = distillation_loss(
-                        student_out.logits, teacher_out.logits, labels,
-                        args.temperature, args.alpha)
+                        student_out.logits, teacher_out.logits, labels, args.temperature, args.alpha
+                    )
                     loss = loss / args.grad_accum
                 loss.backward()
                 micro += 1
                 if micro % args.grad_accum == 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        student.parameters(), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(student.parameters(), args.max_grad_norm)
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
                     step += 1
                     if step % args.log_every == 0 or step == total_steps:
                         lr = optimizer.param_groups[0]["lr"]
-                        log(f"step={step} lr={lr:.2e} "
+                        log(
+                            f"step={step} lr={lr:.2e} "
                             f"loss={float(loss) * args.grad_accum:.4f} "
                             f"loss_kd={float(loss_kd):.4f} "
                             f"loss_ce={float(loss_ce):.4f}",
-                            {"type": "train", "step": step, "lr": lr,
-                             "loss": float(loss) * args.grad_accum,
-                             "loss_kd": float(loss_kd),
-                             "loss_ce": float(loss_ce)})
+                            {
+                                "type": "train",
+                                "step": step,
+                                "lr": lr,
+                                "loss": float(loss) * args.grad_accum,
+                                "loss_kd": float(loss_kd),
+                                "loss_ce": float(loss_ce),
+                            },
+                        )
                     if step % args.eval_every == 0:
-                        run_eval_and_save(student, processor, val_loader,
-                                          device, args, step, state,
-                                          optimizer, scheduler, use_bf16)
-            run_eval_and_save(student, processor, val_loader, device,
-                              args, step, state, optimizer, scheduler,
-                              use_bf16)
+                        run_eval_and_save(
+                            student,
+                            processor,
+                            val_loader,
+                            device,
+                            args,
+                            step,
+                            state,
+                            optimizer,
+                            scheduler,
+                            use_bf16,
+                        )
+            run_eval_and_save(
+                student,
+                processor,
+                val_loader,
+                device,
+                args,
+                step,
+                state,
+                optimizer,
+                scheduler,
+                use_bf16,
+            )
         _jsonl_fh = None
 
     final_dir = args.out / "final"
@@ -698,4 +774,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
