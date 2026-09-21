@@ -30,7 +30,7 @@ configs:
 
 # Armenian Manuscript HTR (BnF Arménien 172 and UCLA Armenian MS 72)
 
-This release contains handwritten text recognition ground truth for two Armenian canon law manuscripts: 1,704 transcribed lines with line polygons and baselines across 34 pages. Page images are shipped for the BnF manuscript under Gallica terms. The UCLA manuscript ships as geometry and text only, pending rights confirmation.
+This release contains handwritten text recognition ground truth for two Armenian canon law manuscripts: 1,704 transcribed lines with line polygons and baselines across 34 pages. Page images ship for both manuscripts: the BnF manuscript under Gallica terms and the UCLA manuscript by decision of the NOMOS project.
 
 ## The language and the manuscripts
 
@@ -49,13 +49,13 @@ As the project continues, transcriptions will grow in length and variety, with m
 | Manuscript | Pages | Paired lines | Images shipped |
 | --- | ---: | ---: | --- |
 | Paris, BnF, Arménien 172, ff. 215v to 223v | 17 | 886 | yes |
-| Los Angeles, UCLA, Armenian MS 72, ff. 64v to 73v | 17 | 818 | no |
+| Los Angeles, UCLA, Armenian MS 72, ff. 64v to 73v | 17 | 818 | yes |
 
 Only pages with at least one paired line are included. Eighteen segments across the two manuscripts have no paired text yet and appear only in the page level objects. Every number in this card comes from manifest.csv.
 
 ## Files and formats
 
-Each manuscript folder holds native PAGE XML 2019 files (`page-xml/<manuscript>/NNNN.xml`), with page images beside them (`images/<manuscript>/NNNN.<ext>`) where images are shipped, so the pages open directly in eScriptorium, Kraken and Transkribus. Two Parquet configs carry the same content in machine readable form. The `lines` config has one row per paired line: `line_id`, `manuscript`, `shelfmark`, `page_index`, `line_index` in reading order, `text`, `image` (the line crop, cut to the axis-aligned bounding box of the polygon with 4 px padding and stored as PNG, null where images are not shipped), `polygon`, `baseline`, `bbox`, `page_width`, `page_height`, `image_shipped` and `source_url`. The `pages` config has one row per page with the full page image (null where images are not shipped) and an `objects` column holding every segment, paired or not. There is a single `train` split. The corpus is too small for a validation or test split to be meaningful.
+Each manuscript folder holds native PAGE XML 2019 files (`page-xml/<manuscript>/NNNN.xml`), with page images beside them (`images/<manuscript>/NNNN.<ext>`), so the pages open directly in eScriptorium, Kraken and Transkribus. Two Parquet configs carry the same content in machine readable form. The `lines` config has one row per paired line: `line_id`, `manuscript`, `shelfmark`, `page_index`, `line_index` in reading order, `text`, `image` (the line crop, cut to the axis-aligned bounding box of the polygon with 4 px padding and stored as PNG), `polygon`, `baseline`, `bbox`, `page_width`, `page_height`, `image_shipped`, `source_url`, `folio` and `text_source`. The `pages` config has one row per page with the full page image and an `objects` column holding every segment, paired or not. There is a single `train` split. The corpus is too small for a validation or test split to be meaningful.
 
 ```python
 from datasets import load_dataset
@@ -71,11 +71,11 @@ Source gallica.bnf.fr / Bibliothèque nationale de France
 
 These are Gallica's own terms, not a Creative Commons licence. The manuscript can be found on Gallica (https://gallica.bnf.fr/) by its shelfmark.
 
-No images ship for UCLA Armenian MS 72. UCLA Library places clearance responsibility on the researcher: "Document reproduction, streaming, or dissemination beyond the scope allowed under traditional academic Fair Use principles requires explicit, written authorization", and "The final legal responsibility for identifying rights holders, securing permissions, and addressing property restrictions rests exclusively with the researcher" (https://guides.library.ucla.edu/c.php?g=1423298&p=10570712). Its metadata statement releases descriptions under CC0 but explicitly excludes images and other digital content. Image release waits on a direct inquiry to copyright@library.ucla.edu confirming the item's rights status. Until then, fetch the images from the UCLA catalogue record at https://digital.library.ucla.edu/catalog/ark:/21198/zz0026w379. Coordinates in this release refer to catalogue images of 3576 to 3640 by 4688 to 4728 pixels; per-page sizes are in manifest.csv.
+The UCLA Armenian MS 72 images come from the UCLA Library Digital Collections record https://digital.library.ucla.edu/catalog/ark:/21198/zz0026w379 and ship by decision of the NOMOS project. UCLA Library places clearance responsibility on the researcher: "Document reproduction, streaming, or dissemination beyond the scope allowed under traditional academic Fair Use principles requires explicit, written authorization", and "The final legal responsibility for identifying rights holders, securing permissions, and addressing property restrictions rests exclusively with the researcher" (https://guides.library.ucla.edu/c.php?g=1423298&p=10570712). Its metadata statement releases descriptions under CC0 but explicitly excludes images and other digital content. Anyone reusing the images beyond research carries that responsibility themselves. Credit: UCLA Library Special Collections. Coordinates in this release refer to catalogue images of 3576 to 3640 by 4688 to 4728 pixels; per-page sizes are in manifest.csv.
 
 ## Licence
 
-Transcriptions, line polygons and baselines are the project's own work and are released under CC BY 4.0, with credit to "NOMOS project, LMU Munich". Page images stay under the holding library's terms described above and are never covered by the CC licence. For machine learning uses of the page images, Gallica grants free use for non-profit academic scientific research with the credit "BnF / Gallica" and requires a paid licence otherwise, while general reuse carries the credit "Source gallica.bnf.fr / Bibliothèque nationale de France". See LICENSE.md for the full two-part text.
+Transcriptions, line polygons and baselines are the project's own work and are released under CC BY 4.0, with credit to "Dr. Federico Alpi, NOMOS project, LMU Munich". Page images stay under the holding library's terms described above and are never covered by the CC licence. For machine learning uses of the page images, Gallica grants free use for non-profit academic scientific research with the credit "BnF / Gallica" and requires a paid licence otherwise, while general reuse carries the credit "Source gallica.bnf.fr / Bibliothèque nationale de France". See LICENSE.md for the full two-part text.
 
 ## How the data was made
 
@@ -89,11 +89,15 @@ The release holds 1,704 lines on 34 pages, in one hand per manuscript. There is 
 
 NOMIKOS is the HTR platform of the ERC Consolidator Grant NOMOS, "The Challenge of Islam and the Transformation of Eastern Christian Normative Regimes, ca. 630-1100", grant 101171233, at Ludwig-Maximilians-Universität München, with PI Prof. Dr. Zachary Chitwood. See https://cordis.europa.eu/project/id/101171233 and http://nomosproject.de/ and the platform at https://nomikos.app.
 
+## Credits
+
+The ground truth transcriptions were provided by Dr. Federico Alpi of the NOMOS project. The NOMIKOS team segmented the pages, paired text to lines and curated the release.
+
 ## Citation
 
 ```bibtex
 @misc{nomos_armenian_manuscript_htr_2026,
-  author = {NOMOS project},
+  author = {Alpi, Federico and {NOMOS project}},
   title = {Armenian Manuscript HTR: canon law manuscripts line transcriptions and page layout},
   year = {2026},
   url = {https://huggingface.co/datasets/nomikos-project/armenian-manuscript-htr}

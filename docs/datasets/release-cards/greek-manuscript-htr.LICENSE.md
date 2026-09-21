@@ -6,7 +6,7 @@ This dataset carries two parts under two different regimes. The split is deliber
 
 All transcriptions, line polygons, baselines and PAGE XML structure in this dataset are released under the Creative Commons Attribution 4.0 International Licence (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/). Credit them as:
 
-NOMOS project, LMU Munich
+Prof. Dr. Zachary Chitwood, NOMOS project, LMU Munich
 
 ## 2. Page images: Gallica terms of use
 

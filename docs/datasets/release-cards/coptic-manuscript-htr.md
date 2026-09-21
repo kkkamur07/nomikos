@@ -45,9 +45,56 @@ The training data comes from Coptic Literary Manuscript 359, which preserves a t
 
 Only pages with at least one paired line are included. Four further Naples pages carry line segmentation but no transcription yet, so they are left out. Ten segments across the release have no paired text and appear only in the page level objects. Every number in this card comes from manifest.csv.
 
+## Which file is which folio
+
+Coordinates refer to an image of exactly that pixel size, so scale polygons by the ratio if your copy of the image has another size.
+
+Vatican City, BAV, Borg. copt. 109. The folio is what to open in the DigiVatLib viewer (https://digi.vatlib.it/view/MSS_Borg.copt.109).
+
+| XML file | Parquet `page_index` | Folio | Pixel size | Paired lines |
+| --- | ---: | --- | --- | ---: |
+| 0000.xml | 0 | 1r | 1136 by 1348 | 63 |
+| 0001.xml | 1 | 1v | 1136 by 1348 | 62 |
+| 0002.xml | 2 | 2r | 1136 by 1348 | 58 |
+| 0003.xml | 3 | 2v | 1136 by 1348 | 55 |
+| 0004.xml | 4 | 3r | 1136 by 1348 | 59 |
+| 0005.xml | 5 | 3v | 1136 by 1348 | 53 |
+| 0006.xml | 6 | 4r | 1136 by 1348 | 57 |
+| 0007.xml | 7 | 4v | 1136 by 1348 | 55 |
+| 0008.xml | 8 | 5r | 1136 by 1348 | 43 |
+| 0009.xml | 9 | 5v | 1136 by 1348 | 43 |
+| 0010.xml | 10 | 6r | 1136 by 1348 | 60 |
+| 0011.xml | 11 | 6v | 1136 by 1348 | 60 |
+| 0012.xml | 12 | 7r | 1136 by 1348 | 63 |
+| 0013.xml | 13 | 7v | 1136 by 1348 | 60 |
+| 0014.xml | 14 | 8r | 1136 by 1348 | 60 |
+| 0015.xml | 15 | 8v | 1136 by 1348 | 61 |
+| 0016.xml | 16 | 9r | 1136 by 1348 | 57 |
+| 0017.xml | 17 | 9v | 1136 by 1348 | 59 |
+
+Naples, BNVE, IB.10.10-24.
+
+| XML file | Parquet `page_index` | Image number | Pixel size | Paired lines |
+| --- | ---: | --- | --- | ---: |
+| 0000.xml | 0 | c 10 | 812 by 964 | 63 |
+| 0001.xml | 1 | c 11 | 1536 by 982 | 127 |
+| 0002.xml | 2 | c 12 | 1392 by 933 | 123 |
+| 0003.xml | 3 | c 13 | 1426 by 941 | 127 |
+| 0004.xml | 4 | c 14 | 1438 by 942 | 131 |
+| 0005.xml | 5 | c 15 | 1454 by 952 | 131 |
+| 0006.xml | 6 | c 16 | 1414 by 919 | 124 |
+| 0007.xml | 7 | c 17 | 1462 by 925 | 126 |
+| 0008.xml | 8 | c 18 | 1442 by 937 | 120 |
+| 0009.xml | 9 | c 19 | 1416 by 949 | 119 |
+| 0010.xml | 10 | c 20 | 1340 by 853 | 118 |
+| 0011.xml | 11 | c 21 | 1310 by 847 | 120 |
+| 0012.xml | 12 | c 22 | 1368 by 859 | 120 |
+| 0013.xml | 13 | c 23 | 1346 by 875 | 121 |
+| 0014.xml | 14 | c 24 | 1328 by 909 | 123 |
+
 ## Files and formats
 
-Each manuscript folder holds native PAGE XML 2019 files (`page-xml/<manuscript>/NNNN.xml`), which open directly in eScriptorium, Kraken and Transkribus once the page images are fetched from the libraries (see below). Two Parquet configs carry the same content in machine readable form. The `lines` config has one row per paired line: `line_id`, `manuscript`, `shelfmark`, `page_index`, `line_index` in reading order, `text`, `image` (null throughout this release), `polygon`, `baseline`, `bbox`, `page_width`, `page_height`, `image_shipped` and `source_url`. The `pages` config has one row per page with a null image and an `objects` column holding every segment, paired or not. There is a single `train` split. The corpus is too small for a validation or test split to be meaningful.
+Each manuscript folder holds native PAGE XML 2019 files (`page-xml/<manuscript>/NNNN.xml`), which open directly in eScriptorium, Kraken and Transkribus once the page images are obtained from the libraries (see below); project members can also view them on the NOMIKOS platform, https://nomikos.app. Two Parquet configs carry the same content in machine readable form. The `lines` config has one row per paired line: `line_id`, `manuscript`, `shelfmark`, `page_index`, `line_index` in reading order, `text`, `image` (null throughout this release), `polygon`, `baseline`, `bbox`, `page_width`, `page_height`, `image_shipped`, `source_url`, `folio` and `text_source`. The `pages` config has one row per page with a null image and an `objects` column holding every segment, paired or not. There is a single `train` split. The corpus is too small for a validation or test split to be meaningful.
 
 ```python
 from datasets import load_dataset
@@ -65,7 +112,7 @@ For Naples, no confirmed image host or item level terms were found, so no redist
 
 ## Licence
 
-Transcriptions, line polygons and baselines are the project's own work and are released under CC BY 4.0, with credit to "NOMOS project, LMU Munich".
+Transcriptions, line polygons and baselines are the project's own work and are released under CC BY 4.0, with credit to "Dr. Constanza Bianci, NOMOS project, LMU Munich".
 
 ## How the data was made
 
@@ -79,11 +126,15 @@ The release holds 2,821 lines on 33 pages, in one hand per manuscript. There is 
 
 NOMIKOS is the HTR platform of the ERC Consolidator Grant NOMOS, "The Challenge of Islam and the Transformation of Eastern Christian Normative Regimes, ca. 630-1100", grant 101171233, at Ludwig-Maximilians-Universität München, with PI Prof. Dr. Zachary Chitwood. See https://cordis.europa.eu/project/id/101171233 and http://nomosproject.de/ and the platform at https://nomikos.app.
 
+## Credits
+
+The ground truth transcriptions were provided by Dr. Constanza Bianci of the NOMOS project. The NOMIKOS team segmented the pages, paired text to lines and curated the release.
+
 ## Citation
 
 ```bibtex
 @misc{nomos_coptic_manuscript_htr_2026,
-  author = {NOMOS project},
+  author = {Bianci, Constanza and {NOMOS project}},
   title = {Coptic Manuscript HTR: CLM 359 witnesses line transcriptions and page layout},
   year = {2026},
   url = {https://huggingface.co/datasets/nomikos-project/coptic-manuscript-htr}

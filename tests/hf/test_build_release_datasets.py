@@ -160,6 +160,159 @@ def test_release_layout_manifest_and_xml(fake_tree):
     assert page.get("imageWidth") == "60"
 
 
+def test_ship_images_switch():
+    builder = _load()
+    assert builder.SHIP_IMAGES == {
+        "bnf-grec-1360": True,
+        "bnf-armenien-172": True,
+        "ucla-armenian-ms-72": True,
+        "alqosh-65": True,
+        "bav-borg-copt-109": False,
+        "naples-ib-10": False,
+    }
+
+
+def _local_opening_xml() -> bytes:
+    root = Element(_tag("PcGts"))
+    metadata = SubElement(root, _tag("Metadata"))
+    SubElement(metadata, _tag("Creator")).text = "NOMIKOS"
+    page = SubElement(
+        root,
+        _tag("Page"),
+        {"imageFilename": "opening.png", "imageWidth": "1000", "imageHeight": "800"},
+    )
+    region = SubElement(page, _tag("TextRegion"), {"id": "region_p", "type": "paragraph"})
+    lines = [
+        ("right", [[800, 100], [950, 100], [950, 130], [800, 130]], "right text"),
+        ("left", [[100, 200], [300, 200], [300, 230], [100, 230]], "left text"),
+        ("stray", [[800, 400], [950, 400], [950, 430], [800, 430]], None),
+    ]
+    for position, (name, poly, text) in enumerate(lines):
+        text_line = SubElement(
+            region,
+            _tag("TextLine"),
+            {"id": f"line_{name}", "custom": f"readingOrder {{index:{position};}}"},
+        )
+        SubElement(
+            text_line,
+            _tag("Coords"),
+            {"points": " ".join(f"{x},{y}" for x, y in poly)},
+        )
+        SubElement(
+            text_line,
+            _tag("Baseline"),
+            {"points": f"{poly[0][0]},{poly[0][1] + 20} {poly[1][0]},{poly[1][1] + 20}"},
+        )
+        if text is not None:
+            equiv = SubElement(text_line, _tag("TextEquiv"))
+            SubElement(equiv, _tag("Unicode")).text = text
+    return xml_tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def test_local_page_xml_reading_order_and_folio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    builder = _load()
+    raw = tmp_path / "raw"
+    monkeypatch.setitem(
+        builder.MANUSCRIPTS,
+        "bnf-grec-1360",
+        {
+            "project_slug": "proj",
+            "doc_slug": "doc-grk",
+            "shelfmark": "Shelf Grec",
+            "source_url": "https://example.invalid/grec",
+        },
+    )
+    monkeypatch.setitem(builder.LOCAL_PAGE_XML, "bnf-grec-1360", {2: "opening.xml"})
+    recorded: dict[str, dict] = {}
+
+    def stub_write_parquet(path: Path, columns: dict, schema_kind: str) -> None:
+        recorded[schema_kind] = columns
+        path.with_suffix(".json").write_text(json.dumps(columns, default=str))
+
+    monkeypatch.setattr(builder, "write_parquet", stub_write_parquet)
+
+    def write_page(order: int, lines: list[dict]):
+        base = raw / "proj" / "doc-grk"
+        (base / "images").mkdir(parents=True, exist_ok=True)
+        (base / "page").mkdir(parents=True, exist_ok=True)
+        image = Image.new("RGB", (1000, 800), "white")
+        image.save(base / "images" / f"{order:04d}_part.png")
+        (base / "page" / f"{order:04d}_part.xml").write_bytes(
+            _fake_page_xml(f"{order:04d}_part.png", 1000, 800, lines)
+        )
+
+    lone = {"poly": [[10, 10], [30, 10], [30, 20], [10, 20]], "text": None}
+    # Order 0 carries no paired text and no local entry, so it drops out.
+    write_page(0, [dict(lone)])
+    write_page(
+        1,
+        [
+            {
+                "poly": [[10, 10], [30, 10], [30, 20], [10, 20]],
+                "text": "production text",
+            }
+        ],
+    )
+    # Order 2 carries no production text; the local opening rescues it.
+    write_page(2, [dict(lone)])
+    local_base = tmp_path / "local"
+    (local_base / "xml").mkdir(parents=True)
+    (local_base / "xml" / "opening.xml").write_bytes(_local_opening_xml())
+
+    out = tmp_path / "release"
+    counts = builder.build_repo(
+        raw, out, tmp_path / "cards", "greek-manuscript-htr", {}, local_base
+    )
+    assert counts == {"pages": 2, "lines": 3, "images_shipped": 2}
+    repo_dir = out / "greek-manuscript-htr"
+    with (repo_dir / "manifest.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    # Folios come from the raw part order, not the filtered position.
+    assert [(row["page_index"], row["folio"]) for row in rows] == [
+        ("1", "2v-3r"),
+        ("2", "3v-4r"),
+    ]
+    assert [row["text_source"] for row in rows] == ["production", "local-page-xml"]
+    # Left folio block sorts before the right block; empty text is unpaired.
+    assert recorded["lines"]["text"] == ["production text", "left text", "right text"]
+    assert recorded["lines"]["folio"] == ["2v-3r", "3v-4r", "3v-4r"]
+    assert recorded["lines"]["text_source"] == [
+        "production",
+        "local-page-xml",
+        "local-page-xml",
+    ]
+    assert recorded["pages"]["folio"] == ["2v-3r", "3v-4r"]
+    assert recorded["pages"]["text_source"] == ["production", "local-page-xml"]
+    assert recorded["pages"]["objects"][1]["paired"] == [True, True, False]
+    root = xml_parse(str(repo_dir / "page-xml" / "bnf-grec-1360" / "0002.xml")).getroot()  # noqa: S314 - XML this test wrote, not untrusted input
+    texts = [
+        element.find(f"{_tag('TextEquiv')}/{_tag('Unicode')}")
+        for element in root.findall(f".//{_tag('TextLine')}")
+    ]
+    assert [(element.text if element is not None else None) for element in texts] == [
+        "left text",
+        "right text",
+        None,
+    ]
+
+
+def test_folio_labels():
+    builder = _load()
+    assert [builder.folio_for_page("bav-borg-copt-109", order) for order in range(4)] == [
+        "1r",
+        "1v",
+        "2r",
+        "2v",
+    ]
+    assert builder.folio_for_page("bav-borg-copt-109", 17) == "9v"
+    assert builder.folio_for_page("naples-ib-10", 0) == "c 10"
+    assert builder.folio_for_page("naples-ib-10", 17) == "c 27"
+    assert builder.folio_for_page("naples-ib-10", 18) == "c 27v"
+    assert builder.folio_for_page("bnf-grec-1360", 0) == "1v-2r"
+    assert builder.folio_for_page("bnf-grec-1360", 4) == "5v-6r"
+    assert builder.folio_for_page("alqosh-65", 0) == ""
+
+
 def test_crop_size(fake_tree):
     builder, repo_dir, _, _ = fake_tree
     blob = (repo_dir / "images" / "ms-ship" / "0000.png").read_bytes()
@@ -192,6 +345,8 @@ def test_parquet_writer_round_trip(tmp_path: Path):
             "page_height": [80],
             "image_shipped": [True],
             "source_url": ["https://example.invalid"],
+            "folio": ["1v-2r"],
+            "text_source": ["production"],
         },
         "lines",
     )

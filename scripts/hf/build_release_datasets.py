@@ -41,15 +41,25 @@ DEFAULT_CARDS = REPO_ROOT / "docs" / "datasets" / "release-cards"
 
 PAGE_XML_NAMESPACE = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"
 
-# Per-manuscript image switch. A later permission flips one value.
+# Per-manuscript image switch. Flipped by the project owner's release decision.
 SHIP_IMAGES = {
     "bnf-grec-1360": True,
     "bnf-armenien-172": True,
-    "ucla-armenian-ms-72": False,
-    "alqosh-65": False,
+    "ucla-armenian-ms-72": True,
+    "alqosh-65": True,
     "bav-borg-copt-109": False,
     "naples-ib-10": False,
 }
+
+# Earlier NOMIKOS PAGE XML export of the same transcription, per raw part
+# order, for pages whose production part carries no paired text. The file
+# names resolve under the --grec1360-local directory (its xml/ subfolder).
+LOCAL_PAGE_XML = {
+    "bnf-grec-1360": {0: "page1.xml", 1: "page2.xml", 2: "page3.xml"},
+}
+
+# Centre line between the two folios of a Grec 1360 opening, in pixels.
+GREC_FOLIO_SPLIT_X = 725
 
 MANUSCRIPTS = {
     "bnf-grec-1360": {
@@ -130,12 +140,14 @@ def _parse_points(text: str) -> list[list[int]]:
     return points
 
 
-def parse_page_xml(path: Path) -> dict:
-    """Read one exported PAGE XML into plain dicts (document order kept)."""
-    root = xml_parse(str(path)).getroot()  # noqa: S314 - XML this script wrote, not untrusted input
+def parse_page_xml_from_bytes(data: bytes) -> dict:
+    """Read PAGE XML bytes into plain dicts (document order kept)."""
+    from xml.etree.ElementTree import fromstring
+
+    root = fromstring(data)  # noqa: S314 - XML this script wrote, not untrusted input
     page = root.find(_ns("Page"))
     if page is None:
-        raise BuildError(f"{path}: no Page element")
+        raise BuildError("page XML: no Page element")
     lines = []
     for element in root.findall(f".//{_ns('TextLine')}"):
         coords = element.find(_ns("Coords"))
@@ -157,6 +169,102 @@ def parse_page_xml(path: Path) -> dict:
         "height": int(page.get("imageHeight", "0")),
         "lines": lines,
     }
+
+
+def parse_page_xml(path: Path) -> dict:
+    """Read one exported PAGE XML into plain dicts (document order kept)."""
+    return parse_page_xml_from_bytes(path.read_bytes())
+
+
+_export_builder = None
+
+
+def _production_xml_builder():
+    """Load build_page_xml from the sibling export script (never edited here)."""
+    global _export_builder
+    if _export_builder is None:
+        import importlib.util
+
+        sibling = Path(__file__).resolve().parent / "export_release_corpus.py"
+        spec = importlib.util.spec_from_file_location("export_release_corpus", sibling)
+        if spec is None or spec.loader is None:
+            raise BuildError(f"cannot load {sibling}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _export_builder = module.build_page_xml
+    return _export_builder
+
+
+def folio_for_page(manuscript: str, order: int) -> str:
+    """Folio or image label for a raw part order. Empty when not known."""
+    if manuscript == "bav-borg-copt-109":
+        if 0 <= order <= 17:
+            return f"{order // 2 + 1}{'r' if order % 2 == 0 else 'v'}"
+        return ""
+    if manuscript == "naples-ib-10":
+        if order == 18:
+            return "c 27v"
+        if 0 <= order <= 17:
+            return f"c {10 + order}"
+        return ""
+    if manuscript == "bnf-grec-1360":
+        return f"{order + 1}v-{order + 2}r"
+    return ""
+
+
+def sort_grec_opening(line_dicts: list[dict]) -> list[dict]:
+    """Order a Grec 1360 opening: left folio top to bottom, then right folio.
+
+    Lines whose polygon x-centre is below 725 come first, top to bottom by
+    mean baseline y (polygon mean y when no baseline), then the lines at or
+    above 725, top to bottom.
+    """
+
+    def key(line: dict) -> tuple[int, float]:
+        polygon = line.get("polygon") or line.get("points") or []
+        centre = sum(point[0] for point in polygon) / len(polygon) if polygon else 0.0
+        ref = line.get("baseline") or polygon
+        mean = sum(point[1] for point in ref) / len(ref) if ref else 0.0
+        return (0 if centre < GREC_FOLIO_SPLIT_X else 1, mean)
+
+    return sorted(line_dicts, key=key)
+
+
+def load_local_grec_page(local_base: Path, manuscript: str, order: int) -> dict | None:
+    """Read one local PAGE XML page for a raw part order, or None.
+
+    Returns width, height and lines in build_page_xml input shape, with
+    text_order following the opening reading order. Empty text is unpaired.
+    """
+    wanted = LOCAL_PAGE_XML.get(manuscript, {}).get(order)
+    if wanted is None:
+        return None
+    path = local_base / "xml" / wanted
+    if not path.exists():
+        raise BuildError(f"{manuscript} order {order}: no local PAGE XML at {path}")
+    page = parse_page_xml(path)
+    entries = []
+    for raw_line in page["lines"]:
+        text = raw_line["text"]
+        if text is not None and not text.strip():
+            text = None
+        entries.append(
+            {
+                "id": raw_line["id"],
+                "points": [[float(x), float(y)] for x, y in raw_line["polygon"]],
+                "baseline": (
+                    [[float(x), float(y)] for x, y in raw_line["baseline"]]
+                    if raw_line["baseline"]
+                    else []
+                ),
+                "text": text,
+                "text_order": None,
+            }
+        )
+    for position, line in enumerate(sort_grec_opening(entries)):
+        if line["text"] is not None:
+            line["text_order"] = position
+    return {"width": page["width"], "height": page["height"], "entries": entries}
 
 
 def tight_bbox(polygon: list[list[int]]) -> list[int]:
@@ -195,9 +303,20 @@ def load_part_ids(inventory_path: Path) -> dict[tuple[str, str, int], str]:
 
 
 def collect_manuscript_pages(
-    raw: Path, manuscript: str, part_ids: dict[tuple[str, str, int], str]
+    raw: Path,
+    manuscript: str,
+    part_ids: dict[tuple[str, str, int], str],
+    grec_local: Path | None = None,
 ) -> list[dict]:
-    """Gather the included pages (at least one paired line) of one manuscript."""
+    """Gather the included pages (at least one paired line) of one manuscript.
+
+    Page NNNN is raw part order N: folio labels and file numbers both come
+    from that order, never from the position in this filtered list. Greek
+    orders listed in LOCAL_PAGE_XML take lines and text from the local PAGE
+    XML export and the page image from the raw production export.
+    """
+    from PIL import Image
+
     spec = MANUSCRIPTS[manuscript]
     ship = SHIP_IMAGES[manuscript]
     base = raw / spec["project_slug"] / spec["doc_slug"]
@@ -207,15 +326,43 @@ def collect_manuscript_pages(
     pages = []
     for xml_path in xml_files:
         order = int(xml_path.stem.split("_", 1)[0])
-        page = parse_page_xml(xml_path)
-        paired = [line for line in page["lines"] if line["text"] is not None]
-        if not paired:
-            continue
         matches = sorted((base / "images").glob(f"{order:04d}_*"))
         if not matches:
             raise BuildError(f"{base}: no image for page order {order}")
         ext = matches[0].suffix.lstrip(".") or "png"
         image_bytes = matches[0].read_bytes() if ship else None
+        local = (
+            load_local_grec_page(grec_local, manuscript, order) if grec_local is not None else None
+        )
+        if local is not None:
+            with Image.open(matches[0]) as handle:
+                raw_size = handle.size
+            if (local["width"], local["height"]) != (raw_size[0], raw_size[1]):
+                raise BuildError(
+                    f"{manuscript} order {order}: local PAGE XML size "
+                    f"{local['width']}x{local['height']} != raw image {raw_size[0]}x{raw_size[1]}"
+                )
+            _build_xml = _production_xml_builder()
+            entries = [
+                {**line, "id": line["id"].removeprefix("line_")} for line in local["entries"]
+            ]
+            part_id = part_ids.get((spec["project_slug"], spec["doc_slug"], order), "")
+            xml_bytes = _build_xml(
+                part_id or f"{manuscript}-{order}",
+                f"{order:04d}.{ext}",
+                local["width"],
+                local["height"],
+                entries,
+            )
+            page = parse_page_xml_from_bytes(xml_bytes)
+            page["xml_bytes"] = xml_bytes
+            text_source = "local-page-xml"
+        else:
+            page = parse_page_xml(xml_path)
+            text_source = "production"
+        paired = [line for line in page["lines"] if line["text"] is not None]
+        if not paired:
+            continue
         pages.append(
             {
                 "manuscript": manuscript,
@@ -226,6 +373,10 @@ def collect_manuscript_pages(
                 "lines": page["lines"],
                 "ext": ext,
                 "image_bytes": image_bytes,
+                "folio": folio_for_page(manuscript, order),
+                "text_source": text_source,
+                "local_xml": local is not None,
+                "xml_bytes": page.get("xml_bytes"),
             }
         )
     pages.sort(key=lambda item: item["page_index"])
@@ -281,6 +432,8 @@ def write_parquet(path: Path, columns: dict, schema_kind: str) -> None:
                 pa.field("page_height", pa.int32()),
                 pa.field("image_shipped", pa.bool_()),
                 pa.field("source_url", pa.string()),
+                pa.field("folio", pa.string()),
+                pa.field("text_source", pa.string()),
             ]
         )
     else:
@@ -308,6 +461,8 @@ def write_parquet(path: Path, columns: dict, schema_kind: str) -> None:
                 pa.field("height", pa.int32()),
                 pa.field("image_shipped", pa.bool_()),
                 pa.field("source_url", pa.string()),
+                pa.field("folio", pa.string()),
+                pa.field("text_source", pa.string()),
                 pa.field("objects", objects_type),
             ]
         )
@@ -331,6 +486,7 @@ def build_repo(
     cards: Path,
     repo: str,
     part_ids: dict[tuple[str, str, int], str],
+    grec_local: Path | None = None,
 ) -> dict:
     """Build one release folder. Returns counts for the summary."""
     spec = REPOS[repo]
@@ -343,7 +499,7 @@ def build_repo(
     for manuscript in spec["manuscripts"]:
         mspec = MANUSCRIPTS[manuscript]
         ship = SHIP_IMAGES[manuscript]
-        pages = collect_manuscript_pages(raw, manuscript, part_ids)
+        pages = collect_manuscript_pages(raw, manuscript, part_ids, grec_local)
         if ship:
             (repo_dir / "images" / manuscript).mkdir(parents=True, exist_ok=True)
         (repo_dir / "page-xml" / manuscript).mkdir(parents=True, exist_ok=True)
@@ -356,14 +512,19 @@ def build_repo(
                 digest = hashlib.sha256(page["image_bytes"]).hexdigest()
             else:
                 digest = ""
-            raw_xml = sorted(
-                (raw / mspec["project_slug"] / mspec["doc_slug"] / "page").glob(f"{tag}_*.xml")
-            )
-            if not raw_xml:
-                raise BuildError(f"{manuscript} page {tag}: no exported XML")
-            (repo_dir / "page-xml" / manuscript / f"{tag}.xml").write_bytes(
-                rewrite_page_xml_text(raw_xml[0], image_name)
-            )
+            if page.get("local_xml"):
+                if page.get("xml_bytes") is None:
+                    raise BuildError(f"{manuscript} page {tag}: missing local page XML")
+                (repo_dir / "page-xml" / manuscript / f"{tag}.xml").write_bytes(page["xml_bytes"])
+            else:
+                raw_xml = sorted(
+                    (raw / mspec["project_slug"] / mspec["doc_slug"] / "page").glob(f"{tag}_*.xml")
+                )
+                if not raw_xml:
+                    raise BuildError(f"{manuscript} page {tag}: no exported XML")
+                (repo_dir / "page-xml" / manuscript / f"{tag}.xml").write_bytes(
+                    rewrite_page_xml_text(raw_xml[0], image_name)
+                )
             page_id = f"{manuscript}/{tag}"
             object_ids: list[str] = []
             object_bboxes: list[list[int]] = []
@@ -403,6 +564,8 @@ def build_repo(
                 line_rows["page_height"].append(page["height"])
                 line_rows["image_shipped"].append(ship)
                 line_rows["source_url"].append(mspec["source_url"])
+                line_rows["folio"].append(page["folio"])
+                line_rows["text_source"].append(page["text_source"])
                 line_index += 1
             page_rows["page_id"].append(page_id)
             page_rows["manuscript"].append(manuscript)
@@ -417,6 +580,8 @@ def build_repo(
             page_rows["height"].append(page["height"])
             page_rows["image_shipped"].append(ship)
             page_rows["source_url"].append(mspec["source_url"])
+            page_rows["folio"].append(page["folio"])
+            page_rows["text_source"].append(page["text_source"])
             page_rows["objects"].append(
                 {
                     "id": object_ids,
@@ -439,6 +604,8 @@ def build_repo(
                     "image_shipped": ship,
                     "image_sha256": digest,
                     "source_url": mspec["source_url"],
+                    "folio": page["folio"],
+                    "text_source": page["text_source"],
                 }
             )
     write_parquet(repo_dir / "data" / "lines" / "train-00000-of-00001.parquet", line_rows, "lines")
@@ -452,6 +619,11 @@ def build_repo(
         shutil.copyfile(card, repo_dir / "README.md")
     else:
         print(f"warning: no card at {card}, skipping README copy", file=sys.stderr)
+    licence = cards / f"{repo}.LICENSE.md"
+    if licence.exists():
+        shutil.copyfile(licence, repo_dir / "LICENSE.md")
+    else:
+        print(f"warning: no licence at {licence}, skipping LICENSE copy", file=sys.stderr)
     return {
         "pages": len(manifest_rows),
         "lines": len(line_rows["line_id"]),
@@ -474,6 +646,8 @@ _LINES_COLUMNS = (
     "page_height",
     "image_shipped",
     "source_url",
+    "folio",
+    "text_source",
 )
 
 _PAGES_COLUMNS = (
@@ -486,6 +660,8 @@ _PAGES_COLUMNS = (
     "height",
     "image_shipped",
     "source_url",
+    "folio",
+    "text_source",
     "objects",
 )
 
@@ -500,6 +676,8 @@ _MANIFEST_COLUMNS = (
     "image_shipped",
     "image_sha256",
     "source_url",
+    "folio",
+    "text_source",
 )
 
 
@@ -521,8 +699,27 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="inventory.json path (default: <raw>/../inventory.json)",
     )
+    parser.add_argument(
+        "--grec1360-local",
+        type=Path,
+        default=REPO_ROOT / "data" / "dataset" / "grec1360",
+        help="local Grec 1360 PAGE XML tree (its xml/ subfolder)",
+    )
     parser.add_argument("--repo", default=None, help="Build one repo only")
     return parser.parse_args(argv)
+
+
+def write_summary(out: Path, results: dict[str, dict]) -> None:
+    """Write the release SUMMARY.md from per-repo counts."""
+    lines = ["# Release summary", ""]
+    for repo in sorted(results):
+        counts = results[repo]
+        lines.append(
+            f"- {repo}: pages={counts['pages']} lines={counts['lines']} "
+            f"images_shipped={counts['images_shipped']}"
+        )
+    lines.append("")
+    (out / "SUMMARY.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -536,9 +733,13 @@ def main(argv: list[str] | None = None) -> int:
         if not inventory_path.exists():
             raise BuildError(f"no inventory at {inventory_path}")
         part_ids = load_part_ids(inventory_path)
+        results = {}
         for repo in repos:
-            counts = build_repo(args.raw, args.out, args.cards, repo, part_ids)
+            counts = build_repo(args.raw, args.out, args.cards, repo, part_ids, args.grec1360_local)
+            results[repo] = counts
             print(f"{repo}: pages={counts['pages']} lines={counts['lines']}", flush=True)
+        if args.repo is None:
+            write_summary(args.out, results)
     except BuildError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

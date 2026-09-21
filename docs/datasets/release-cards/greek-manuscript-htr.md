@@ -30,7 +30,7 @@ configs:
 
 # Byzantine Greek Manuscript HTR (BnF Grec 1360)
 
-This release contains handwritten text recognition ground truth for two pages of Paris, Bibliothèque nationale de France, Grec 1360, a 1351 copy of the Hexabiblos of Constantine Harmenopoulos: 81 transcribed lines with line polygons and baselines, plus the two page images.
+This release contains handwritten text recognition ground truth for five pages of Paris, Bibliothèque nationale de France, Grec 1360, a 1351 copy of the Hexabiblos of Constantine Harmenopoulos: 204 transcribed lines with line polygons and baselines, plus the five page images.
 
 ## The language and the manuscripts
 
@@ -42,13 +42,21 @@ The NOMOS project works with manuscripts of the Hexabiblos ("Six Books") of the 
 
 | Manuscript | Pages | Paired lines | Images shipped |
 | --- | ---: | ---: | --- |
-| Paris, BnF, Grec 1360 | 2 | 81 | yes |
+| Paris, BnF, Grec 1360 | 5 | 204 | yes |
 
-Only pages with at least one paired line are included. Three further Grec 1360 spreads from the working set carry line segmentation but no transcription yet, so they are left out. One included page keeps 30 unpaired segments alongside its 32 paired lines. Every number in this card comes from manifest.csv.
+Only pages with at least one paired line are included. The text of spreads 1 to 3 comes from an earlier NOMIKOS PAGE XML export of the same transcription and spreads 4 and 5 from the live platform, and `text_source` records this per page. One included page keeps 30 unpaired segments alongside its 32 paired lines. Every number in this card comes from manifest.csv.
+
+| Page | Folio | Paired lines | Text source |
+| --- | --- | ---: | --- |
+| 0000 | 1v-2r | 23 | local-page-xml |
+| 0001 | 2v-3r | 51 | local-page-xml |
+| 0002 | 3v-4r | 49 | local-page-xml |
+| 0003 | 4v-5r | 49 | production |
+| 0004 | 5v-6r | 32 | production |
 
 ## Files and formats
 
-Each manuscript folder holds native PAGE XML 2019 files (`page-xml/<manuscript>/NNNN.xml`) next to the page images (`images/<manuscript>/NNNN.<ext>`), so the pages open directly in eScriptorium, Kraken and Transkribus. Two Parquet configs carry the same content in machine readable form. The `lines` config has one row per paired line: `line_id`, `manuscript`, `shelfmark`, `page_index`, `line_index` in reading order, `text`, `image` (the line crop, cut to the axis-aligned bounding box of the polygon with 4 px padding and stored as PNG), `polygon`, `baseline`, `bbox`, `page_width`, `page_height`, `image_shipped` and `source_url`. The `pages` config has one row per page with the full page image and an `objects` column holding every segment, paired or not. There is a single `train` split. The corpus is too small for a validation or test split to be meaningful.
+Each manuscript folder holds native PAGE XML 2019 files (`page-xml/<manuscript>/NNNN.xml`) next to the page images (`images/<manuscript>/NNNN.<ext>`), so the pages open directly in eScriptorium, Kraken and Transkribus. Two Parquet configs carry the same content in machine readable form. The `lines` config has one row per paired line: `line_id`, `manuscript`, `shelfmark`, `page_index`, `line_index` in reading order, `text`, `image` (the line crop, cut to the axis-aligned bounding box of the polygon with 4 px padding and stored as PNG), `polygon`, `baseline`, `bbox`, `page_width`, `page_height`, `image_shipped`, `source_url`, `folio` and `text_source`. The `pages` config has one row per page with the full page image and an `objects` column holding every segment, paired or not. There is a single `train` split. The corpus is too small for a validation or test split to be meaningful.
 
 ```python
 from datasets import load_dataset
@@ -66,7 +74,7 @@ These are Gallica's own terms, not a Creative Commons licence. The manuscript ca
 
 ## Licence
 
-Transcriptions, line polygons and baselines are the project's own work and are released under CC BY 4.0, with credit to "NOMOS project, LMU Munich". The page images stay under the holding library's terms described above and are never covered by the CC licence. For machine learning uses of the page images, Gallica grants free use for non-profit academic scientific research with the credit "BnF / Gallica" and requires a paid licence otherwise, while general reuse carries the credit "Source gallica.bnf.fr / Bibliothèque nationale de France". See LICENSE.md for the full two-part text.
+Transcriptions, line polygons and baselines are the project's own work and are released under CC BY 4.0, with credit to "Prof. Dr. Zachary Chitwood, NOMOS project, LMU Munich". The page images stay under the holding library's terms described above and are never covered by the CC licence. For machine learning uses of the page images, Gallica grants free use for non-profit academic scientific research with the credit "BnF / Gallica" and requires a paid licence otherwise, while general reuse carries the credit "Source gallica.bnf.fr / Bibliothèque nationale de France". See LICENSE.md for the full two-part text.
 
 ## How the data was made
 
@@ -74,17 +82,21 @@ The pages were segmented and transcribed on the NOMIKOS platform (https://nomiko
 
 ## Known limits
 
-The release is small: 81 lines on 2 pages, in one hand. There is only a train split. Thirty segments on one page have no paired text yet and appear only in the page level objects. Three further spreads are excluded until their transcription is done.
+The release is small: 204 lines on 5 pages, in one hand. There is only a train split. Thirty segments on one page have no paired text yet and appear only in the page level objects.
 
 ## The NOMOS project
 
 NOMIKOS is the HTR platform of the ERC Consolidator Grant NOMOS, "The Challenge of Islam and the Transformation of Eastern Christian Normative Regimes, ca. 630-1100", grant 101171233, at Ludwig-Maximilians-Universität München, with PI Prof. Dr. Zachary Chitwood. See https://cordis.europa.eu/project/id/101171233 and http://nomosproject.de/ and the platform at https://nomikos.app.
 
+## Credits
+
+The ground truth transcriptions were provided by Prof. Dr. Zachary Chitwood of the NOMOS project. The NOMIKOS team segmented the pages, paired text to lines and curated the release.
+
 ## Citation
 
 ```bibtex
 @misc{nomos_greek_manuscript_htr_2026,
-  author = {NOMOS project},
+  author = {Chitwood, Zachary and {NOMOS project}},
   title = {Byzantine Greek Manuscript HTR: BnF Grec 1360 line transcriptions and page layout},
   year = {2026},
   url = {https://huggingface.co/datasets/nomikos-project/greek-manuscript-htr}

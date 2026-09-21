@@ -6,7 +6,7 @@ This dataset carries two parts under two different regimes. The split is deliber
 
 All transcriptions, line polygons, baselines and PAGE XML structure in this dataset, for both manuscripts, are released under the Creative Commons Attribution 4.0 International Licence (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/). Credit them as:
 
-NOMOS project, LMU Munich
+Dr. Federico Alpi, NOMOS project, LMU Munich
 
 ## 2. Page images: Gallica terms of use (BnF Arménien 172 only)
 
@@ -22,4 +22,8 @@ Machine learning uses have their own clause. The use of Gallica documents and da
 
 BnF / Gallica
 
-No images ship for UCLA Armenian MS 72, so this second part covers only the BnF manuscript.
+## 3. Page images: UCLA Library terms (UCLA Armenian MS 72)
+
+The UCLA Armenian MS 72 images come from the UCLA Library Digital Collections record https://digital.library.ucla.edu/catalog/ark:/21198/zz0026w379 and ship by decision of the NOMOS project, not under the CC licence above. UCLA Library places clearance responsibility on the researcher: "Document reproduction, streaming, or dissemination beyond the scope allowed under traditional academic Fair Use principles requires explicit, written authorization", and "The final legal responsibility for identifying rights holders, securing permissions, and addressing property restrictions rests exclusively with the researcher" (https://guides.library.ucla.edu/c.php?g=1423298&p=10570712). Anyone reusing the images beyond research carries that responsibility themselves. Credit them as:
+
+UCLA Library Special Collections
