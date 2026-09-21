@@ -26,15 +26,17 @@ configs:
     path: data/pages/train-00000-of-00001.parquet
 ---
 
-This release contains handwritten text recognition ground truth for seven pages of Alqosh MS 65, an Eastern Syriac legal manuscript: 143 transcribed lines with line polygons and baselines. No page images ship; vHMML terms forbid redistribution. Geometry and text are the project's own work.
+# East Syriac Manuscript HTR (Alqosh 65)
+
+This release contains handwritten text recognition ground truth for seven pages of Alqosh 65, a nineteenth-century East Syriac manuscript that contains a letter by a jurist-bishop-philosopher on the ten categories of Aristotle: 143 transcribed lines with line polygons and baselines. No page images ship, because the project does not hold the right to redistribute them. Geometry and text are the project's own work.
 
 ## The language and the manuscripts
 
 Syriac is the language of various Christian communities across the Eastern Mediterranean and Western Asia. Classical Syriac survives today mainly in liturgical use, and it has left a literary heritage spanning centuries. Much of it sits in manuscripts that remain unedited and unpublished to modern standards.
 
-Classical Syriac has two principal dialects, Eastern and Western, with considerable phonological differences and, critically for recognition work, distinct scripts: Serto for Western, Madnhaya for Eastern, alongside the older and widely used Estrangela.
+Classical Syriac has two principal dialects, Eastern and Western, with considerable phonological differences and, critically for recognition work, distinct scripts: Serto for Western, Madnḥaya for Eastern, alongside the older and widely used Estrangela.
 
-The training work began with pages from an Estrangela Bible studied at a winter school in Vienna, then turned to legal manuscripts, the NOMOS focus. That background material, including pages from Vatican Syriac Borgia 82 (a nineteenth-century copy of Alqosh 169, the most significant manuscript in the East Syriac legal tradition), is not part of this release. What is released is Alqosh 65, likewise nineteenth century and in Eastern Syriac, holding a letter by a jurist-bishop-philosopher on the ten categories of Aristotle.
+The training work began with pages from an Estrangela Bible studied at a winter school in Vienna, then turned to the legal tradition that is the NOMOS focus. That background material, including pages from Vatican Syriac Borgia 82 (a nineteenth-century copy of Alqosh 169, the most significant manuscript in the East Syriac legal tradition), is not part of this release. What is released is Alqosh 65, likewise nineteenth century and in Eastern Syriac, holding a letter by a jurist-bishop-philosopher on the ten categories of Aristotle.
 
 ## What is in this release
 
@@ -56,7 +58,7 @@ pages = load_dataset("nomikos-project/syriac-manuscript-htr", "pages", split="tr
 
 ## Images and rights
 
-No page images ship with this release. The manuscript is viewed through vHMML, the Hill Museum and Manuscript Library reading room. Its terms (https://www.vhmml.org/terms) release manuscript metadata under CC BY 4.0 but state: "By using this website, you agree not to copy or redistribute images from HMML's partner libraries without prior authorization from HMML." The Chaldean collection holding Alqosh 65 has no confirmed Creative Commons tier, so the default rule applies. Image release waits on written authorisation from help@vhmml.org. Until then, view the images in the vHMML reading room at https://www.vhmml.org/ (a free account is needed to see images). Coordinates in this release refer to page images of 2550 by 3300 pixels.
+No page images ship with this release. The project does not hold the right to redistribute its working images of Alqosh 65. Manuscripts of the Chaldean collections of Alqosh have been digitised by the Hill Museum and Manuscript Library (HMML) and are consulted through its reading room, vHMML. Its terms (https://www.vhmml.org/terms) release manuscript metadata under CC BY 4.0 but state: "By using this website, you agree not to copy or redistribute images from HMML's partner libraries without prior authorization from HMML." HMML's partner libraries set their own licence; none is stated here for this manuscript. Image release waits on written authorisation from help@vhmml.org. Until then, view the images in the vHMML reading room at https://www.vhmml.org/ (a free account is needed to see images). Coordinates in this release refer to page images of 2550 by 3300 pixels.
 
 ## Licence
 

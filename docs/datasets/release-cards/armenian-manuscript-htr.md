@@ -1,5 +1,5 @@
 ---
-pretty_name: Armenian Manuscript HTR (BnF Armenien 172 and UCLA Armenian MS 72)
+pretty_name: Armenian Manuscript HTR (BnF Arménien 172 and UCLA Armenian MS 72)
 license: other
 license_name: nomikos-mixed
 license_link: LICENSE.md
@@ -27,6 +27,8 @@ configs:
   - split: train
     path: data/pages/train-00000-of-00001.parquet
 ---
+
+# Armenian Manuscript HTR (BnF Arménien 172 and UCLA Armenian MS 72)
 
 This release contains handwritten text recognition ground truth for two Armenian canon law manuscripts: 1,704 transcribed lines with line polygons and baselines across 34 pages. Page images are shipped for the BnF manuscript under Gallica terms. The UCLA manuscript ships as geometry and text only, pending rights confirmation.
 
@@ -67,7 +69,7 @@ The Arménien 172 images are digital reproductions from Gallica, the digital lib
 
 Source gallica.bnf.fr / Bibliothèque nationale de France
 
-These are Gallica's own terms, not a Creative Commons licence. Before publication, the per-document notice on the manuscript's own Gallica viewer page should be re-checked. The direct manuscript viewer link (ARK) is not confirmed yet and is listed under the open questions in SUMMARY.md of the build.
+These are Gallica's own terms, not a Creative Commons licence. The manuscript can be found on Gallica (https://gallica.bnf.fr/) by its shelfmark.
 
 No images ship for UCLA Armenian MS 72. UCLA Library places clearance responsibility on the researcher: "Document reproduction, streaming, or dissemination beyond the scope allowed under traditional academic Fair Use principles requires explicit, written authorization", and "The final legal responsibility for identifying rights holders, securing permissions, and addressing property restrictions rests exclusively with the researcher" (https://guides.library.ucla.edu/c.php?g=1423298&p=10570712). Its metadata statement releases descriptions under CC0 but explicitly excludes images and other digital content. Image release waits on a direct inquiry to copyright@library.ucla.edu confirming the item's rights status. Until then, fetch the images from the UCLA catalogue record at https://digital.library.ucla.edu/catalog/ark:/21198/zz0026w379. Coordinates in this release refer to catalogue images of 3576 to 3640 by 4688 to 4728 pixels; per-page sizes are in manifest.csv.
 

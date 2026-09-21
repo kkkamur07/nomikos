@@ -26,6 +26,8 @@ configs:
     path: data/pages/train-00000-of-00001.parquet
 ---
 
+# Coptic Manuscript HTR (Borg. copt. 109 and Naples IB.10)
+
 This release contains handwritten text recognition ground truth for two witnesses of Coptic Literary Manuscript 359, a translation of the Corpus Canonum: 2,821 transcribed lines with line polygons and baselines across 33 pages. No page images ship; the Vatican forbids redistribution and the Naples terms are unconfirmed. Geometry and text are the project's own work.
 
 ## The language and the manuscripts

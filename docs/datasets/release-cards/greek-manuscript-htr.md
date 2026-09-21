@@ -28,6 +28,8 @@ configs:
     path: data/pages/train-00000-of-00001.parquet
 ---
 
+# Byzantine Greek Manuscript HTR (BnF Grec 1360)
+
 This release contains handwritten text recognition ground truth for two pages of Paris, Bibliothèque nationale de France, Grec 1360, a 1351 copy of the Hexabiblos of Constantine Harmenopoulos: 81 transcribed lines with line polygons and baselines, plus the two page images.
 
 ## The language and the manuscripts
@@ -60,7 +62,7 @@ The page images are digital reproductions from Gallica, the digital library of t
 
 Source gallica.bnf.fr / Bibliothèque nationale de France
 
-These are Gallica's own terms, not a Creative Commons licence. Before publication, the per-document notice on the manuscript's own Gallica viewer page should be re-checked, since Gallica warns that the public domain mention is not always present or correct for every item. The direct manuscript viewer link (ARK) is not confirmed yet and is listed under the open questions in SUMMARY.md of the build.
+These are Gallica's own terms, not a Creative Commons licence. The manuscript can be found on Gallica (https://gallica.bnf.fr/) by its shelfmark.
 
 ## Licence
 
