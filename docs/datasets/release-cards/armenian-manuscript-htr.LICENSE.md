@@ -18,4 +18,8 @@ Commercial reuse, including resale of the content or reuse generating direct rev
 
 Source gallica.bnf.fr / Bibliothèque nationale de France
 
+Machine learning uses have their own clause. The use of Gallica documents and data "dans le cadre d'un projet en Intelligence artificielle (IA) ayant pour objet des traitements de données par l'IA (notamment la fouille de données) ou de l'IA générative" ("as part of an Artificial Intelligence (AI) project whose object is AI data processing (notably data mining) or generative AI") is "gratuite à des fins de recherche scientifique académique, à but non lucratif, sous réserve de la mention de source : BnF / Gallica" ("free for academic scientific research purposes, non-profit, subject to the source mention: BnF / Gallica") and "Payante pour les autres utilisations. Celles-ci font alors l'objet d'une autorisation et d'une licence." ("Paid for other uses. These then require an authorisation and a licence.", contact given by the BnF: prestations.numeriques@bnf.fr). Anyone may train on the transcriptions and geometry under CC BY 4.0, but training on the page images or line crops outside non-profit academic research needs a licence from the BnF. The AI-use credit reads:
+
+BnF / Gallica
+
 No images ship for UCLA Armenian MS 72, so this second part covers only the BnF manuscript.
