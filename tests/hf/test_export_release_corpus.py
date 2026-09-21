@@ -1,8 +1,12 @@
 """Unit test for the PAGE XML builder in scripts/hf/export_release_corpus.py.
 
-No network: a fake part with two paired lines and one unpaired line must
-give valid XML in the PAGE 2019-07-15 namespace, top to bottom reading
-order, round-tripped text, and no TextEquiv on the unpaired line.
+No network: a fake two-column part (left column x 0 to 100, right column
+x 200 to 300, same y values) with transcription order left column first
+then right column must come out in text order, not geometric y order. The
+ReadingOrder group must hold a RegionRefIndexed pointing at the TextRegion,
+never a TextLineRefIndexed, and each TextLine carries a Transkribus-style
+readingOrder custom attribute. Unpaired lines sort after all paired lines
+and carry no TextEquiv.
 """
 
 from __future__ import annotations
@@ -24,53 +28,61 @@ def _load():
     return module
 
 
-def test_page_xml_builder_orders_text_and_marks_unpaired():
+def _column(x0: int, x1: int, index: int, line_id: str, text: str | None) -> dict:
+    y = 100 + index * 60
+    return {
+        "id": line_id,
+        "points": [[x0, y], [x1, y], [x1, y + 40], [x0, y + 40]],
+        "baseline": [[x0, y + 30], [x1, y + 30]],
+        "text": text,
+        "text_order": None,
+    }
+
+
+def test_page_xml_builder_follows_text_order_and_valid_reading_order():
     builder = _load()
-    lines = [
-        {
-            "id": "lower",
-            "points": [[10, 300], [200, 300], [200, 340], [10, 340]],
-            "baseline": [[10, 330], [200, 330]],
-            "text": "δεύτερη γραμμή",
-        },
-        {
-            "id": "upper",
-            "points": [[10, 100], [200, 100], [200, 140], [10, 140]],
-            "baseline": [[10, 130], [200, 130]],
-            "text": "πρώτη γραμμή",
-        },
-        {
-            "id": "stray",
-            "points": [[10, 200], [200, 200], [200, 240], [10, 240]],
-            "baseline": [[10, 230], [200, 230]],
-            "text": None,
-        },
-    ]
+    left = [_column(0, 100, i, f"left-{i}", f"left text {i}") for i in range(2)]
+    right = [_column(200, 300, i, f"right-{i}", f"right text {i}") for i in range(2)]
+    for position, line in enumerate(left + right):
+        line["text_order"] = position
+    stray = _column(0, 100, 5, "stray", None)
+    lines = right + [stray] + left  # scrambled input order on purpose
     xml = builder.build_page_xml("part-1", "0001_page.png", 800, 600, lines)
     root = fromstring(xml)  # noqa: S314 - XML produced by this test, not untrusted input
     assert root.tag == f"{{{NAMESPACE}}}PcGts"
 
     ns = {"p": NAMESPACE}
+    assert root.findall(".//p:TextLineRefIndexed", ns) == []
     text_lines = root.findall(".//p:TextLine", ns)
-    assert len(text_lines) == 3
+    assert len(text_lines) == 5
     ids = [element.get("id") for element in text_lines]
-    # Top to bottom by mean baseline y: upper (130), stray (230), lower (330).
-    assert ids == ["line_upper", "line_stray", "line_lower"]
+    # Text order (left column first, then right), unpaired last.
+    assert ids == [
+        "line_left-0",
+        "line_left-1",
+        "line_right-0",
+        "line_right-1",
+        "line_stray",
+    ]
 
-    refs = root.findall(".//p:TextLineRefIndexed", ns)
-    assert [ref.get("textLineId") for ref in refs] == ids
+    regions = root.findall(".//p:TextRegion", ns)
+    assert len(regions) == 1
+    refs = root.findall(".//p:RegionRefIndexed", ns)
+    assert len(refs) == 1
+    assert refs[0].get("index") == "0"
+    assert refs[0].get("regionRef") == regions[0].get("id")
 
+    for index, element in enumerate(text_lines[:4]):
+        assert element.get("custom") == f"readingOrder {{index:{index};}}"
     unicodes = {
         element.get("id"): element.find("p:TextEquiv/p:Unicode", ns) for element in text_lines
     }
-    assert unicodes["line_upper"] is not None
-    assert unicodes["line_upper"].text == unicodedata.normalize("NFC", "πρώτη γραμμή")
-    assert unicodes["line_lower"] is not None
-    assert unicodes["line_lower"].text == unicodedata.normalize("NFC", "δεύτερη γραμμή")
+    assert unicodes["line_left-0"].text == unicodedata.normalize("NFC", "left text 0")
+    assert unicodes["line_right-1"].text == unicodedata.normalize("NFC", "right text 1")
 
-    stray = next(element for element in text_lines if element.get("id") == "line_stray")
-    assert stray.find("p:TextEquiv", ns) is None
-    assert stray.get("custom") == "unpaired"
+    stray_element = next(element for element in text_lines if element.get("id") == "line_stray")
+    assert stray_element.find("p:TextEquiv", ns) is None
+    assert stray_element.get("custom") == ("readingOrder {index:4;} structure {type:unpaired;}")
 
     page = root.find("p:Page", ns)
     assert page is not None

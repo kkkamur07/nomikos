@@ -10,7 +10,10 @@ and writes ``<out>/inventory.json`` plus a readable ``<out>/inventory.md``.
 ``export`` saves every page image unchanged plus a PAGE XML file built
 locally from the layout and pairing GET responses (the server also has a
 per-part ``page-xml`` GET route, but its element layout does not match the
-release spec, so the script builds the XML itself in the same style).
+release spec, so the script builds the XML itself in the same style). It
+also saves both GET responses unchanged under ``json/`` per part, and
+``export --from-json`` rebuilds the XML from those snapshots with no
+network.
 
 Example::
 
@@ -65,6 +68,11 @@ class ApiClient:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self._last_at = 0.0
+        self._last_raw = b""
+
+    def last_raw(self) -> bytes:
+        """Raw body of the most recent response (for byte-identical snapshots)."""
+        return self._last_raw
 
     def _guard(self, method: str, path: str) -> None:
         if method.upper() != "GET" and path != LOGIN_PATH:
@@ -110,6 +118,7 @@ class ApiClient:
                 continue
             if response.status_code >= 400:
                 raise ApiError(f"{method} {path} failed with {response.status_code}")
+            self._last_raw = response.content
             content_type = response.headers.get("content-type", "")
             if "application/json" in content_type or not content_type:
                 try:
@@ -260,43 +269,59 @@ def collect_part_lines(layout: dict, pairing: dict) -> tuple[list[dict], int, in
     """Join layout segments with paired transcription text.
 
     Returns (lines, text_line_count, paired_line_count) where each line holds
-    id, points, baseline points and optional text. Lines that no text line
-    pairs to are unpaired. Text lines paired to an unknown segment id are
+    id, points, baseline points, optional text and optional text_order (the
+    position of its text in the transcription, which the scholars typed in
+    reading order). Lines that no text line pairs to are unpaired
+    (text_order None). Text lines paired to an unknown segment id are
     ignored for the XML but still counted as text lines.
     """
     text_lines = pairing.get("text_lines", []) if isinstance(pairing, dict) else []
-    text_by_segment: dict[str, list[str]] = {}
-    for entry in text_lines:
+    text_by_segment: dict[str, list[tuple[int, str]]] = {}
+    for list_index, entry in enumerate(text_lines):
         segment_id = entry.get("paired_line_id")
         if segment_id:
-            text_by_segment.setdefault(str(segment_id), []).append(entry.get("text", ""))
+            order = entry.get("order")
+            position = int(order) if isinstance(order, int) else list_index
+            text_by_segment.setdefault(str(segment_id), []).append(
+                (position, entry.get("text", ""))
+            )
     raw_lines = layout.get("lines", []) if isinstance(layout, dict) else []
     lines: list[dict] = []
     for raw in raw_lines:
         points = [[float(x), float(y)] for x, y in raw.get("points", [])]
         baseline = geometry_points(raw.get("baseline")) or []
-        texts = text_by_segment.get(str(raw.get("id")), [])
-        text = "\n".join(texts) if texts else None
+        hits = sorted(text_by_segment.get(str(raw.get("id")), []))
+        text = "\n".join(text for _, text in hits) if hits else None
         lines.append(
             {
                 "id": str(raw.get("id")),
                 "points": points,
                 "baseline": baseline,
                 "text": text,
+                "text_order": hits[0][0] if hits else None,
             }
         )
     paired = sum(1 for line in lines if line["text"] is not None)
     return lines, len(text_lines), paired
 
 
-def sort_lines_top_to_bottom(lines: list[dict]) -> list[dict]:
-    """Order lines by mean baseline y (polygon mean y when no baseline)."""
+def sort_lines_reading_order(lines: list[dict]) -> list[dict]:
+    """Order lines as readers read them.
 
-    def key(line: dict) -> tuple[float, float, str]:
+    Paired lines come first in transcription text order (the scholars typed
+    the text in reading order, which survives multi-column pages where a pure
+    geometric sort would interleave columns). Unpaired segments follow, sorted
+    by mean baseline y (polygon mean y when no baseline) then min x.
+    """
+
+    def key(line: dict) -> tuple[int, int, float, float, str]:
         baseline = line.get("baseline") or []
         points = baseline if baseline else line.get("points", [])
         xs = [point[0] for point in points] if points else [0.0]
-        return (mean_y(points), min(xs), str(line.get("id")))
+        text_order = line.get("text_order")
+        if text_order is not None:
+            return (0, int(text_order), 0.0, 0.0, "")
+        return (1, 0, mean_y(points), min(xs), str(line.get("id")))
 
     return sorted(lines, key=key)
 
@@ -309,15 +334,17 @@ def build_page_xml(
     lines: list[dict],
     created: str | None = None,
 ) -> bytes:
-    """Render PAGE XML for one part. Lines are ordered top to bottom.
+    """Render PAGE XML for one part. Lines follow transcription reading order.
 
     Each entry of ``lines`` holds ``id``, ``points`` (polygon), ``baseline``
-    (polyline, may be empty) and ``text`` (None for unpaired segments). Text
+    (polyline, may be empty), ``text`` (None for unpaired segments) and
+    ``text_order`` (position in the transcription, None for unpaired). Text
     is NFC normalised and otherwise untouched. Coordinates are integers in
-    image pixels.
+    image pixels. Line order is the document order of the ``TextLine``
+    elements; the ``ReadingOrder`` group points at the region only.
     """
     stamp = created or datetime.now(UTC).isoformat()
-    ordered = sort_lines_top_to_bottom(lines)
+    ordered = sort_lines_reading_order(lines)
     root = Element(
         _page_tag("PcGts"),
         {
@@ -338,27 +365,28 @@ def build_page_xml(
             "imageHeight": str(int(height)),
         },
     )
+    region_id = f"region_{part_id}"
     reading = SubElement(page, _page_tag("ReadingOrder"))
     group = SubElement(
         reading,
         _page_tag("OrderedGroup"),
-        {"id": f"reading_order_{part_id}", "caption": "Lines top to bottom"},
+        {
+            "id": f"reading_order_{part_id}",
+            "caption": "Lines in transcription reading order",
+        },
     )
-    for index, line in enumerate(ordered):
-        SubElement(
-            group,
-            _page_tag("TextLineRefIndexed"),
-            {"index": str(index), "textLineId": f"line_{line['id']}"},
-        )
+    group.append(Element(_page_tag("RegionRefIndexed"), {"index": "0", "regionRef": region_id}))
     region = SubElement(
         page,
         _page_tag("TextRegion"),
-        {"id": f"region_{part_id}", "type": "paragraph"},
+        {"id": region_id, "type": "paragraph"},
     )
-    for line in ordered:
-        attrs = {"id": f"line_{line['id']}"}
+    for index, line in enumerate(ordered):
         if line.get("text") is None:
-            attrs["custom"] = "unpaired"
+            custom = f"readingOrder {{index:{index};}} structure {{type:unpaired;}}"
+        else:
+            custom = f"readingOrder {{index:{index};}}"
+        attrs = {"id": f"line_{line['id']}", "custom": custom}
         text_line = SubElement(region, _page_tag("TextLine"), attrs)
         polygon = [[round(x), round(y)] for x, y in line.get("points", [])]
         SubElement(text_line, _page_tag("Coords"), {"points": _points_str(polygon)})
@@ -505,42 +533,105 @@ def real_image_size(image: bytes) -> tuple[int, int]:
         return int(handle.width), int(handle.height)
 
 
+def _export_dirs(out: Path, project: dict, document: dict) -> tuple[Path, Path, Path]:
+    base = out / "raw" / project["slug"] / document["slug"]
+    return base / "images", base / "page", base / "json"
+
+
+def _part_prefix(part: dict) -> str:
+    order = part.get("order") or 0
+    stem, _ = part_image_stem(part.get("image_file", ""), part["id"])
+    safe_stem = slugify(stem) or part["id"]
+    return f"{int(order):04d}_{safe_stem}"
+
+
+def _normalise_timestamps(xml: bytes) -> bytes:
+    text = xml.decode("utf-8")
+    text = re.sub(r"<Created>.*?</Created>", "<Created>STAMP</Created>", text)
+    text = re.sub(r"<LastChange>.*?</LastChange>", "<LastChange>STAMP</LastChange>", text)
+    return text.encode("utf-8")
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     out = args.out
-    email, password = credentials_from_env()
-    client = ApiClient(base_url=args.base_url)
-    client.login(email, password)
-    inventory_path = out / "inventory.json"
-    if inventory_path.exists():
+    from_json = args.from_json
+    client: ApiClient | None = None
+    if from_json:
+        inventory_path = out / "inventory.json"
+        if not inventory_path.exists():
+            raise ApiError("no inventory.json: run a network export first")
         inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     else:
-        inventory = collect_inventory(client, args.project or None)
-        out.mkdir(parents=True, exist_ok=True)
-        inventory_path.write_text(
-            json.dumps(inventory, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        write_inventory_markdown(inventory, out / "inventory.md")
+        email, password = credentials_from_env()
+        client = ApiClient(base_url=args.base_url)
+        client.login(email, password)
+        inventory_path = out / "inventory.json"
+        if inventory_path.exists():
+            inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        else:
+            inventory = collect_inventory(client, args.project or None)
+            out.mkdir(parents=True, exist_ok=True)
+            inventory_path.write_text(
+                json.dumps(inventory, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            write_inventory_markdown(inventory, out / "inventory.md")
+    if client is None and not from_json:
+        raise ApiError("no API client: cannot reach production")
     wanted = set(args.project or [])
     saved_images = 0
     saved_xml = 0
+    rebuilt = 0
+    identical = 0
     for project in inventory["projects"]:
         if wanted and project.get("name") not in wanted:
             continue
         for document in project["documents"]:
-            images_dir = out / "raw" / project["slug"] / document["slug"] / "images"
-            page_dir = out / "raw" / project["slug"] / document["slug"] / "page"
+            images_dir, page_dir, json_dir = _export_dirs(out, project, document)
             images_dir.mkdir(parents=True, exist_ok=True)
             page_dir.mkdir(parents=True, exist_ok=True)
+            json_dir.mkdir(parents=True, exist_ok=True)
             for part in document["parts"]:
-                order = part.get("order") or 0
-                stem, url_ext = part_image_stem(part.get("image_file", ""), part["id"])
-                safe_stem = slugify(stem) or part["id"]
-                prefix = f"{int(order):04d}_{safe_stem}"
-                existing_xml = sorted(page_dir.glob(f"{prefix}.xml"))
+                prefix = _part_prefix(part)
+                xml_path = page_dir / f"{prefix}.xml"
+                if from_json:
+                    if args.skip_existing and xml_path.exists():
+                        continue
+                    layout = json.loads(
+                        (json_dir / f"{prefix}.layout.json").read_text(encoding="utf-8")
+                    )
+                    pairing = json.loads(
+                        (json_dir / f"{prefix}.pairing.json").read_text(encoding="utf-8")
+                    )
+                    matches = sorted(images_dir.glob(f"{prefix}.*"))
+                    if not matches:
+                        raise ApiError(f"no image for {prefix}: run a network export first")
+                    image = matches[0].read_bytes()
+                    image_name = matches[0].name
+                    try:
+                        width, height = real_image_size(image)
+                    except Exception:
+                        width = part.get("width") or 0
+                        height = part.get("height") or 0
+                    part_lines, _, _ = collect_part_lines(layout, pairing)
+                    fresh = build_page_xml(part["id"], image_name, width, height, part_lines)
+                    rebuilt += 1
+                    if not xml_path.exists():
+                        xml_path.write_bytes(fresh)
+                        saved_xml += 1
+                    elif _normalise_timestamps(fresh) == _normalise_timestamps(
+                        xml_path.read_bytes()
+                    ):
+                        identical += 1
+                    else:
+                        raise ApiError(f"{prefix}: rebuilt XML differs from stored XML")
+                    continue
+                if client is None:
+                    raise ApiError("no API client: cannot reach production")
                 existing_images = sorted(images_dir.glob(f"{prefix}.*"))
-                if args.skip_existing and existing_xml and existing_images:
+                if args.skip_existing and xml_path.exists() and existing_images:
                     continue
                 image, content_type = client.get_bytes(f"/media/parts/{part['id']}")
+                _, url_ext = part_image_stem(part.get("image_file", ""), part["id"])
                 ext = ext_for_content_type(content_type, url_ext or "png")
                 image_name = f"{prefix}.{ext}"
                 image_path = images_dir / image_name
@@ -555,18 +646,25 @@ def cmd_export(args: argparse.Namespace) -> int:
                     f"/projects/{project['id']}/documents/{document['id']}"
                     f"/parts/{part['id']}/layout"
                 )
+                layout_raw = client.last_raw()
                 pairing = client.get_json(
                     f"/projects/{project['id']}/documents/{document['id']}"
                     f"/parts/{part['id']}/pairing"
                 )
+                pairing_raw = client.last_raw()
                 if not isinstance(layout, dict) or not isinstance(pairing, dict):
                     raise ApiError(f"part {part['id']} did not return JSON")
+                (json_dir / f"{prefix}.layout.json").write_bytes(layout_raw)
+                (json_dir / f"{prefix}.pairing.json").write_bytes(pairing_raw)
                 part_lines, _, _ = collect_part_lines(layout, pairing)
                 xml = build_page_xml(part["id"], image_name, width, height, part_lines)
-                (page_dir / f"{prefix}.xml").write_bytes(xml)
+                xml_path.write_bytes(xml)
                 saved_xml += 1
     write_validation(out, inventory)
-    print(f"images={saved_images} xml={saved_xml} out={out}")
+    if from_json:
+        print(f"rebuilt={rebuilt} identical={identical} out={out}")
+    else:
+        print(f"images={saved_images} xml={saved_xml} out={out}")
     return 0
 
 
@@ -700,6 +798,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--skip-existing",
         action="store_true",
         help="Skip parts whose image and XML already exist",
+    )
+    exp.add_argument(
+        "--from-json",
+        action="store_true",
+        help="Rebuild PAGE XML from saved layout/pairing JSON with no network",
     )
     return parser.parse_args(argv)
 
