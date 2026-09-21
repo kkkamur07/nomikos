@@ -208,7 +208,13 @@ def folio_for_page(manuscript: str, order: int) -> str:
             return f"c {10 + order}"
         return ""
     if manuscript == "bnf-grec-1360":
-        return f"{order + 1}v-{order + 2}r"
+        # Raw order 0 carries text on the right-hand page only (every line
+        # x-centre at or above 725), so it is fol. 1r. Order N >= 1 is the
+        # opening fol. Nv (left) and fol. N+1r (right): order 4 holds 26
+        # paired lines left of 725 (fol. 4v) and 6 right of it (fol. 5r).
+        if order == 0:
+            return "1r"
+        return f"{order}v-{order + 1}r"
     return ""
 
 

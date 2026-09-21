@@ -48,11 +48,11 @@ Only pages with at least one paired line are included. The text of spreads 1 to 
 
 | Page | Folio | Paired lines | Text source |
 | --- | --- | ---: | --- |
-| 0000 | 1v-2r | 23 | local-page-xml |
-| 0001 | 2v-3r | 51 | local-page-xml |
-| 0002 | 3v-4r | 49 | local-page-xml |
-| 0003 | 4v-5r | 49 | production |
-| 0004 | 5v-6r | 32 | production |
+| 0000 | 1r | 23 | local-page-xml |
+| 0001 | 1v-2r | 51 | local-page-xml |
+| 0002 | 2v-3r | 49 | local-page-xml |
+| 0003 | 3v-4r | 49 | production |
+| 0004 | 4v-5r | 32 | production |
 
 ## Files and formats
 

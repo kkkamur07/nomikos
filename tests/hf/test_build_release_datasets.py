@@ -269,19 +269,19 @@ def test_local_page_xml_reading_order_and_folio(tmp_path: Path, monkeypatch: pyt
         rows = list(csv.DictReader(handle))
     # Folios come from the raw part order, not the filtered position.
     assert [(row["page_index"], row["folio"]) for row in rows] == [
-        ("1", "2v-3r"),
-        ("2", "3v-4r"),
+        ("1", "1v-2r"),
+        ("2", "2v-3r"),
     ]
     assert [row["text_source"] for row in rows] == ["production", "local-page-xml"]
     # Left folio block sorts before the right block; empty text is unpaired.
     assert recorded["lines"]["text"] == ["production text", "left text", "right text"]
-    assert recorded["lines"]["folio"] == ["2v-3r", "3v-4r", "3v-4r"]
+    assert recorded["lines"]["folio"] == ["1v-2r", "2v-3r", "2v-3r"]
     assert recorded["lines"]["text_source"] == [
         "production",
         "local-page-xml",
         "local-page-xml",
     ]
-    assert recorded["pages"]["folio"] == ["2v-3r", "3v-4r"]
+    assert recorded["pages"]["folio"] == ["1v-2r", "2v-3r"]
     assert recorded["pages"]["text_source"] == ["production", "local-page-xml"]
     assert recorded["pages"]["objects"][1]["paired"] == [True, True, False]
     root = xml_parse(str(repo_dir / "page-xml" / "bnf-grec-1360" / "0002.xml")).getroot()  # noqa: S314 - XML this test wrote, not untrusted input
@@ -308,8 +308,9 @@ def test_folio_labels():
     assert builder.folio_for_page("naples-ib-10", 0) == "c 10"
     assert builder.folio_for_page("naples-ib-10", 17) == "c 27"
     assert builder.folio_for_page("naples-ib-10", 18) == "c 27v"
-    assert builder.folio_for_page("bnf-grec-1360", 0) == "1v-2r"
-    assert builder.folio_for_page("bnf-grec-1360", 4) == "5v-6r"
+    assert builder.folio_for_page("bnf-grec-1360", 0) == "1r"
+    assert builder.folio_for_page("bnf-grec-1360", 1) == "1v-2r"
+    assert builder.folio_for_page("bnf-grec-1360", 4) == "4v-5r"
     assert builder.folio_for_page("alqosh-65", 0) == ""
 
 
@@ -345,7 +346,7 @@ def test_parquet_writer_round_trip(tmp_path: Path):
             "page_height": [80],
             "image_shipped": [True],
             "source_url": ["https://example.invalid"],
-            "folio": ["1v-2r"],
+            "folio": ["1r"],
             "text_source": ["production"],
         },
         "lines",
