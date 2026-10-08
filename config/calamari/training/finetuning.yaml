@@ -15,3 +15,5 @@ training:
   learning_rate: 9.940111830635472e-5
   weight_decay: 0.01
   warmup_ratio: 0.09
+  early_stopping_patience: 20  # epochs without eval_cer improvement before stopping; null = disabled
+  early_stopping_min_delta: 0.00001  # improvement must exceed this absolute eval_cer (0-1 fraction): 0.001 % CER

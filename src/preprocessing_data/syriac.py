@@ -84,6 +84,35 @@ COMBINING_DOT_ABOVE = "\u0307"  # ̇
 COMBINING_DOT_BELOW = "\u0323"  # ̣
 ARABIC_TATWEEL = "\u0640"  # ـ, kashida; not Syriac ink
 SYRIAC_ABBREVIATION_MARK = "\u070f"  # ܏, format char; often no bar in the crop
+SYRIAC_PTHAHA_ABOVE = "\u0730"  # ܰ, West (Greek-letter) a
+SYRIAC_PTHAHA_BELOW = "\u0731"  # ܱ
+SYRIAC_PTHAHA_DOTTED = "\u0732"  # ܲ, East a
+SYRIAC_ZQAPHA_ABOVE = "\u0733"  # ܳ, West (Greek-letter) o/ā
+SYRIAC_ZQAPHA_BELOW = "\u0734"  # ܴ
+SYRIAC_ZQAPHA_DOTTED = "\u0735"  # ܵ, East ā
+SYRIAC_RBASA_ABOVE = "\u0736"  # ܶ, West (Greek-letter) e
+SYRIAC_RBASA_BELOW = "\u0737"  # ܷ
+SYRIAC_DOTTED_ZLAMA_HORIZONTAL = "\u0738"  # ܸ, East e
+SYRIAC_HBASA_ABOVE = "\u073A"  # ܺ, West (Greek-letter) i
+SYRIAC_HBASA_BELOW = "\u073B"  # ܻ
+SYRIAC_HBASA_ESASA_DOTTED = "\u073C"  # ܼ, East i/u dot below
+SYRIAC_ESASA_ABOVE = "\u073D"  # ܽ, West (Greek-letter) u
+SYRIAC_ESASA_BELOW = "\u073E"  # ܾ
+SYRIAC_RWAHA = "\u073F"  # ܿ, East single dot above
+WEST_VOWELS_TO_EAST = str.maketrans(
+    {
+        SYRIAC_PTHAHA_ABOVE: SYRIAC_PTHAHA_DOTTED,
+        SYRIAC_PTHAHA_BELOW: SYRIAC_PTHAHA_DOTTED,
+        SYRIAC_ZQAPHA_ABOVE: SYRIAC_ZQAPHA_DOTTED,
+        SYRIAC_ZQAPHA_BELOW: SYRIAC_ZQAPHA_DOTTED,
+        SYRIAC_RBASA_ABOVE: SYRIAC_DOTTED_ZLAMA_HORIZONTAL,
+        SYRIAC_RBASA_BELOW: SYRIAC_DOTTED_ZLAMA_HORIZONTAL,
+        SYRIAC_HBASA_ABOVE: SYRIAC_HBASA_ESASA_DOTTED,
+        SYRIAC_HBASA_BELOW: SYRIAC_HBASA_ESASA_DOTTED,
+        SYRIAC_ESASA_ABOVE: SYRIAC_HBASA_ESASA_DOTTED,
+        SYRIAC_ESASA_BELOW: SYRIAC_HBASA_ESASA_DOTTED,
+    }
+)
 
 
 def normalize_symbol_encoding(text: str) -> str:
@@ -92,12 +121,24 @@ def normalize_symbol_encoding(text: str) -> str:
     One-dot phrase stop is ܁, not ASCII period. Two stacked dots are ܃,
     not ASCII colon. One dot above a letter is qushshaya (keep ̇); one
     dot below is rukkakha (keep ̣). Slash-colons ܆/܇, paragraph ܀,
-    seyame ̈, and East vowels ܿ/ܼ stay as-is — those are different inks.
+    and seyame ̈ stay as-is — those are different inks.
     Arabic tatweel and the abbreviation mark ܏ are dropped: they are not
     letters, and ܏ is often absent from the crop.
+
+    West (Greek-letter) vowels are mapped onto their East dotted
+    equivalents so one vowel is one class: ܰ/ܱ -> ܲ (U+0730/0731 -> U+0732),
+    ܳ/ܴ -> ܵ (U+0733/0734 -> U+0735), ܶ/ܷ -> ܸ (U+0736/0737 -> U+0738),
+    ܺ/ܻ -> ܼ (U+073A/073B -> U+073C), ܽ/ܾ -> ܼ (U+073D/073E -> U+073C).
+    After that, the single-dot East vowels fold into the generic dots:
+    hbasa-esasa ܼ (U+073C) becomes ̣ (U+0323) and rwaha ܿ (U+073F) becomes
+    ̇ (U+0307). Same ink; the model transcribes what is drawn. The two-dot
+    East vowels ܲ ܵ ܸ ܹ (U+0732, U+0735, U+0738, U+0739) stay as-is.
     """
     return (
-        text.replace(SYRIAC_QUSHSHAYA, COMBINING_DOT_ABOVE)
+        text.translate(WEST_VOWELS_TO_EAST)
+        .replace(SYRIAC_HBASA_ESASA_DOTTED, COMBINING_DOT_BELOW)
+        .replace(SYRIAC_RWAHA, COMBINING_DOT_ABOVE)
+        .replace(SYRIAC_QUSHSHAYA, COMBINING_DOT_ABOVE)
         .replace(SYRIAC_RUKKAKHA, COMBINING_DOT_BELOW)
         .replace(ASCII_FULL_STOP, SYRIAC_SUPRALINEAR_FULL_STOP)
         .replace(ASCII_COLON, SYRIAC_SUPRALINEAR_COLON)

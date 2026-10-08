@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,9 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset, Subset
 from transformers import Trainer, TrainerCallback, TrainingArguments
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
+
+from ...augmentation.augmentation import DEFAULT_COPIES
+from ...early_stopping import EarlyStoppingCallback
 
 from ...metrics.languages import language_indices
 from ...metrics.metrics import compute_sequence_length_metrics, compute_text_metrics
@@ -53,16 +56,22 @@ class CalamariTrainingSettings:
     device: str
     temperature: float
     lstm_layers: int
+    dropout_rate: float = 0.3
+    conv0_filters: int = 40
+    conv1_filters: int = 60
     checkpoint: Path | None = None
     mode: str = "train"
     train_split: str = "train"
     validation_split: str = "val"
-    n_augmentations: int = 5
+    copies: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_COPIES))
     augmentation_probability: float = 1.0
     ema_decay: float = 0.99
     logging_steps: int = 10
     warmup_ratio: float = 0.09
     checkpoint_top_k: int = 1
+    early_stopping_patience: int | None = None
+    early_stopping_min_delta: float = 0.0
+    seed: int = 1111
 
 
 class ExponentialMovingAverage:
@@ -333,6 +342,10 @@ def train_calamari(
         )
     if settings.checkpoint_top_k <= 0:
         raise ValueError("Calamari checkpoint_top_k must be greater than zero.")
+    if settings.early_stopping_patience is not None and settings.early_stopping_patience <= 0:
+        raise ValueError("Calamari early_stopping_patience must be greater than zero or null.")
+    if settings.early_stopping_min_delta < 0.0:
+        raise ValueError("Calamari early_stopping_min_delta must be greater than or equal to zero.")
 
     train_samples = collect_samples(data_root, settings.train_split)
     if not train_samples:
@@ -344,7 +357,7 @@ def train_calamari(
         train_lines = repeat_syriac_2024_train(train_lines)
     train_dataset = CalamariAugmentedDataset(
         train_lines,
-        settings.n_augmentations,
+        settings.copies,
         probability=settings.augmentation_probability,
     )
     validation_dataset = CalamariLineDataset(
@@ -387,10 +400,19 @@ def train_calamari(
         remove_unused_columns=False,
         label_names=["labels"],
         report_to=[],
-        seed=1111,
+        seed=settings.seed,
         use_cpu=_resolve_device(settings.device).type == "cpu",
         fp16=_resolve_device(settings.device).type == "cuda",
     )
+    # Per-epoch evaluation above produces the eval_cer our EarlyStoppingCallback reads.
+    callbacks: list[TrainerCallback] = [_EMACallback(ema), _ReportCallback(report)]
+    if settings.early_stopping_patience is not None:
+        callbacks.append(
+            EarlyStoppingCallback(
+                patience=settings.early_stopping_patience,
+                min_delta=settings.early_stopping_min_delta,
+            )
+        )
     trainer = CalamariTrainer(
         model=model,
         args=training_args,
@@ -403,7 +425,7 @@ def train_calamari(
         line_height=settings.line_height,
         temperature=settings.temperature,
         language_eval_datasets=language_eval_datasets,
-        callbacks=[_EMACallback(ema), _ReportCallback(report)],
+        callbacks=callbacks,
     )
     resume_checkpoint = _trainer_checkpoint(settings)
     trainer.train(resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint else None)
@@ -468,6 +490,9 @@ def _initial_model(
                     classes=codec.classes,
                     temperature=float(metadata["temperature"]),
                     lstm_layers=_metadata_lstm_layers(metadata),
+                    dropout_rate=settings.dropout_rate,
+                    conv0_filters=settings.conv0_filters,
+                    conv1_filters=settings.conv1_filters,
                 )
             ),
             codec,
@@ -500,6 +525,9 @@ def _initial_model(
                 classes=codec.classes,
                 temperature=settings.temperature,
                 lstm_layers=settings.lstm_layers,
+                dropout_rate=settings.dropout_rate,
+                conv0_filters=settings.conv0_filters,
+                conv1_filters=settings.conv1_filters,
             )
         ),
         codec,

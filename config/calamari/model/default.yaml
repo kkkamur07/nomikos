@@ -3,3 +3,6 @@ model:
   line_height: 48
   temperature: -1.0
   lstm_layers: 2
+  dropout_rate: 0.3
+  conv0_filters: 40
+  conv1_filters: 60

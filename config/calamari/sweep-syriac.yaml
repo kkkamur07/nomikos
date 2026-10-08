@@ -38,8 +38,15 @@ parameters:
     value: checkpoints/calamari/sweeps/finetuning/syriac
   wandb.name:
     value: calamari-sweep-finetuning-syriac
-  augmentation.n_augmentations:
-    values: [3, 4, 5, 6]
+  # Copies per tier are fixed (must sum to 5); the old n_augmentations sweep is gone.
+  augmentation.copies.none:
+    value: 0
+  augmentation.copies.easy:
+    value: 2
+  augmentation.copies.mild:
+    value: 2
+  augmentation.copies.hard:
+    value: 1
   training.learning_rate:
     distribution: log_uniform_values
     min: 0.00001

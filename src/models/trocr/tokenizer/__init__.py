@@ -11,6 +11,10 @@ _BUNDLED_TOKENIZER_DIRECTORIES = {
     "gpt_armenian_500": "gpt_armenian_500",
     "gpt_greek_500": "gpt_greek_500",
     "gpt_syriac_500": "gpt_syriac_500",
+    "gpt_armenian_750": "gpt_armenian_750",
+    "gpt_coptic_750": "gpt_coptic_750",
+    "gpt_greek_750": "gpt_greek_750",
+    "gpt_syriac_750": "gpt_syriac_750",
     "trocr": "trocr",
 }
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]

@@ -1,4 +1,10 @@
 # @package augmentation
 probability: 1.0
-# 5 copies + original: 2 easy (3 light ops), 2 mild (2 mild ops), 1 hard (1 heavy op).
-n_augmentations: 5
+# 5 augmented copies per line, plus the original. Ops per copy are fixed:
+# easy 3 light ops, mild 2 mild ops, hard 1 heavy op, none = identical copy.
+# The four counts must sum to 5 or training refuses to start.
+copies:
+  none: 0
+  easy: 2
+  mild: 2
+  hard: 1

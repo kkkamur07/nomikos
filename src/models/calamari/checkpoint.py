@@ -57,6 +57,8 @@ def save_calamari_checkpoint(
 
 def load_calamari_checkpoint(
     checkpoint_path: Path,
+    *,
+    dropout_rate: float = 0.3,
 ) -> tuple[CalamariTorchModel, CalamariCheckpointMetadata]:
     """Safely load and materialize a `calamari-pytorch-v1` checkpoint."""
     try:
@@ -80,11 +82,15 @@ def load_calamari_checkpoint(
     ):
         raise CalamariCheckpointError("Invalid Calamari checkpoint state dictionary.")
 
+    conv0_filters, conv1_filters = _conv_filters_from_state_dict(state_dict)
     model = CalamariTorchModel(
         default_model_config(
             classes=metadata.classes,
             temperature=metadata.temperature,
             lstm_layers=metadata.lstm_layers,
+            dropout_rate=dropout_rate,
+            conv0_filters=conv0_filters,
+            conv1_filters=conv1_filters,
         )
     )
     with torch.no_grad():
@@ -126,7 +132,7 @@ def _metadata_from_checkpoint(checkpoint: Mapping[str, object]) -> CalamariCheck
         or not math.isfinite(float(temperature))
         or not isinstance(lstm_layers, int)
         or isinstance(lstm_layers, bool)
-        or lstm_layers not in {1, 2}
+        or lstm_layers < 1
     ):
         raise CalamariCheckpointError("Invalid Calamari checkpoint metadata.")
     return CalamariCheckpointMetadata(
@@ -137,3 +143,19 @@ def _metadata_from_checkpoint(checkpoint: Mapping[str, object]) -> CalamariCheck
         temperature=float(temperature),
         lstm_layers=lstm_layers,
     )
+
+
+def _conv_filters_from_state_dict(state_dict: Mapping[str, Tensor]) -> tuple[int, int]:
+    """Read CNN widths from a checkpoint so 40/60 and 60/80 nets both load."""
+    first = state_dict.get("layers.0.conv.weight")
+    second = state_dict.get("layers.2.conv.weight")
+    if (
+        not isinstance(first, Tensor)
+        or not isinstance(second, Tensor)
+        or first.ndim != 4
+        or second.ndim != 4
+        or first.shape[0] < 1
+        or second.shape[0] < 1
+    ):
+        raise CalamariCheckpointError("Calamari checkpoint is missing convolution weights.")
+    return int(first.shape[0]), int(second.shape[0])

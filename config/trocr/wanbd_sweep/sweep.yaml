@@ -21,8 +21,8 @@ command:
 parameters:
   experiment:
     values:
-      - base_random_full
-      - base_pretrained_decoder
-      - base_pretrained_lora
-      - base_pretrained_full
-      - base_random_lora
+      - base_encoder_trained_lora_no_decoder_rand
+      - base_encoder_frozen_lora_no_decoder_trained
+      - base_encoder_frozen_lora_trained_decoder_trained
+      - base_encoder_trained_lora_no_decoder_trained
+      - base_encoder_frozen_lora_trained_decoder_rand

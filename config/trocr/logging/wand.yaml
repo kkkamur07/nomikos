@@ -1,10 +1,8 @@
 #! entity / project / run name
 
-
 enabled: true
-project: OCR_pretraining
+project: trocrvscalamari
 entity: personal-space-astha
-name: tr_ocr_full_finetune
+name: tr_ocr
 
 mode: online
-

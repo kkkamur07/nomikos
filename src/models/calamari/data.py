@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from ...metrics.languages import language_labels
-from ...augmentation.augmentation import EXPECTED_N_AUGMENTATIONS, plan_for_augmented_variant
+from ...augmentation.augmentation import build_variant_plan, plan_for_augmented_variant
 from .augmentation import augment_legacy_line_image, jitter_syriac_line_width
 from .codec import CharacterCodec
 
@@ -77,18 +78,14 @@ class CalamariAugmentedDataset(Dataset[dict[str, object]]):
     def __init__(
         self,
         dataset: Dataset[dict[str, object]],
-        n_augmentations: int,
+        copies: Mapping[str, int],
         probability: float = 1.0,
     ) -> None:
-        if n_augmentations != EXPECTED_N_AUGMENTATIONS:
-            raise ValueError(
-                f"Calamari n_augmentations must be {EXPECTED_N_AUGMENTATIONS} "
-                "(2 easy, 2 mild, 1 hard), plus the original."
-            )
         if not 0.0 <= probability <= 1.0:
             raise ValueError("Calamari augmentation probability must be between zero and one.")
         self.dataset = dataset
-        self.n_augmentations = n_augmentations
+        self.plan = build_variant_plan(copies)
+        self.n_augmentations = len(self.plan)
         self.probability = probability
 
     def __len__(self) -> int:
@@ -100,11 +97,13 @@ class CalamariAugmentedDataset(Dataset[dict[str, object]]):
         image = sample["image"]
         if not isinstance(image, Tensor):
             raise TypeError("Calamari augmentation requires tensor images.")
-        if variant and numpy.random.random() < self.probability:
-            if sample.get("language") == "syriac":
-                image = jitter_syriac_line_width(image, str(sample.get("text", "")))
-            strength, operation_count = plan_for_augmented_variant(variant)
-            image = augment_legacy_line_image(image, strength, operation_count)
+        if variant:
+            strength, operation_count = plan_for_augmented_variant(variant, self.plan)
+            # "none" copies are exact duplicates of the original: no jitter, no ops.
+            if strength != "none" and numpy.random.random() < self.probability:
+                if sample.get("language") == "syriac":
+                    image = jitter_syriac_line_width(image, str(sample.get("text", "")))
+                image = augment_legacy_line_image(image, strength, operation_count)
         sample["image"] = image
         return sample
 
@@ -230,9 +229,24 @@ def collate_ctc(samples: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
-def _load_line_image(path: Path, line_height: int) -> Tensor:
+def to_ink_bright(pixels: numpy.ndarray) -> numpy.ndarray:
+    """Return a uint8 line with ink = 255 and paper = 0.
+
+    All stored crops are paper-bright (the Esteban crops were re-polarised on
+    disk on 2026-10-08).
+    """
+    return 255 - numpy.asarray(pixels, dtype=numpy.uint8)
+
+
+def load_line_image_ink_bright(path: Path, line_height: int) -> Tensor:
+    """Load a line as an ink-bright ``(width, height, 1)`` uint8 tensor at ``line_height``."""
     with Image.open(path) as source:
         image = source.convert("L")
         width = max(1, round(image.width * line_height / image.height))
         image = image.resize((width, line_height), Image.Resampling.BILINEAR)
-        return torch.from_numpy(numpy.asarray(image).T.copy()).unsqueeze(-1)
+        pixels = to_ink_bright(numpy.asarray(image))
+    return torch.from_numpy(pixels.T.copy()).unsqueeze(-1)
+
+
+def _load_line_image(path: Path, line_height: int) -> Tensor:
+    return load_line_image_ink_bright(path, line_height)

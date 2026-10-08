@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -13,12 +14,14 @@ import torch
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset, Subset
-from transformers import Seq2SeqTrainingArguments
+from transformers import Seq2SeqTrainingArguments, TrainerCallback
 
+from ..early_stopping import EarlyStoppingCallback
 from ..logging.local import configure_file_logging
 from ..logging.wandb import WandbLogger
 from ..metrics.languages import language_indices
 from ..models.trocr.augmentation import LineAugmentation
+from ..models.trocr.evaluate import evaluate_checkpoint
 from ..models.trocr.dataloader import LineDataset, TrOCRAugmentedDataset, TrOCRCollator
 from ..models.trocr.token_metrics import compute_token_metrics
 from ..models.trocr.model_builder import build_model
@@ -27,6 +30,15 @@ from ..models.trocr.trainer import MetricsCsvCallback, TrOCRTrainer
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _copies(node: DictConfig) -> dict[str, int]:
+    """Plain ``{tier: count}`` dict from the ``augmentation.copies`` config node."""
+    copies = OmegaConf.to_container(node, resolve=True)
+    if not isinstance(copies, dict):
+        raise TypeError("augmentation.copies must be a mapping of tier to copy count.")
+    return {str(tier): int(count) for tier, count in copies.items()}
+
 
 _SWEEP_PARAMETER_PATHS = frozenset(
     {
@@ -106,13 +118,14 @@ def log_training_summary(
         ("LoRA", "Encoder layers", f"Last {cfg.lora_adaptors.num_layers}"),
         ("LoRA", "Attention targets", ", ".join(cfg.lora_adaptors.target_modules)),
         ("Augmentation", "Probability", str(cfg.augmentation.probability)),
-        ("Augmentation", "Augmented variants per image", str(cfg.augmentation.n_augmentations)),
-        ("Augmentation", "Operations per image", str(cfg.augmentation.num_operations)),
         (
             "Augmentation",
-            "Maximum rotation (degrees)",
-            str(cfg.augmentation.max_rotation_degrees),
+            "Copies per tier (+ original)",
+            str(_copies(cfg.augmentation.copies)),
         ),
+        ("Early stopping", "Enabled", str(bool(cfg.training.early_stopping.enabled))),
+        ("Early stopping", "Patience (evaluations)", str(cfg.training.early_stopping.patience)),
+        ("Early stopping", "Minimum CER improvement", str(cfg.training.early_stopping.min_delta)),
     ]
     widths = [
         max(len(str(row[index])) for row in rows + [("Section", "Setting", "Value")])
@@ -137,6 +150,35 @@ def log_training_summary(
         separator,
         "\n".join(body + [separator]),
     )
+
+
+def build_callbacks(cfg: DictConfig, log_dir: Path) -> list[TrainerCallback]:
+    """Return the metrics writer plus early stopping when it is enabled.
+
+    The project's ``EarlyStoppingCallback`` (``src.early_stopping``) counts
+    consecutive evaluations whose ``eval_cer`` fails to beat the best value by
+    strictly more than ``min_delta``. Evaluation runs once per
+    epoch, so ``patience`` is a number of epochs. CER is a fraction in
+    ``[0, 1]``, which makes ``min_delta`` an absolute CER difference.
+    """
+    callbacks: list[TrainerCallback] = [MetricsCsvCallback(log_dir / "metrics.csv")]
+    early_stopping = cfg.training.early_stopping
+    if not bool(early_stopping.enabled):
+        LOGGER.info("Early stopping is disabled; training runs the full epoch budget.")
+        return callbacks
+    patience = int(early_stopping.patience)
+    min_delta = float(early_stopping.min_delta)
+    if patience < 1:
+        raise ValueError("TrOCR early_stopping.patience must be at least one.")
+    if min_delta < 0.0:
+        raise ValueError("TrOCR early_stopping.min_delta must not be negative.")
+    LOGGER.info(
+        "Early stopping on eval_cer: patience %d evaluations, minimum improvement %g.",
+        patience,
+        min_delta,
+    )
+    callbacks.append(EarlyStoppingCallback(patience=patience, min_delta=min_delta))
+    return callbacks
 
 
 def apply_sweep_experiment(cfg: DictConfig, experiment_name: str) -> None:
@@ -244,16 +286,12 @@ def main(cfg: DictConfig) -> None:
         lora_config=lora_config,
     )
 
-    augmentation = LineAugmentation(
-        probability=float(cfg.augmentation.probability),
-        num_operations=int(cfg.augmentation.num_operations),
-        max_rotation_degrees=float(cfg.augmentation.max_rotation_degrees),
-    )
+    augmentation = LineAugmentation(probability=float(cfg.augmentation.probability))
     data_dir = Path(to_absolute_path(cfg.data.dir)).expanduser().resolve()
     train_dataset = TrOCRAugmentedDataset(
         LineDataset(data_dir, "train"),
         augmentation,
-        n_augmentations=int(cfg.augmentation.n_augmentations),
+        copies=_copies(cfg.augmentation.copies),
     )
     eval_dataset = LineDataset(data_dir, "val")
 
@@ -314,7 +352,7 @@ def main(cfg: DictConfig) -> None:
         data_collator=TrOCRCollator(processor, cfg.tokenizer.max_target_length),
         processing_class=tokenizer,
         compute_metrics=compute_metrics,
-        callbacks=[MetricsCsvCallback(log_dir / "metrics.csv")],
+        callbacks=build_callbacks(cfg, log_dir),
         checkpoint_top_k=int(cfg.training.checkpoint_top_k),
         language_eval_datasets=language_eval_datasets,
         metric_reporter=wandb_logger.log_metrics,
@@ -325,8 +363,54 @@ def main(cfg: DictConfig) -> None:
         final_dir = output_dir / "final"
         trainer.save_model(str(final_dir))
         processor.image_processor.save_pretrained(final_dir)
+        if bool(cfg.evaluation.get("run_test_after_training", False)):
+            run_test_evaluation(cfg, trainer, data_dir, output_dir, final_dir, wandb_logger)
     finally:
         wandb_logger.finish()
+
+
+def run_test_evaluation(
+    cfg: DictConfig,
+    trainer: TrOCRTrainer,
+    data_dir: Path,
+    output_dir: Path,
+    final_dir: Path,
+    wandb_logger: WandbLogger,
+) -> dict[str, float] | None:
+    """Score the best checkpoint on the test split; failures only warn."""
+    best = trainer.state.best_model_checkpoint
+    checkpoint = Path(best) if best and Path(best).exists() else final_dir
+    split = str(cfg.evaluation.split)
+    try:
+        metrics = evaluate_checkpoint(
+            checkpoint,
+            data_dir,
+            split=split,
+            batch_size=int(cfg.training.eval_batch_size),
+            workers=int(cfg.training.num_workers),
+            device="auto",
+            num_beams=int(cfg.evaluation.num_beams),
+        )
+        LOGGER.info(
+            "Test metrics: %s",
+            json.dumps(
+                {"test": metrics, "split": split, "checkpoint": str(checkpoint)}, sort_keys=True
+            ),
+        )
+        (output_dir / "test_metrics.json").write_text(
+            json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        wandb_logger.log_test_metrics(
+            metrics,
+            step=int(trainer.state.global_step),
+            epoch=float(trainer.state.epoch or 0.0),
+        )
+    except Exception:
+        LOGGER.warning(
+            "Test evaluation of %s on split %r failed.", checkpoint, split, exc_info=True
+        )
+        return None
+    return metrics
 
 
 if __name__ == "__main__":

@@ -309,6 +309,11 @@ class TrOCRTrainer(Seq2SeqTrainer):
             self._pending_train_metrics.clear()
         if "loss" in filtered:
             filtered["train_loss"] = filtered.pop("loss")
+        # HuggingFace injects ``epoch`` inside ``Trainer.log``. Set it here first so
+        # the W&B reporter (and ``define_metric(..., step_metric="epoch")``) see the
+        # real epoch instead of defaulting every point to 0.
+        if self.state.epoch is not None:
+            filtered["epoch"] = float(self.state.epoch)
         self._report_metrics(filtered)
         super().log(filtered, start_time)
 

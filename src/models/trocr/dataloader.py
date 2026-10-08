@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -12,7 +13,7 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase, TrOCRProcessor
 
 from ...metrics.languages import language_labels
-from ...augmentation.augmentation import EXPECTED_N_AUGMENTATIONS, plan_for_augmented_variant
+from ...augmentation.augmentation import build_variant_plan, plan_for_augmented_variant
 from .augmentation import LineAugmentation
 
 
@@ -59,16 +60,12 @@ class TrOCRAugmentedDataset(Dataset):
         self,
         dataset: Dataset,
         augmentation: LineAugmentation,
-        n_augmentations: int,
+        copies: Mapping[str, int],
     ) -> None:
-        if n_augmentations != EXPECTED_N_AUGMENTATIONS:
-            raise ValueError(
-                f"TrOCR n_augmentations must be {EXPECTED_N_AUGMENTATIONS} "
-                "(2 easy, 2 mild, 1 hard), plus the original."
-            )
         self.dataset = dataset
         self.augmentation = augmentation
-        self.n_augmentations = n_augmentations
+        self.plan = build_variant_plan(copies)
+        self.n_augmentations = len(self.plan)
 
     def __len__(self) -> int:
         return len(self.dataset) * self._variants_per_sample
@@ -77,10 +74,13 @@ class TrOCRAugmentedDataset(Dataset):
         sample_index, variant = divmod(index, self._variants_per_sample)
         sample = dict(self.dataset[sample_index])
         if variant:
+            strength, operation_count = plan_for_augmented_variant(variant, self.plan)
+            if strength == "none":
+                # Identity copy: the original image, untouched.
+                return sample
             image = sample["image"]
             if not isinstance(image, Image.Image):
                 raise TypeError("TrOCR augmentation requires PIL images.")
-            strength, operation_count = plan_for_augmented_variant(variant)
             sample["image"] = self.augmentation.apply(image, strength, operation_count)
         return sample
 

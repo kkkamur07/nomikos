@@ -3,8 +3,8 @@
 enabled: true
 entity: personal-space-astha
 
-project: OCR_pretraining
-name: calamari_pretraining
+project: OCR_Consulting_final
+name: calamari
 mode: online
 
 

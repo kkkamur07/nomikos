@@ -41,6 +41,11 @@ def load_model(model_source: str) -> TrOCRVisionEncoderDecoderModel:
             f"missing={sorted(missing_keys - _IGNORED_MISSING_KEYS)}, "
             f"unexpected={sorted(unexpected_keys)}"
         )
+    if "decoder.output_projection.weight" in missing_keys:
+        # SafeTensors only drops this tensor when it shared storage with the token
+        # embeddings at save time; restore that tie instead of keeping a random init.
+        decoder = model.decoder
+        decoder.get_output_embeddings().weight = decoder.get_input_embeddings().weight
     if missing_keys & _IGNORED_MISSING_KEYS and hasattr(model.encoder, "pooler"):
         model.encoder.pooler = None
     return model
