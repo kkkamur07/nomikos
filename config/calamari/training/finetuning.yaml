@@ -12,7 +12,7 @@ training:
   device: auto
   ema_decay: 0.99  #! need to look into this
   checkpoint_top_k: 1
-  learning_rate: 9.940111830635472e-5
+  learning_rate: 0.0001
   weight_decay: 0.01
   warmup_ratio: 0.09
   early_stopping_patience: 20  # epochs without eval_cer improvement before stopping; null = disabled
