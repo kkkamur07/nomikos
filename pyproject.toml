@@ -382,6 +382,8 @@ extend-exclude = [
     # are recorded in docs/resume-inference-redesign.md. Everything outside `src/`
     # is linted with no exemptions beyond the per-file-ignores below.
     "src",
+    # TrOCR research code, moved out of src/ wholesale and not maintained.
+    "trocr",
 ]
 
 [tool.ruff.lint]
