@@ -29,9 +29,7 @@ OCR_METRIC_NAMES = (
     "sroie_recall",
     "sroie_f1",
 )
-TRAIN_OCR_METRIC_NAMES = tuple(
-    name for name in OCR_METRIC_NAMES if name not in {"sroie_precision", "sroie_recall", "sroie_f1"}
-)
+TRAIN_OCR_METRIC_NAMES = OCR_METRIC_NAMES
 
 
 class MetricsCsvCallback(TrainerCallback):

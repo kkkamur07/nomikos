@@ -15,7 +15,16 @@ _TEST_HEADLINE_METRICS = frozenset({"cer", "wer", "exact_match"})
 _SYSTEM_SUFFIXES = ("_runtime", "_samples_per_second", "_steps_per_second")
 _SYSTEM_KEYS = frozenset({"total_flos"})
 _AXIS_KEYS = frozenset({"epoch", "step"})
-_SECTIONS = ("train", "eval", "test", "length", "gradient normalization", "extra", "system")
+_SECTIONS = (
+    "train",
+    "eval",
+    "test",
+    "length",
+    "gradient normalization",
+    "learning rate",
+    "extra",
+    "system",
+)
 
 
 def _evaluation_scope_and_metric(key: str) -> tuple[str, str] | None:
@@ -64,6 +73,8 @@ def _wandb_metric_key(key: str) -> str:
         return f"gradient normalization/{key}"
     if key in _SYSTEM_KEYS or key.endswith(_SYSTEM_SUFFIXES):
         return f"system/{key}"
+    if key == "learning_rate":
+        return f"learning rate/{key}"
     if key.startswith("train_"):
         metric = key.removeprefix("train_")
         if metric in _HEADLINE_METRICS:

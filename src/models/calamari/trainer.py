@@ -34,13 +34,15 @@ from .data import (
 from .model import CalamariTorchModel
 
 
-TRAIN_OCR_METRIC_NAMES = ("cer", "wer", "exact_match")
-EVAL_OCR_METRIC_NAMES = (
-    *TRAIN_OCR_METRIC_NAMES,
+TRAIN_OCR_METRIC_NAMES = (
+    "cer",
+    "wer",
+    "exact_match",
     "sroie_precision",
     "sroie_recall",
     "sroie_f1",
 )
+EVAL_OCR_METRIC_NAMES = TRAIN_OCR_METRIC_NAMES
 _EMA_FILENAME = "calamari_ema.pt"
 _METADATA_FILENAME = "calamari_metadata.json"
 

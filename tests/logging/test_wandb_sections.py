@@ -79,7 +79,10 @@ _EXPECTED = {
     "test_exact_match": "test/exact_match",
     "test_loss": "extra/test_loss",
     "grad_norm": "gradient normalization/grad_norm",
-    "learning_rate": "extra/learning_rate",
+    "learning_rate": "learning rate/learning_rate",
+    "train_sroie_f1": "extra/train_sroie_f1",
+    "train_sroie_precision": "extra/train_sroie_precision",
+    "train_sroie_recall": "extra/train_sroie_recall",
     "eval_sroie_f1": "extra/eval_sroie_f1",
     "eval_sroie_precision": "extra/eval_sroie_precision",
     "eval_sroie_recall": "extra/eval_sroie_recall",
@@ -98,7 +101,16 @@ _EXPECTED = {
 
 @pytest.mark.parametrize("row", [_TRAIN_ROW, _EVAL_ROW, _TEST_ROW], ids=["train", "eval", "test"])
 def test_every_realistic_key_lands_in_one_section(row: dict[str, float]) -> None:
-    allowed = {"train", "eval", "test", "length", "gradient normalization", "extra", "system"}
+    allowed = {
+        "train",
+        "eval",
+        "test",
+        "length",
+        "gradient normalization",
+        "learning rate",
+        "extra",
+        "system",
+    }
     for key in row:
         mapped = _wandb_metric_key(key)
         if key in {"epoch", "step"}:
