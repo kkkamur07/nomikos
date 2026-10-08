@@ -1,6 +1,0 @@
-#! trocr default tokenizer for the base model
-
-path: tokenizer/trocr_small
-use_fast: false
-pad_token: "<pad>"
-max_target_length: 50

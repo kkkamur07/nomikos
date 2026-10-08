@@ -1,3 +1,0 @@
-reinitialize: token_layers  #! all = scratch all , token_layers = only embedding start from scracth , none = trocr decoder
-tied: false
-dropout: 0.1

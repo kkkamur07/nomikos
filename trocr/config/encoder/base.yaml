@@ -1,9 +1,0 @@
-# @package _global_
-
-encoder:
-  name: base
-
-model:
-  name: microsoft/trocr-base-handwritten
-  checkpoint_dir: trocr_checkpoints/trocr-base-handwritten
-  freeze_encoder: true

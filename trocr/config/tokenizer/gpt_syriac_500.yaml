@@ -1,6 +1,0 @@
-#! Syriac GPT byte-level BPE tokenizer with a 500-token vocabulary
-
-path: tokenizer/gpt_syriac_500
-use_fast: true
-pad_token: "<|pad|>"
-max_target_length: 100

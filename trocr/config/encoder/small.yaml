@@ -1,9 +1,0 @@
-# @package _global_
-
-encoder:
-  name: small
-
-model:
-  name: microsoft/trocr-small-handwritten
-  checkpoint_dir: trocr_checkpoints/trocr-small-handwritten
-  freeze_encoder: false

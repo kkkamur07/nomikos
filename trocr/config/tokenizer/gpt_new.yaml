@@ -1,4 +1,0 @@
-path: gpt_new
-use_fast: true
-pad_token: "<|pad|>"
-reinitialize_decoder: true

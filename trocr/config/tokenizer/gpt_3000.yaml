@@ -1,6 +1,0 @@
-#! GPT byte-level BPE tokenizer with a 3k vocabulary
-
-path: tokenizer/bpe_3000
-use_fast: true
-pad_token: "<|pad|>"
-max_target_length: 50
