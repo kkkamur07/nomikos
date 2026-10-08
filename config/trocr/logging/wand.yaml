@@ -6,3 +6,5 @@ entity: personal-space-astha
 name: tr_ocr
 
 mode: online
+# W&B run group (null = ungrouped); override with wandb.group=<name>
+group: null

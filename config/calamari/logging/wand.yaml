@@ -6,5 +6,5 @@ entity: personal-space-astha
 project: OCR_Consulting_final
 name: calamari
 mode: online
-
-
+# W&B run group (null = ungrouped); override with wandb.group=<name>
+group: null

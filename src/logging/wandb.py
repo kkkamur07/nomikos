@@ -219,6 +219,7 @@ class WandbLogger:
         mode: str,
         save_dir: Path,
         config: dict[str, Any],
+        group: str | None = None,
     ) -> None:
         self._run = None
         self._sequence_length_rows: dict[str, list[tuple[object, ...]]] = {}
@@ -231,6 +232,7 @@ class WandbLogger:
             project=project,
             entity=entity,
             name=name,
+            group=group,
             mode=mode,
             dir=str(save_dir),
             config=config,

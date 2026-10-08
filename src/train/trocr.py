@@ -211,6 +211,7 @@ def initialize_run(cfg: DictConfig, log_dir: Path) -> tuple[str, WandbLogger]:
         entity=str(cfg.wandb.entity) if cfg.wandb.entity is not None else None,
         name=str(cfg.wandb.name) if cfg.wandb.name is not None else None,
         mode=str(cfg.wandb.mode),
+        group=str(cfg.wandb.group) if cfg.wandb.get("group") is not None else None,
         save_dir=log_dir,
         config=resolved_config,
     )
