@@ -367,3 +367,11 @@ broken critical flow.
 | `DuplicatePreparedStatementError` | Using pooler URL without `statement_cache_size=0` - already handled in `infrastructure/db.py` |
 | Media 404 | `STORAGE_BACKEND=supabase` but bucket/key wrong |
 | SSE never connects | Expected on Vercel; polling fallback should still complete jobs |
+
+## Usage report
+
+`scripts/platform/sql/usage_report.sql` is one read-only report (SELECTs only): accounts, per-user
+activity, content totals, jobs by kind, status and model, job durations, failures, jobs per day and
+database size. Run it from your own terminal with `~/nomikos-usage/usage_report.sh [--days N]`; it
+asks for the SSH password once and saves the output to `~/nomikos-usage/report-<date>.txt`. Use
+`--local <dbname>` to try it against the local Postgres first.
