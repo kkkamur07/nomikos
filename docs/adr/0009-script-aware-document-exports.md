@@ -75,3 +75,13 @@ Syriac page).
   charset-normalizer.
 - A new script means a block range in `script_detection.py`, a font file and two dictionary
   entries in `core/fonts.py`.
+
+## Update 2026-10-11
+
+Syriac defaults to the Eastern (Madnhaya) style: every Syriac manuscript on the platform
+is East Syriac, and the previous default (Noto Sans Syriac v3.000) is the Estrangela style,
+so the PDF drew an approximation of the expected script. All three Noto styles are now
+bundled (`NotoSansSyriacEastern-Regular.ttf` and `NotoSansSyriacWestern-Regular.ttf`,
+v3.001 unhinted TTFs from the notofonts syriac releases, next to the v3.000 Estrangela
+file) with `core/fonts.py::SYRIAC_STYLE_FONT_FILES` mapping each style to its file, so a
+later per-document style choice has somewhere to plug in. No per-document setting yet.
