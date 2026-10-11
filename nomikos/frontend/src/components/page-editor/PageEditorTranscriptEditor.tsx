@@ -23,8 +23,7 @@ const REGION_SEPARATOR_STYLE: CSSProperties = {
   borderTop: "1px solid var(--border, #ebe8e3)",
   fontSize: "0.75rem",
   fontWeight: 600,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
+  letterSpacing: "0.02em",
   color: "var(--text-3, #6b6b6b)",
 };
 const MIN_MASK_FONT_SIZE = 11;
