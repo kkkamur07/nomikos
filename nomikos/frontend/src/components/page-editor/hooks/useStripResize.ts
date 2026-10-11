@@ -55,5 +55,19 @@ export function useStripResize(initialHeight = DEFAULT_HEIGHT) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // The floating background-jobs panel clears the strip via this inset (see
+  // .pe-job-panel in page-editor.css). Re-published after every render so a
+  // hidden-then-shown strip restores it even when the height did not change;
+  // removed on unmount so other routes fall back to 0.
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--nk-bottom-inset",
+      `${height}px`,
+    );
+    return () => {
+      document.documentElement.style.removeProperty("--nk-bottom-inset");
+    };
+  });
+
   return { height, setHeight, onPointerDown, onPointerMove, onPointerUp };
 }
