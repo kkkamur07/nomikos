@@ -1,8 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, type DocumentWithPartsResponse } from "../../api/client";
+import {
+  api,
+  type DocumentWithPartsResponse,
+  type LineResponse,
+  type SegmentHealthResponse,
+} from "../../api/client";
 import type * as ClientModule from "../../api/client";
+import { PageEditorCanvasIsland } from "./PageEditorCanvasIsland";
 import { PageEditorToolbar } from "./PageEditorToolbar";
 import { DEFAULT_PAGE_EDITOR_SETTINGS } from "./pageEditorSettings";
 
@@ -14,7 +20,9 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-function renderToolbar() {
+type ToolbarProps = Parameters<typeof PageEditorToolbar>[0];
+
+function renderToolbar(overrides: Partial<ToolbarProps> = {}) {
   const document = { id: "d-1", name: "Grec 1360" };
   render(
     <PageEditorToolbar
@@ -50,6 +58,8 @@ function renderToolbar() {
       transcriptionPdfOpen={false}
       onOpenTranscriptionPdf={vi.fn()}
       onCloseTranscriptionPdf={vi.fn()}
+      transcriptOpen
+      onToggleTranscript={vi.fn()}
       settingsOpen={false}
       onSettingsOpenChange={vi.fn()}
       segmentHealthOpen={false}
@@ -69,6 +79,7 @@ function renderToolbar() {
       preferenceSaving={false}
       hasLocalCapacity={false}
       hostPreferenceLoading={false}
+      {...overrides}
     />,
   );
 }
@@ -107,6 +118,86 @@ describe("PageEditorToolbar feedback", () => {
       message: "nice",
       page_path: window.location.pathname,
     });
+  });
+});
+
+const twoLines = [{ id: "l-1" }, { id: "l-2" }] as unknown as LineResponse[];
+const healthWithFindings = {
+  report: { finding_count: 3 } as unknown as SegmentHealthResponse,
+  loading: false,
+  error: null,
+  pending: null,
+  apply: vi.fn(),
+  refresh: vi.fn(),
+};
+
+describe("PageEditorToolbar transcript toggle and Check page", () => {
+  it("shows a pressed Transcript toggle in place of Check page", () => {
+    const onToggleTranscript = vi.fn();
+    renderToolbar({ onToggleTranscript });
+
+    const toggle = screen.getByRole("button", { name: "Transcript" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.getAttribute("aria-keyshortcuts")).toBe("T");
+    expect(toggle.getAttribute("title")).toBe("Hide transcript pane (T)");
+    expect(screen.queryByRole("button", { name: /check page/i })).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(onToggleTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads unpressed once the pane is closed", () => {
+    renderToolbar({ transcriptOpen: false });
+    const toggle = screen.getByRole("button", { name: "Transcript" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.getAttribute("title")).toBe("Show transcript pane (T)");
+  });
+
+  it("puts Check page with its count first in the Workflow menu", () => {
+    const onActionsOpenChange = vi.fn();
+    const onSegmentHealthOpenChange = vi.fn();
+    renderToolbar({
+      actionsOpen: true,
+      lines: twoLines,
+      segmentHealth: healthWithFindings,
+      onActionsOpenChange,
+      onSegmentHealthOpenChange,
+    });
+
+    const menu = screen.getByRole("menu", { name: "Workflow" });
+    const first = menu.querySelector("[role^='menuitem']");
+    expect(first?.textContent).toBe("Check page · 3");
+
+    fireEvent.click(first as HTMLElement);
+    expect(onActionsOpenChange).toHaveBeenCalledWith(false);
+    expect(onSegmentHealthOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it("disables Check page on a page with no lines", () => {
+    renderToolbar({ actionsOpen: true });
+    const item = screen.getByRole("menuitem", { name: "Check page" });
+    expect((item as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("PageEditorCanvasIsland", () => {
+  it("no longer carries a Transcript button", () => {
+    render(
+      <PageEditorCanvasIsland
+        tool="none"
+        onSelectTool={vi.fn()}
+        onPickDrawMode={vi.fn()}
+        canDelete={false}
+        onDeleteSelected={vi.fn()}
+        zoomPercent={100}
+        onZoomIn={vi.fn()}
+        onZoomOut={vi.fn()}
+        onFitToView={vi.fn()}
+        onResetZoom={vi.fn()}
+        panOverride={false}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /transcript/i })).toBeNull();
   });
 });
 
@@ -159,6 +250,9 @@ describe("PageEditorToolbar fold", () => {
     expect(segment.textContent).toBe("");
     expect(segment.className).toContain("pe-tb-btn--icon");
     expect(screen.getByRole("button", { name: "Workflow" })).toBeTruthy();
+    const transcript = screen.getByRole("button", { name: "Transcript" });
+    expect(transcript.textContent).toBe("");
+    expect(transcript.getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByRole("button", { name: "More" })).toBeNull();
   });
 
@@ -168,11 +262,35 @@ describe("PageEditorToolbar fold", () => {
     expect(screen.queryByRole("button", { name: "Segment" })).toBeNull();
     expect(screen.queryByRole("button", { name: /workflow/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /check page/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Transcript" })).toBeNull();
     expect(screen.getByRole("button", { name: "More" })).toBeTruthy();
     // The always-visible controls stay put.
     expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Editor settings" }),
     ).toBeTruthy();
+  });
+
+  it("offers Transcript as a checkable item and Check page in More", () => {
+    available = 1000;
+    const onToggleTranscript = vi.fn();
+    renderToolbar({
+      actionsOpen: true,
+      lines: twoLines,
+      segmentHealth: healthWithFindings,
+      onToggleTranscript,
+    });
+    const menu = screen.getByRole("menu", { name: "More" });
+    expect(menu).toBeTruthy();
+    const transcript = screen.getByRole("menuitemcheckbox", {
+      name: /^transcript(?!ion)/i,
+    });
+    expect(transcript.getAttribute("aria-checked")).toBe("true");
+    expect(
+      screen.getByRole("menuitem", { name: "Check page · 3" }),
+    ).toBeTruthy();
+
+    fireEvent.click(transcript);
+    expect(onToggleTranscript).toHaveBeenCalledTimes(1);
   });
 });

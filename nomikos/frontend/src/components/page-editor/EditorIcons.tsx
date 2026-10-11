@@ -201,21 +201,3 @@ export function WorkflowIcon() {
     </svg>
   );
 }
-
-/** A magnifier over a line: look for segmentation mistakes. */
-export function CheckPageIcon() {
-  return (
-    <svg
-      className="pe-tb-btn__icon"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <circle cx="7" cy="7" r="4.4" />
-      <path d="M10.2 10.2l3.6 3.6M5 7h4" />
-    </svg>
-  );
-}

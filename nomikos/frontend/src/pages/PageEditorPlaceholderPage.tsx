@@ -546,8 +546,6 @@ export function PageEditorPlaceholderPage() {
         segmentVertexEditEnabled={
           drawMode === "none" && Boolean(selectedSegmentId)
         }
-        transcriptOpen={canvasSettings.sideBySide}
-        onToggleTranscript={() => toggleSideBySideRef.current()}
         onSelectTool={handlePanSelect}
         onPickDrawMode={pickDrawMode}
         canDelete={Boolean(selectedSegmentId || selectedLineId)}
@@ -662,6 +660,8 @@ export function PageEditorPlaceholderPage() {
             transcriptionPdfOpen={transcriptionPdfOpen}
             onOpenTranscriptionPdf={openTranscriptionPdf}
             onCloseTranscriptionPdf={() => setTranscriptionPdfOpen(false)}
+            transcriptOpen={canvasSettings.sideBySide}
+            onToggleTranscript={() => toggleSideBySideRef.current()}
             segmentHealthOpen={segmentHealthOpen}
             onSegmentHealthOpenChange={setSegmentHealthOpen}
             segmentHealth={segmentHealth}

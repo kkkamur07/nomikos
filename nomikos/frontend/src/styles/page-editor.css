@@ -558,6 +558,11 @@
   width: 260px;
   right: 0;
   left: auto;
+  /* Taller than a laptop screen once every control is shown: it scrolls
+     inside the space below the 52px bar instead of running off the bottom. */
+  max-height: calc(100vh - 52px - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .pe-dd-field--stack {
@@ -865,13 +870,6 @@
 }
 .pe-island__btn--active:hover:not(:disabled) {
   background: var(--navy);
-}
-/* A pressed view toggle: quieter than the armed tool, so the two never
-   compete for "this is what the mouse does now". */
-.pe-island__btn--on {
-  background: var(--surface-2);
-  border-color: var(--border-2);
-  color: var(--navy);
 }
 .pe-island__btn:disabled {
   opacity: 0.35;
@@ -1690,13 +1688,6 @@
   padding: 1px 4px;
   border-radius: 3px;
   background: var(--surface-2);
-}
-/* Check page folded to an icon keeps its finding count beside the icon. */
-.pe-tb-btn__count {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--amber);
 }
 .pe-tb-btn:disabled .pe-tb-btn__scope {
   background: transparent;

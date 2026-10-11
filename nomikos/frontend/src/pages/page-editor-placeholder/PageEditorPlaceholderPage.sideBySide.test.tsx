@@ -328,13 +328,13 @@ describe("PageEditorPlaceholderPage side by side", () => {
     expect(container.querySelector(".pe-transcript")).toBeNull();
   });
 
-  it("hides the pane with the header x and unpresses the island toggle", async () => {
+  it("hides the pane with the header x and unpresses the top bar toggle", async () => {
     seedSideBySide(true);
     seedEditor();
     const { container } = renderPageEditor();
     await screen.findByLabelText("Page geometry canvas");
 
-    const toggle = screen.getByRole("button", { name: /^transcript \(t\)$/i });
+    const toggle = screen.getByRole("button", { name: "Transcript" });
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(
       screen.getByRole("button", { name: "Hide transcript pane" }),
@@ -350,24 +350,22 @@ describe("PageEditorPlaceholderPage side by side", () => {
     ).toBe(false);
     expect(
       screen
-        .getByRole("button", { name: /^transcript \(t\)$/i })
+        .getByRole("button", { name: "Transcript" })
         .getAttribute("aria-pressed"),
     ).toBe("false");
   });
 
-  it("opens and closes the pane from the island Transcript toggle", async () => {
+  it("opens and closes the pane from the top bar Transcript toggle", async () => {
     seedSideBySide(false);
     seedEditor();
     const { container } = renderPageEditor();
     await screen.findByLabelText("Page geometry canvas");
 
-    // The top bar no longer carries a Transcript button.
+    // The toggle lives in the top bar only: the island no longer has one.
     expect(
-      screen.queryByRole("button", { name: /show transcript pane/i }),
+      screen.queryByRole("button", { name: /^transcript \(t\)$/i }),
     ).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: /^transcript \(t\)$/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Transcript" }));
 
     await waitFor(() => {
       expect(
@@ -376,13 +374,11 @@ describe("PageEditorPlaceholderPage side by side", () => {
     });
     expect(
       screen
-        .getByRole("button", { name: /^transcript \(t\)$/i })
+        .getByRole("button", { name: "Transcript" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /^transcript \(t\)$/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Transcript" }));
     await waitFor(() => {
       expect(container.querySelector(".pe-split")).toBeNull();
     });

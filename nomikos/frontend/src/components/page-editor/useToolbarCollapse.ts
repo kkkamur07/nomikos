@@ -5,9 +5,10 @@ import type { RefObject } from "react";
  * How far the editor bar has folded to stay on one row.
  *
  * 0: every action button carries its label.
- * 1: the labelled buttons (Segment, Transcribe, Workflow, Check page) are
+ * 1: the labelled buttons (Segment, Transcribe, Transcript, Workflow) are
  *    icon-only.
- * 2: those buttons fold into one "More" menu at the right.
+ * 2: those buttons fold into one "More" menu at the right, beside Check page,
+ *    which the Workflow menu carries at the first two levels.
  */
 export type ToolbarCollapseLevel = 0 | 1 | 2;
 
