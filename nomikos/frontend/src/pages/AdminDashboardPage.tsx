@@ -305,7 +305,7 @@ export function AdminFeedbackTable({ rows }: { rows: FeedbackRow[] }) {
         {
           title: "Page",
           dataIndex: "page_path",
-          render: (value: string | null) => value ?? "—",
+          render: (value: string | null) => value ?? "",
         },
         { title: "Message", dataIndex: "message" },
       ]}
@@ -480,6 +480,14 @@ export function AdminOverviewView({
       </Card>
 
       <Card
+        id="feedback"
+        title="Feedback"
+        note="Newest notes sent by signed-in users, up to 50."
+      >
+        <AdminFeedbackTable rows={feedback} />
+      </Card>
+
+      <Card
         id="models"
         title="Models"
         note="Success rate counts finished jobs only; median duration is created to completed, for jobs that finished."
@@ -627,13 +635,6 @@ export function AdminOverviewView({
         />
       </Card>
 
-      <Card
-        id="feedback"
-        title="Feedback"
-        note="Newest notes sent by signed-in users, up to 50."
-      >
-        <AdminFeedbackTable rows={feedback} />
-      </Card>
       <Card
         id="failures"
         title="Client failures"
