@@ -144,6 +144,7 @@ def _block_response(block: Block) -> BlockResponse:
         order=block.order,
         box=block.box,
         manual_geometry=block.manual_geometry,
+        label=block.label,
         created_at=block.created_at,
     )
 
@@ -493,7 +494,15 @@ async def create_part_block(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BlockResponse:
     block = await _layout.create_part_block(
-        db, current_user, project_id, document_id, part_id, order=body.order, box=body.box
+        db,
+        current_user,
+        project_id,
+        document_id,
+        part_id,
+        order=body.order,
+        box=body.box,
+        label=body.label or None,
+        assign_contained=body.assign_contained,
     )
     return _block_response(block)
 

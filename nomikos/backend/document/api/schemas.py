@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from backend.document.application.part_service import (
@@ -271,12 +271,20 @@ class BlockResponse(BaseModel):
     order: int
     box: dict
     manual_geometry: bool
+    label: str | None = None
     created_at: datetime
+
+
+BlockLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)]
 
 
 class BlockCreateRequest(BaseModel):
     order: int = Field(ge=0)
     box: dict
+    label: BlockLabel | None = None
+    # Assign every line of the page whose centre lies inside ``box`` and that is in no
+    # region yet (ADR 0011). The page is renumbered region-first either way.
+    assign_contained: bool = True
 
 
 class BlockPatchRequest(BaseModel):
@@ -293,6 +301,13 @@ class BlockPatchRequest(BaseModel):
 
     order: PatchOrder = None
     box: dict | SkipJsonSchema[None] = None
+    # Nullable column: an explicit ``null`` (or an empty string) clears the label.
+    label: BlockLabel | None = None
+
+    @field_validator("label", mode="after")
+    @classmethod
+    def empty_label_clears(cls, value: str | None) -> str | None:
+        return value or None
 
     @field_validator("order", "box", mode="before")
     @classmethod

@@ -2009,10 +2009,17 @@ export interface components {
     };
     /** BlockCreateRequest */
     BlockCreateRequest: {
+      /**
+       * Assign Contained
+       * @default true
+       */
+      assign_contained: boolean;
       /** Box */
       box: {
         [key: string]: unknown;
       };
+      /** Label */
+      label?: string | null;
       /** Order */
       order: number;
     };
@@ -2031,6 +2038,8 @@ export interface components {
       box?: {
         [key: string]: unknown;
       };
+      /** Label */
+      label?: string | null;
       /** Order */
       order?: number;
     };
@@ -2050,6 +2059,8 @@ export interface components {
        * Format: uuid
        */
       id: string;
+      /** Label */
+      label?: string | null;
       /** Manual Geometry */
       manual_geometry: boolean;
       /** Order */

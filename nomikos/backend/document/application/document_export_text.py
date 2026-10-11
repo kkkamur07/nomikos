@@ -5,6 +5,9 @@ nothing else - to paste into an edition, to diff against a printed text, to feed
 concordance. The PDF is a picture of a page and the PAGE XML is geometry; this is the
 same ground-truth text both of them carry, in reading order.
 
+A page divided into regions (ADR 0011) prints them in region order, each labelled one
+under its label on a line of its own, and the lines in no region after them.
+
 Each page opens with a ``[p.N]`` marker and pages are separated by a blank line, so a
 line found here can be traced back to the page it came off without opening the document.
 ``N`` is the page's position in the whole document, not its position in the export: a
@@ -22,6 +25,7 @@ from backend.document.application.document_export_selection import (
     DocumentExportSelector,
     document_download_name,
 )
+from backend.document.application.regions import RegionHeading, region_text
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.orm_models import Line, TranscriptionKind
 from backend.users.infrastructure.orm_models import User
@@ -58,7 +62,11 @@ class DocumentTextExportService:
         pages: list[str] = []
         for part in selection.parts:
             lines = await self._documents.list_part_lines(session, part.id)
-            body = [text for text in (_ground_truth_text(line) for line in lines) if text.strip()]
+            blocks = await self._documents.list_part_blocks(session, part.id)
+            body = [
+                item.label if isinstance(item, RegionHeading) else item
+                for item in region_text(blocks, lines, _ground_truth_text)
+            ]
             # A page with nothing transcribed still gets its marker. The marker is the
             # thing that makes the numbering readable, and a silently absent page 7
             # would read as a document that has no page 7.

@@ -12,12 +12,15 @@ one document means reading PDFs back in - which needs a PDF parser. The producti
 requirements carry fpdf2, which writes PDFs and cannot read them; ``pypdf`` is in the
 test group only. Driving one fpdf2 document across every page needs no parser at all,
 so the loop lives here and the drawing (``draw_page``) stays with the renderer.
+
+Lines are drawn where they sit on the page, so regions (ADR 0011) need no regrouping
+here: each labelled region gets its label as a small heading just above its box.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +36,8 @@ from backend.document.application.document_export_selection import (
     document_download_name,
 )
 from backend.document.application.document_service import DocumentService
+from backend.document.application.regions import box_polygon
+from backend.document.application.script_detection import Script
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.users.infrastructure.orm_models import User
 
@@ -55,6 +60,45 @@ class _PdfPage:
     width: int
     height: int
     lines: list[_PdfLine]
+    regions: list[_PdfRegion] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _PdfRegion:
+    """A labelled region's label and the top-left corner of its box, in page pixels."""
+
+    label: str
+    x: float
+    y: float
+
+
+def _pdf_regions(blocks) -> list[_PdfRegion]:
+    regions = []
+    for block in blocks:
+        polygon = box_polygon(block.box)
+        if not block.label or not polygon:
+            continue
+        x = min(point[0] for point in polygon)
+        y = min(point[1] for point in polygon)
+        regions.append(_PdfRegion(label=block.label, x=x, y=y))
+    return regions
+
+
+def draw_region_headings(pdf: _TranscriptionPdf, *, height: int, regions: list[_PdfRegion]):
+    """Each label in small grey type just above its region (inside it at the page top)."""
+    if not regions:
+        return
+    size = max(12, round(height / 90))
+    pdf.set_font(pdf.family_for(Script.latin), size=size)
+    pdf.set_fallback_fonts([])
+    pdf.set_text_shaping(use_shaping_engine=True, direction="ltr")
+    pdf.set_text_color(*_REGION_HEADING_RGB)
+    for region in regions:
+        pdf.set_xy(region.x, max(region.y - 1.3 * size, 0))
+        pdf.cell(text=region.label)
+
+
+_REGION_HEADING_RGB = (90, 90, 110)
 
 
 class DocumentTranscriptionPdfService(TranscriptionPdfService):
@@ -85,10 +129,11 @@ class DocumentTranscriptionPdfService(TranscriptionPdfService):
         for part in selection.parts:
             width, height = await self._page_size(session, part)
             lines = self._pdf_lines(await self._documents.list_part_lines(session, part.id))
+            regions = _pdf_regions(await self._documents.list_part_blocks(session, part.id))
             # A page with nothing transcribed on it still gets a page. Dropping it would
             # silently renumber everything after it, and the reader comparing this
             # against the scans needs page 7 to be page 7.
-            pages.append(_PdfPage(width=width, height=height, lines=lines))
+            pages.append(_PdfPage(width=width, height=height, lines=lines, regions=regions))
         content = await asyncio.to_thread(self._render_document_pdf, pages)
         return DocumentPdfExport(
             filename=document_download_name(selection.document.name, "transcription.pdf"),
@@ -107,4 +152,5 @@ class DocumentTranscriptionPdfService(TranscriptionPdfService):
             # Sized per page, not once: a document can hold a folio spread and a single
             # leaf, and each page's line coordinates are in that page's own pixel grid.
             draw_page(pdf, width=page.width, height=page.height, lines=page.lines)
+            draw_region_headings(pdf, height=page.height, regions=page.regions)
         return pdf.finish()

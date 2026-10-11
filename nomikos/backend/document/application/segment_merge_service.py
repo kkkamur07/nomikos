@@ -25,7 +25,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.core.exceptions import NotFoundError
-from backend.document.application.reading_order import merge_reading_order, renumber
+from backend.document.application.reading_order import (
+    block_ranks,
+    merge_reading_order,
+    renumber,
+)
 from backend.document.infrastructure.orm_models import (
     Block,
     DocumentPart,
@@ -95,8 +99,11 @@ class SegmentMergeService:
         # Blocks carry no transcription of their own, so the geometry rule is the whole
         # rule for them. A kept line whose block goes loses only its block_id (SET NULL),
         # which is the state kraken lines without a block are already in.
+        kept_blocks: list[Block] = []
         for block in list(part.blocks):
-            if not block.manual_geometry:
+            if block.manual_geometry:
+                kept_blocks.append(block)
+            else:
                 session.delete(block)
         session.flush()
 
@@ -152,8 +159,14 @@ class SegmentMergeService:
         # the segmenter's sequence, with each kept line placed where it sits (ADR 0008).
         model_lines.sort(key=lambda line: line.order)
         kept_lines.sort(key=lambda line: (line.order, line.created_at))
-        sequence = merge_reading_order(kept_lines, model_lines)
-        orders = renumber(sequence)
+        # Region-first (ADR 0011): a human's regions and the segmenter's, by block order,
+        # a kept region before a fresh one of the same order since it is older.
+        kept_blocks.sort(key=lambda block: (block.order, block.created_at))
+        block_orders = block_ranks(
+            sorted([*kept_blocks, *blocks_by_external_id.values()], key=lambda b: b.order)
+        )
+        sequence = merge_reading_order(kept_lines, model_lines, block_orders)
+        orders = renumber(sequence, block_orders)
         for line in sequence:
             line.order = orders[line.id]
 

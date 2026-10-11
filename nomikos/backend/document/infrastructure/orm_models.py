@@ -152,6 +152,9 @@ class Block(Base):
     box: Mapped[dict] = mapped_column(JSONB)
     manual_geometry: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     order: Mapped[int] = mapped_column(Integer, default=0)
+    # What the researcher calls this region, typically a folio ("4v"). Exports print it
+    # as the region's heading (ADR 0011).
+    label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     part: Mapped[DocumentPart] = relationship("DocumentPart", back_populates="blocks")

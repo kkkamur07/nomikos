@@ -398,10 +398,27 @@
       },
       "BlockCreateRequest": {
         "properties": {
+          "assign_contained": {
+            "default": true,
+            "title": "Assign Contained",
+            "type": "boolean"
+          },
           "box": {
             "additionalProperties": true,
             "title": "Box",
             "type": "object"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
           },
           "order": {
             "minimum": 0.0,
@@ -421,6 +438,18 @@
             "additionalProperties": true,
             "title": "Box",
             "type": "object"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
           },
           "order": {
             "minimum": 0.0,
@@ -447,6 +476,17 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
           },
           "manual_geometry": {
             "title": "Manual Geometry",
