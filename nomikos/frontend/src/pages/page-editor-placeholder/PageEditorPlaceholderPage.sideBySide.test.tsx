@@ -328,15 +328,14 @@ describe("PageEditorPlaceholderPage side by side", () => {
     expect(container.querySelector(".pe-transcript")).toBeNull();
   });
 
-  it("hides the pane with the header x and offers the Transcript button back", async () => {
+  it("hides the pane with the header x and unpresses the island toggle", async () => {
     seedSideBySide(true);
     seedEditor();
     const { container } = renderPageEditor();
     await screen.findByLabelText("Page geometry canvas");
 
-    expect(
-      screen.queryByRole("button", { name: /show transcript pane/i }),
-    ).toBeNull();
+    const toggle = screen.getByRole("button", { name: /^transcript \(t\)$/i });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(
       screen.getByRole("button", { name: "Hide transcript pane" }),
     );
@@ -350,18 +349,24 @@ describe("PageEditorPlaceholderPage side by side", () => {
         .sideBySide,
     ).toBe(false);
     expect(
-      screen.getByRole("button", { name: /show transcript pane \(t\)/i }),
-    ).toBeTruthy();
+      screen
+        .getByRole("button", { name: /^transcript \(t\)$/i })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 
-  it("reopens the pane from the toolbar Transcript button", async () => {
+  it("opens and closes the pane from the island Transcript toggle", async () => {
     seedSideBySide(false);
     seedEditor();
     const { container } = renderPageEditor();
     await screen.findByLabelText("Page geometry canvas");
 
+    // The top bar no longer carries a Transcript button.
+    expect(
+      screen.queryByRole("button", { name: /show transcript pane/i }),
+    ).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: /show transcript pane \(t\)/i }),
+      screen.getByRole("button", { name: /^transcript \(t\)$/i }),
     );
 
     await waitFor(() => {
@@ -370,11 +375,17 @@ describe("PageEditorPlaceholderPage side by side", () => {
       ).not.toBeNull();
     });
     expect(
-      screen.queryByRole("button", { name: /show transcript pane/i }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Hide transcript pane" }),
-    ).toBeTruthy();
+      screen
+        .getByRole("button", { name: /^transcript \(t\)$/i })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /^transcript \(t\)$/i }),
+    );
+    await waitFor(() => {
+      expect(container.querySelector(".pe-split")).toBeNull();
+    });
   });
 
   it("toggles the pane with T but ignores T while typing", async () => {

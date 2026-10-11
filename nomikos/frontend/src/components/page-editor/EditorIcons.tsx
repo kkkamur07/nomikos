@@ -117,3 +117,105 @@ export function CheckIcon() {
     </svg>
   );
 }
+
+/** Lines of text beside a page: the side-by-side transcript pane. */
+export function TranscriptIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="1.8" y="2.3" width="12.4" height="11.4" rx="1" />
+      <path d="M8 2.3v11.4M10 5.5h2.2M10 8h2.2M10 10.5h1.4" />
+    </svg>
+  );
+}
+
+/** Three dots: the overflow menu for actions that no longer fit the bar. */
+export function MoreIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <circle cx="4.5" cy="10" r="1.5" />
+      <circle cx="10" cy="10" r="1.5" />
+      <circle cx="15.5" cy="10" r="1.5" />
+    </svg>
+  );
+}
+
+/** Stacked line boxes: segment the page. */
+export function SegmentIcon() {
+  return (
+    <svg
+      className="pe-tb-btn__icon"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="2.2" y="2.6" width="11.6" height="3" rx="0.8" />
+      <rect x="2.2" y="6.9" width="11.6" height="3" rx="0.8" />
+      <path d="M2.2 12.6h7.4" />
+    </svg>
+  );
+}
+
+/** A type T: transcribe. */
+export function TranscribeIcon() {
+  return (
+    <svg
+      className="pe-tb-btn__icon"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M2.6 4.2h10.8M8 4.2v8.2M5.6 12.4h4.8" />
+    </svg>
+  );
+}
+
+/** Three linked steps: the Workflow menu. */
+export function WorkflowIcon() {
+  return (
+    <svg
+      className="pe-tb-btn__icon"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.8" y="2.2" width="4.4" height="4.4" rx="0.8" />
+      <rect x="9.8" y="9.4" width="4.4" height="4.4" rx="0.8" />
+      <path d="M6.2 4.4h2.6a1.2 1.2 0 0 1 1.2 1.2v3.8" />
+    </svg>
+  );
+}
+
+/** A magnifier over a line: look for segmentation mistakes. */
+export function CheckPageIcon() {
+  return (
+    <svg
+      className="pe-tb-btn__icon"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="4.4" />
+      <path d="M10.2 10.2l3.6 3.6M5 7h4" />
+    </svg>
+  );
+}

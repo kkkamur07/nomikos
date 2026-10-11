@@ -631,6 +631,9 @@ type PageEditorCanvasProps = Omit<
   }) => void;
   /** Bring this segment into view. Handled once per nonce, then ignored. */
   focusRequest?: { segmentId: string; nonce: number } | null;
+  /** The transcript pane toggle in the island; omitted, the island has none. */
+  transcriptOpen?: boolean;
+  onToggleTranscript?: () => void;
 };
 
 export function PageEditorCanvas({
@@ -647,6 +650,8 @@ export function PageEditorCanvas({
   viewportRef,
   onTransformed,
   focusRequest,
+  transcriptOpen,
+  onToggleTranscript,
   drawingRectangle: drawingSegmentRectangle,
   drawingRegion = false,
   drawingPolygon,
@@ -1101,6 +1106,8 @@ export function PageEditorCanvas({
               onFitToView={fitToView}
               onResetZoom={() => resetTransform()}
               panOverride={spaceHeld}
+              transcriptOpen={transcriptOpen}
+              onToggleTranscript={onToggleTranscript}
             />
             <TransformComponent
               wrapperStyle={{

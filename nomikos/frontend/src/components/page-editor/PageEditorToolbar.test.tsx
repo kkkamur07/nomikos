@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, type DocumentWithPartsResponse } from "../../api/client";
 import type * as ClientModule from "../../api/client";
@@ -107,5 +107,72 @@ describe("PageEditorToolbar feedback", () => {
       message: "nice",
       page_path: window.location.pathname,
     });
+  });
+});
+
+describe("PageEditorToolbar fold", () => {
+  // jsdom lays nothing out, so the bar's widths are faked: the content asks
+  // for less room at each fold level, the way the real buttons do.
+  const required = { "0": 1400, "1": 1150, "2": 900 } as Record<string, number>;
+  let available = 2000;
+  const restore: (() => void)[] = [];
+
+  function fakeWidth(name: "clientWidth" | "scrollWidth") {
+    const original = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      name,
+    );
+    Object.defineProperty(HTMLElement.prototype, name, {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (!this.classList.contains("pe-toolbar")) return 0;
+        const need = required[this.dataset.collapse ?? "0"];
+        return name === "clientWidth" ? available : Math.max(available, need);
+      },
+    });
+    restore.push(() => {
+      if (original)
+        Object.defineProperty(HTMLElement.prototype, name, original);
+    });
+  }
+
+  beforeEach(() => {
+    fakeWidth("clientWidth");
+    fakeWidth("scrollWidth");
+  });
+  afterEach(() => {
+    restore.splice(0).forEach((undo) => undo());
+  });
+
+  it("keeps labels when everything fits", () => {
+    available = 2000;
+    renderToolbar();
+    expect(screen.getByRole("button", { name: /^segment$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /workflow ▾/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  });
+
+  it("drops to icon-only buttons first", () => {
+    available = 1200;
+    renderToolbar();
+    const segment = screen.getByRole("button", { name: "Segment" });
+    expect(segment.textContent).toBe("");
+    expect(segment.className).toContain("pe-tb-btn--icon");
+    expect(screen.getByRole("button", { name: "Workflow" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  });
+
+  it("folds the labelled buttons into More when icons still do not fit", () => {
+    available = 1000;
+    renderToolbar();
+    expect(screen.queryByRole("button", { name: "Segment" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /workflow/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /check page/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "More" })).toBeTruthy();
+    // The always-visible controls stay put.
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Editor settings" }),
+    ).toBeTruthy();
   });
 });
