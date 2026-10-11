@@ -15,6 +15,7 @@ import { segmentNumbersById, segmentsInNumberOrder } from "./segmentNumbering";
 import { regionSeparators, type Region } from "./regions";
 import { displayText, maskStripHeight } from "./textPanelGeometry";
 import type { TextSource } from "./textPanelGeometry";
+import { CloseIcon } from "./EditorIcons";
 
 const BASE_FONT_SIZE = 16;
 const EMPTY_REGIONS: Region[] = [];
@@ -46,6 +47,8 @@ export type PageEditorTranscriptEditorProps = {
   onHoverSegment: (lineId: string | null) => void;
   onFocusSegment: (lineId: string) => void;
   onCommitText: (lineId: string, text: string) => Promise<void>;
+  /** Hide the side-by-side pane through the same settings path as the gear. */
+  onClose: () => void;
 };
 
 function errorMessage(error: unknown): string {
@@ -340,6 +343,7 @@ export function PageEditorTranscriptEditor(
     onHoverSegment,
     onFocusSegment,
     onCommitText,
+    onClose,
   } = props;
 
   // Rows follow the stored Segment order, the same sequence the canvas numbers.
@@ -408,45 +412,84 @@ export function PageEditorTranscriptEditor(
   }, [selectedSegmentId]);
 
   return (
-    <div className="pe-transcript" role="list">
-      {ordered.length === 0 ? (
-        <p className="pe-transcript-empty">No segments on this page yet.</p>
-      ) : (
-        ordered.map((line, index) => (
-          <Fragment key={line.id}>
-            {separators.has(line.id) ? (
-              <div
-                className="pe-transcript-region"
-                role="heading"
-                aria-level={3}
-                style={REGION_SEPARATOR_STYLE}
-              >
-                {separators.get(line.id)}
-              </div>
-            ) : null}
-            <TranscriptRow
-              line={line}
-              number={numbers.get(line.id) ?? index + 1}
-              seedText={seeds.get(line.id)?.text ?? ""}
-              seedSource={seeds.get(line.id)?.source ?? "none"}
-              selected={line.id === selectedSegmentId}
-              hovered={line.id === hoveredSegmentId}
-              pageDirection={pageDirection}
-              pageScript={pageScript}
-              fontSize={maskFontSizes.get(line.id) ?? baseFontSize}
-              prevId={ordered[index - 1]?.id ?? null}
-              nextId={ordered[index + 1]?.id ?? null}
-              onSelectSegment={onSelectSegment}
-              onHoverSegment={onHoverSegment}
-              onFocusSegment={onFocusSegment}
-              onCommitText={onCommitText}
-              onFocusId={focusId}
-              registerTextarea={registerTextarea}
-              registerRow={registerRow}
-            />
-          </Fragment>
-        ))
-      )}
+    <div
+      className="pe-transcript-wrap"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
+      <div
+        className="pe-transcript-header"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "4px 8px 4px 16px",
+          borderBottom: "1px solid var(--border, #ebe8e3)",
+          fontSize: "0.75rem",
+          fontWeight: 600,
+          letterSpacing: "0.02em",
+          color: "var(--text-3, #6b6b6b)",
+        }}
+      >
+        <span>Transcript</span>
+        <button
+          type="button"
+          className="pe-icon-btn"
+          title="Hide transcript pane"
+          aria-label="Hide transcript pane"
+          onClick={onClose}
+        >
+          <CloseIcon />
+        </button>
+      </div>
+      <div
+        className="pe-transcript"
+        role="list"
+        style={{ flex: 1, minHeight: 0, height: "auto" }}
+      >
+        {ordered.length === 0 ? (
+          <p className="pe-transcript-empty">No segments on this page yet.</p>
+        ) : (
+          ordered.map((line, index) => (
+            <Fragment key={line.id}>
+              {separators.has(line.id) ? (
+                <div
+                  className="pe-transcript-region"
+                  role="heading"
+                  aria-level={3}
+                  style={REGION_SEPARATOR_STYLE}
+                >
+                  {separators.get(line.id)}
+                </div>
+              ) : null}
+              <TranscriptRow
+                line={line}
+                number={numbers.get(line.id) ?? index + 1}
+                seedText={seeds.get(line.id)?.text ?? ""}
+                seedSource={seeds.get(line.id)?.source ?? "none"}
+                selected={line.id === selectedSegmentId}
+                hovered={line.id === hoveredSegmentId}
+                pageDirection={pageDirection}
+                pageScript={pageScript}
+                fontSize={maskFontSizes.get(line.id) ?? baseFontSize}
+                prevId={ordered[index - 1]?.id ?? null}
+                nextId={ordered[index + 1]?.id ?? null}
+                onSelectSegment={onSelectSegment}
+                onHoverSegment={onHoverSegment}
+                onFocusSegment={onFocusSegment}
+                onCommitText={onCommitText}
+                onFocusId={focusId}
+                registerTextarea={registerTextarea}
+                registerRow={registerRow}
+              />
+            </Fragment>
+          ))
+        )}
+      </div>
     </div>
   );
 }

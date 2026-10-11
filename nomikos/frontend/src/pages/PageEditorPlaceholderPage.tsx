@@ -379,10 +379,20 @@ export function PageEditorPlaceholderPage() {
     setApprovedTextDraft,
   ]);
 
-  // G arms the Region tool. Kept here rather than in the shared shortcut hook,
-  // with the same rule that hook applies: never while typing.
+  // G arms the Region tool and T toggles the side-by-side transcript pane.
+  // Kept here rather than in the shared shortcut hook, with the same rule
+  // that hook applies: never while typing.
   const pickDrawModeRef = useRef(pickDrawMode);
   pickDrawModeRef.current = pickDrawMode;
+  const canvasSettingsRef = useRef(canvasSettings);
+  canvasSettingsRef.current = canvasSettings;
+  const toggleSideBySideRef = useRef(() => {});
+  toggleSideBySideRef.current = () => {
+    const current = canvasSettingsRef.current;
+    const next = { ...current, sideBySide: !current.sideBySide };
+    setCanvasSettings(next);
+    savePageEditorSettings(next);
+  };
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (
@@ -393,9 +403,16 @@ export function PageEditorPlaceholderPage() {
         return;
       }
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (event.key.toLowerCase() !== "g") return;
-      event.preventDefault();
-      pickDrawModeRef.current("region");
+      const key = event.key.toLowerCase();
+      if (key === "g") {
+        event.preventDefault();
+        pickDrawModeRef.current("region");
+        return;
+      }
+      if (key === "t") {
+        event.preventDefault();
+        toggleSideBySideRef.current();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -702,6 +719,12 @@ export function PageEditorPlaceholderPage() {
                       }
                       onCommitText={commitLineText}
                       scaleFontToMask={canvasSettings.transcriptFontFromMask}
+                      onClose={() =>
+                        handleCanvasSettingsChange({
+                          ...canvasSettings,
+                          sideBySide: false,
+                        })
+                      }
                     />
                   }
                 />

@@ -272,4 +272,82 @@ describe("PageEditorPlaceholderPage side by side", () => {
     expect(container.querySelector(".pe-split")).toBeNull();
     expect(container.querySelector(".pe-transcript")).toBeNull();
   });
+
+  it("hides the pane with the header x and offers the Transcript button back", async () => {
+    seedSideBySide(true);
+    seedEditor();
+    const { container } = renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+
+    expect(
+      screen.queryByRole("button", { name: /show transcript pane/i }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Hide transcript pane" }),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".pe-split")).toBeNull();
+    });
+    expect(container.querySelector(".pe-transcript")).toBeNull();
+    expect(
+      JSON.parse(localStorage.getItem("nomikos_page_editor_settings") ?? "{}")
+        .sideBySide,
+    ).toBe(false);
+    expect(
+      screen.getByRole("button", { name: /show transcript pane \(t\)/i }),
+    ).toBeTruthy();
+  });
+
+  it("reopens the pane from the toolbar Transcript button", async () => {
+    seedSideBySide(false);
+    seedEditor();
+    const { container } = renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /show transcript pane \(t\)/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(".pe-split-right .pe-transcript"),
+      ).not.toBeNull();
+    });
+    expect(
+      screen.queryByRole("button", { name: /show transcript pane/i }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Hide transcript pane" }),
+    ).toBeTruthy();
+  });
+
+  it("toggles the pane with T but ignores T while typing", async () => {
+    seedSideBySide(true);
+    seedEditor();
+    const { container } = renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    expect(
+      container.querySelector(".pe-split-right .pe-transcript"),
+    ).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: "t" });
+    await waitFor(() => {
+      expect(container.querySelector(".pe-split")).toBeNull();
+    });
+
+    fireEvent.keyDown(window, { key: "T" });
+    await waitFor(() => {
+      expect(
+        container.querySelector(".pe-split-right .pe-transcript"),
+      ).not.toBeNull();
+    });
+
+    const first = screen.getByLabelText("Segment 1 text");
+    first.focus();
+    fireEvent.keyDown(first, { key: "t" });
+    expect(
+      container.querySelector(".pe-split-right .pe-transcript"),
+    ).not.toBeNull();
+  });
 });
