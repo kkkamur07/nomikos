@@ -31,7 +31,10 @@ pure, in `backend/document/application/reading_order.py`:
   overlaps the new line's by at least 30 % of the narrower one (the same column or folio).
   The new line goes after the nearest candidate above its centre, else before the nearest
   candidate below it, else at the end. Height is the baseline's mean y, or the polygon's
-  middle row when there is no baseline.
+  middle row when there is no baseline. A line beside another one (a margin note level
+  with line 2) goes right after that one instead: always when no line shares its column,
+  and otherwise when it is no further off sideways than that line is tall and nearer than
+  the column's nearest line is vertically (so a line low on a short verso stays on it).
 - `renumber(lines)`: `0..n-1` in the given sequence.
 - `merge_reading_order(kept, model)`: the segmenter's sequence, each kept line inserted with
   `insertion_index`.
@@ -56,9 +59,10 @@ Existing pages are fixed once with `scripts/platform/renumber_lines.py` (dry run
 
 - One line has one number everywhere, and adding or removing a line shifts the numbers after
   it the way a reader expects.
-- Placement is a heuristic. A line that overlaps no column (a marginal note far from the text
-  block) goes last; a line that straddles two columns attaches to whichever it overlaps
-  enough. Both are visible and fixable by redrawing.
+- Placement is a heuristic. A line that overlaps no column and sits level with no line goes
+  last; a line that straddles two columns attaches to whichever it overlaps enough. Both
+  are visible and fixable by redrawing. (Before the row rule, a margin note beside line 2 of
+  a 51-line page went last, as line 52.)
 - A create or delete now writes every later line of the page, a few hundred rows at most.
 - A line drawn under the old rule stays last on its page after the renumber script; it has to
   be redrawn to move. No migration: `order` stays an int, and nothing enforces density in the

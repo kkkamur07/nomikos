@@ -90,9 +90,41 @@ def test_a_spread_keeps_the_folios_apart():
     assert insertion_index(page, _drawn(760, 392, 1390, 402)) == 3 + 6
 
 
-def test_a_line_overlapping_no_column_goes_last():
+def test_a_line_overlapping_no_column_goes_after_the_line_on_its_row():
     page = _column("a", 100, 500, 3)
-    assert insertion_index(page, _drawn(800, 120, 900, 140)) == 3
+    # Level with a0 (y 100-140), well off to the side: after a0, not last.
+    assert insertion_index(page, _drawn(800, 120, 900, 140)) == 1
+
+
+def test_a_line_sharing_neither_a_column_nor_a_row_goes_last():
+    page = _column("a", 100, 500, 3)
+    assert insertion_index(page, _drawn(800, 400, 900, 420)) == 3
+
+
+def test_a_note_in_the_margin_beside_a_line_goes_right_after_it():
+    # The bug: a box drawn in the left margin next to line 2 of a 51-line page was
+    # numbered 52 (it overlaps no column) or 25 (a ragged line far down the page
+    # reaches into the margin far enough to count as its column).
+    page = _column("a", 100, 900, 6)
+    page[4] = _line("a4", 40, 300, 900, 340)
+    # Left of a1 (y 150-190), overlapping nothing near it.
+    assert insertion_index(page, _drawn(20, 160, 90, 180)) == 2
+    # Narrower still: it shares a column only with a4, 150px further down.
+    assert insertion_index(page, _drawn(45, 160, 95, 180)) == 2
+    # Right of a1.
+    assert insertion_index(page, _drawn(910, 160, 980, 180)) == 2
+    # Far out in the margin, 60px off: still the row of a1.
+    assert insertion_index(page, _drawn(0, 160, 30, 180)) == 2
+
+
+def test_a_margin_note_beside_a_spread_attaches_to_its_own_folio():
+    verso = _column("v", 50, 650, 4)
+    recto = _column("r", 750, 1400, 4)
+    page = verso + recto
+    # Just right of verso line 1, in the gutter but far from the recto.
+    assert insertion_index(page, _drawn(655, 160, 690, 180)) == 2
+    # Just left of recto line 1.
+    assert insertion_index(page, _drawn(715, 160, 745, 180)) == 4 + 2
 
 
 def test_a_short_numeral_overlapping_a_line_counts_as_its_column():
@@ -438,10 +470,10 @@ async def test_moving_a_line_to_another_region_numbers_it_within_that_region():
         block_id=verso.id,
     )
 
-    # It overlaps no verso column, so it goes to the end of the verso region, ahead
-    # of the recto that it left.
+    # It overlaps no verso column but sits level with v1, so it follows v1 inside the
+    # verso region, ahead of the recto that it left.
     assert moved.block_id == verso.id
-    assert moved.order == 3
+    assert moved.order == 2
     assert sorted(line.order for line in lines) == list(range(6))
 
 
