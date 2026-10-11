@@ -85,6 +85,61 @@ describe("PageEditorPlaceholderPage side by side", () => {
     ).not.toBeNull();
   });
 
+  it("numbers a Segment drawn after line 2 as row 3 and shifts the rest", async () => {
+    // The server places a drawn Segment and renumbers the ones after it (ADR
+    // 0008); the pane must show that order at once, not the drawn one last.
+    seedSideBySide(true);
+    mockedApi.getDocument.mockResolvedValue(DOCUMENT);
+    const before = [
+      groundTruthLine("line-1", 0, "first words"),
+      groundTruthLine("line-2", 1, "second words"),
+      groundTruthLine("line-3", 2, "third words"),
+    ];
+    let drawn = false;
+    mockedApi.listPartLines.mockImplementation(async () =>
+      drawn
+        ? [
+            before[0],
+            before[1],
+            line({ id: "z-drawn", order: 2 }),
+            { ...before[2], order: 3 },
+          ]
+        : before,
+    );
+    mockedApi.createPartLine.mockImplementation(
+      async (_projectId, _documentId, _partId, body) => {
+        drawn = true;
+        return line({ id: "z-drawn", order: 2, points: body.points });
+      },
+    );
+    const { container } = renderPageEditor();
+    await waitFor(() => transcriptRow(container, "line-3"));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /rectangle segment/i }),
+    );
+    const canvas = screen.getByRole("group", {
+      name: /page geometry canvas/i,
+    });
+    fireEvent.pointerDown(canvas, { clientX: 20, clientY: 92 });
+    fireEvent.pointerMove(canvas, { clientX: 100, clientY: 98 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 98 });
+
+    await waitFor(() => {
+      const rows = [
+        ...container.querySelectorAll(".pe-transcript [data-line-id]"),
+      ].map(
+        (row) =>
+          `${row.querySelector(".pe-transcript-num")?.textContent}:${row.getAttribute("data-line-id")}`,
+      );
+      expect(rows).toEqual(["1:line-1", "2:line-2", "3:z-drawn", "4:line-3"]);
+    });
+    // No `order` goes out: the server decides where the Segment sits.
+    expect(mockedApi.createPartLine.mock.calls[0][3]).not.toHaveProperty(
+      "order",
+    );
+  });
+
   it("mirrors hovering a transcript row onto the same canvas segment", async () => {
     seedSideBySide(true);
     seedEditor();

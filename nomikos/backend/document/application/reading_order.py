@@ -102,6 +102,14 @@ def _baseline_points(line: ReadingLine) -> list[list[float]]:
     return points or []
 
 
+def _y_range(line: ReadingLine) -> tuple[float, float] | None:
+    points = line.points or _baseline_points(line)
+    if not points:
+        return None
+    ys = [point[1] for point in points]
+    return min(ys), max(ys)
+
+
 def _centre_y(line: ReadingLine) -> float | None:
     """The baseline's mean height, or the polygon's middle row when there is no baseline."""
     baseline = _baseline_points(line)
@@ -123,6 +131,19 @@ def _same_column(a: tuple[float, float], b: tuple[float, float]) -> bool:
     return overlap >= _COLUMN_OVERLAP * narrower
 
 
+def _beside_wins(gap: float, height: float, column_gap: float) -> bool:
+    """Whether a line on the new line's row decides its place over its own column.
+
+    With no same-column line at all, the row neighbour always does. Otherwise only one
+    right beside it (no further off sideways than it is tall; the gutter of a spread is
+    wider) and nearer than the column's nearest line is vertically, so a line low on a
+    short verso stays on the verso although recto lines share its height.
+    """
+    if math.isinf(column_gap):
+        return True
+    return gap <= height and gap < column_gap
+
+
 def insertion_index(
     existing_lines: Sequence[ReadingLine],
     new_line: ReadingLine,
@@ -131,7 +152,10 @@ def insertion_index(
     """Where ``new_line`` belongs in ``existing_lines``, which are in reading order.
 
     After the nearest same-column line above it; failing that, before the nearest
-    same-column line below it; failing that, at the end. With ``block_orders`` only
+    same-column line below it; failing that, at the end. A line beside another one (a
+    note in the margin of line 2) goes right after that one instead: a margin note
+    shares no column, or only one far down the page, but it does share a row (see
+    ``_beside_wins``). With ``block_orders`` only
     lines of the new line's own region are compared, and "the end" is the end of that
     region (``existing_lines`` must then already be region-first).
     """
@@ -147,13 +171,26 @@ def insertion_index(
 
     above: tuple[float, int] | None = None
     below: tuple[float, int] | None = None
+    # The nearest line of the same column, by vertical distance between centres.
+    column_gap = math.inf
+    # The nearest line of another column whose height spans the new line's centre, by
+    # horizontal gap, with its height; on a tie the later one in reading order wins.
+    beside: tuple[float, int, float] | None = None
     for index, line in enumerate(existing_lines):
         if _group(line, block_orders) != group:
             continue
         x_range = _x_range(line)
         y = _centre_y(line)
-        if x_range is None or y is None or not _same_column(new_x, x_range):
+        if x_range is None or y is None:
             continue
+        if not _same_column(new_x, x_range):
+            y_range = _y_range(line)
+            if y_range is not None and y_range[0] <= new_y <= y_range[1]:
+                gap = max(x_range[0] - new_x[1], new_x[0] - x_range[1], 0.0)
+                if beside is None or gap <= beside[0]:
+                    beside = (gap, index, y_range[1] - y_range[0])
+            continue
+        column_gap = min(column_gap, abs(y - new_y))
         if y < new_y:
             # Closest from above; on a tie the later one in reading order wins, so a
             # line goes after the whole run it sits under.
@@ -162,6 +199,8 @@ def insertion_index(
         elif below is None or y < below[0]:
             below = (y, index)
 
+    if beside is not None and _beside_wins(beside[0], beside[2], column_gap):
+        return beside[1] + 1
     if above is not None:
         return above[1] + 1
     if below is not None:
