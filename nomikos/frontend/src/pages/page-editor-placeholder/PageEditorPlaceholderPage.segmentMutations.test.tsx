@@ -39,7 +39,6 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
         "doc-1",
         "part-1",
         {
-          order: 0,
           kind: "rectangle",
           points: [
             [20, 30],
@@ -74,7 +73,6 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
         "doc-1",
         "part-1",
         {
-          order: 0,
           kind: "polygon",
           points: [
             [40, 40],

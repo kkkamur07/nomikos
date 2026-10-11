@@ -1692,9 +1692,16 @@
             "title": "Mask"
           },
           "order": {
-            "minimum": 0.0,
-            "title": "Order",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
           },
           "points": {
             "items": {
@@ -1709,7 +1716,7 @@
             "type": "array"
           }
         },
-        "required": ["order", "points"],
+        "required": ["points"],
         "title": "LineCreateRequest",
         "type": "object"
       },
