@@ -21,6 +21,9 @@ $PY scripts/platform/explainer/record_explainer.py --video tour
 $PY scripts/platform/explainer/record_explainer.py --video explainer
 ```
 
+The script refuses to run unless both URLs are on `localhost` or `127.0.0.1`, because its cleanup deletes
+data through the API; pass `--allow-remote` to override, and it prints both URLs before the first request.
+
 Add `--headed` to watch the browser. `NOMIKOS_SLOW_MO` (default 400 ms) sets the pace and `FFMPEG` the
 ffmpeg binary (default `/opt/homebrew/bin/ffmpeg`).
 

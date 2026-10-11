@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import Locator, Page, sync_playwright
 
@@ -232,6 +233,23 @@ def share_project(token: str, project_id: str, email: str) -> None:
     except urllib.error.HTTPError as err:
         if err.code not in (400, 409):
             raise
+
+
+LOCAL_HOSTS = ("localhost", "127.0.0.1")
+
+
+def guard_target(allow_remote: bool) -> None:
+    """Refuse a non-local stack: the cleanup deletes projects, regions, Segments
+    and job history through the API, so a typo in a URL must not reach a real
+    deployment. ``--allow-remote`` is the explicit override."""
+    remote = [url for url in (BASE_URL, API_URL) if urlparse(url).hostname not in LOCAL_HOSTS]
+    if remote and not allow_remote:
+        raise SystemExit(
+            f"Refusing to run against a non-local stack: {', '.join(remote)}. "
+            "The script deletes data there; pass --allow-remote if that is intended."
+        )
+    print(f"Frontend: {BASE_URL}")
+    print(f"API:      {API_URL}")
 
 
 # --- Recording ---------------------------------------------------------------
@@ -820,7 +838,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--video", choices=["tour", "explainer"], required=True)
     parser.add_argument("--headed", action="store_true", help="show the browser while recording")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="record against a stack that is not on localhost (the cleanup deletes data there)",
+    )
     args = parser.parse_args()
+    guard_target(args.allow_remote)
 
     captions = json.loads((HERE / "captions.json").read_text())[args.video]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
