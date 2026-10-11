@@ -386,3 +386,84 @@ describe("useLayoutMutations auto segment", () => {
     expect(view.result.current.canUndo).toBe(true);
   });
 });
+
+describe("useLayoutMutations drawn Segment numbering", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function segment(id: string, order: number) {
+    return {
+      id,
+      order,
+      kind: "rectangle",
+      points: [
+        [0, order * 10],
+        [10, order * 10],
+        [10, order * 10 + 5],
+      ],
+      source: "manual",
+      manual_geometry: true,
+      line_transcriptions: [],
+    };
+  }
+
+  it("lets the server place a drawn Segment and takes the orders it shifted", async () => {
+    // Drawn between the first and second Segment: the server numbers it 1 and
+    // moves the two below it down, returning only the new row.
+    createPartLine.mockResolvedValue(segment("new", 1));
+    listPartLines.mockResolvedValue([
+      segment("a", 0),
+      segment("new", 1),
+      segment("b", 2),
+      segment("c", 3),
+    ]);
+    getPagePairing.mockResolvedValue({
+      text_lines: [],
+      pairing_progress: { paired_lines: 0, total_lines: 0, percent: 0 },
+    });
+    const setLines = vi.fn();
+    const { result } = renderHook(
+      () =>
+        useLayoutMutations({
+          projectId: "project-1",
+          documentId: "document-1",
+          partId: "part-1",
+          layout: { blocks: [], lines: [] },
+          setLayout: vi.fn(),
+          lines: [segment("a", 0), segment("b", 1), segment("c", 2)],
+          setLines,
+          setLineError: vi.fn(),
+          setTextLines: vi.fn(),
+          setPairingProgress: vi.fn(),
+          setPairingError: vi.fn(),
+          selectedSegmentId: null,
+          setSelectedSegmentId: vi.fn(),
+          setApprovedTextDraft: vi.fn(),
+          onDrawComplete: vi.fn(),
+          setSubmissionRefusal: vi.fn(),
+          trackJobAndWait: vi.fn(),
+        }) as never,
+    );
+
+    await act(async () => {
+      await (
+        result.current as ReturnType<typeof useLayoutMutations>
+      ).replaceWithManualLine("rectangle", [
+        [0, 6],
+        [10, 6],
+        [10, 8],
+      ]);
+    });
+
+    const body = createPartLine.mock.calls[0][3];
+    expect(body).not.toHaveProperty("order");
+    const finalLines = setLines.mock.calls.at(-1)?.[0] as {
+      id: string;
+      order: number;
+    }[];
+    expect(
+      Object.fromEntries(finalLines.map((line) => [line.id, line.order])),
+    ).toEqual({ a: 0, new: 1, b: 2, c: 3 });
+  });
+});

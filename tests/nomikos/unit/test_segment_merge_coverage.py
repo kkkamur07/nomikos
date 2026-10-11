@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
+
 from shapely.geometry import Polygon
 
-from backend.document.application.segment_merge_service import _mostly_covered
+from backend.document.application.segment_merge_service import (
+    SegmentMergeService,
+    _mostly_covered,
+)
+from backend.document.infrastructure.orm_models import DocumentPart, Line, LineSource
+from backend.ml.domain.segment import CanonicalLine, CanonicalSegmentResult
 
 
 def _box(x0: float, y0: float, x1: float, y1: float) -> list[list[float]]:
@@ -60,3 +68,72 @@ def test_nothing_kept_or_degenerate_geometry_covers_nothing():
     assert not _mostly_covered(_box(0, 0, 10, 10), [])
     assert not _mostly_covered([[0, 0], [10, 0]], _kept(_box(0, 0, 10, 10)))
     assert not _mostly_covered([], _kept(_box(0, 0, 10, 10)))
+
+
+# --- apply_sync: one reading order for kept and fresh lines ---
+
+
+class _Session:
+    def __init__(self) -> None:
+        self.added: list[object] = []
+
+    def add(self, item: object) -> None:
+        self.added.append(item)
+
+    def delete(self, _item: object) -> None:
+        pass
+
+    def flush(self) -> None:
+        pass
+
+    def commit(self) -> None:
+        pass
+
+
+class _MergeWithPart(SegmentMergeService):
+    def __init__(self, part: DocumentPart) -> None:
+        self._part = part
+
+    def _load_part(self, _session, _part_id):
+        return self._part
+
+    def _human_transcribed_line_ids(self, _session, _part):
+        return set()
+
+
+def test_a_kept_manual_line_is_numbered_between_the_fresh_lines_around_it():
+    part = DocumentPart(id=uuid.uuid4(), document_id=uuid.uuid4(), order=0, image_key="k")
+    # Drawn by hand between what the segmenter will call lines 1 and 2, and numbered 0
+    # on the page it was kept from: it collides with the segmenter's first line.
+    kept = Line(
+        id=uuid.uuid4(),
+        part_id=part.id,
+        order=0,
+        points=_box(110, 192, 880, 202),
+        baseline={"points": _box(110, 192, 880, 202)},
+        source=LineSource.manual,
+        manual_geometry=True,
+        created_at=datetime.now(UTC),
+    )
+    part.lines = [kept]
+    part.blocks = []
+    segment = CanonicalSegmentResult(
+        lines=[
+            CanonicalLine(
+                external_id=f"l{i}",
+                order=i,
+                baseline={"points": [[100, 135 + 50 * i], [900, 135 + 50 * i]]},
+                points=_box(100, 100 + 50 * i, 900, 140 + 50 * i),
+            )
+            for i in range(4)
+        ]
+    )
+    session = _Session()
+
+    _MergeWithPart(part).apply_sync(
+        session, part_id=part.id, canonical_segment=segment, job_id=uuid.uuid4()
+    )
+
+    fresh = {line.source_metadata["external_id"]: line.order for line in session.added}
+    assert kept.order == 2
+    assert fresh == {"l0": 0, "l1": 1, "l2": 3, "l3": 4}

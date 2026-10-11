@@ -303,7 +303,9 @@ class BlockPatchRequest(BaseModel):
 
 
 class LineCreateRequest(BaseModel):
-    order: int = Field(ge=0)
+    # Omit it and the server places the line by where it sits on the page. Sent, it is
+    # the position to insert at; either way the page is renumbered 0..n-1 (ADR 0008).
+    order: int | None = Field(default=None, ge=0)
     kind: LineGeometryKind = LineGeometryKind.polygon
     points: GeometryPoints
     block_id: UUID | None = None

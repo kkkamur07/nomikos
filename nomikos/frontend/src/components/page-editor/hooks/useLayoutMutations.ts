@@ -30,7 +30,7 @@ import {
   INFERENCE_JOB_WAIT_CEILING_MS,
   type PageEditorJobKind,
 } from "../jobProgress";
-import { nextSegmentOrder } from "../segmentNumbering";
+import { withServerOrders } from "../segmentNumbering";
 import { statusMessage, type StatusMessage } from "../statusMessage";
 import {
   applyLayoutLineGeometryToSegments,
@@ -192,11 +192,35 @@ export function useLayoutMutations({
 
   const applyLocalLines = useCallback(
     (nextLines: LineResponse[]) => {
+      // Ahead of the re-render, so a read that resolves before it (the order
+      // sync after a create) merges into these lines, not the ones before.
+      linesRef.current = nextLines;
       setLines(nextLines);
       setLayout((current) => syncLayoutLinesFromSegments(current, nextLines));
     },
     [setLines, setLayout],
   );
+
+  /**
+   * Take the server's reading order after a create or delete. The server
+   * renumbers every Segment after the one it inserted or removed (ADR 0008)
+   * and returns only that one, so the shifted orders are read back. A failed
+   * read leaves the local orders, which still number the Page in the same
+   * sequence, just not densely.
+   */
+  async function syncServerOrders() {
+    if (!projectId || !documentId || !partId) return;
+    try {
+      const serverLines = await api.listPartLines(
+        projectId,
+        documentId,
+        partId,
+      );
+      applyLocalLines(withServerOrders(linesRef.current, serverLines));
+    } catch {
+      // Display numbering is a dense rank and does not depend on this read.
+    }
+  }
 
   function moveSelectedBaseline(deltaY: number) {
     if (!selectedLineId) return;
@@ -326,10 +350,9 @@ export function useLayoutMutations({
   ) {
     if (!projectId || !documentId || !partId) return;
     try {
-      // Past every Segment on the Page as it stands now. The count would collide
-      // with a survivor of a delete: the backend leaves the freed order behind.
+      // No `order`: the server places the Segment where it sits on the Page
+      // and renumbers the ones after it (ADR 0008).
       const saved = await api.createPartLine(projectId, documentId, partId, {
-        order: nextSegmentOrder(linesRef.current),
         kind,
         points,
       });
@@ -342,6 +365,7 @@ export function useLayoutMutations({
       notePartContentChanged();
       setLineError(null);
       onDrawComplete();
+      await syncServerOrders();
     } catch (err) {
       setLineError(
         err instanceof Error ? err.message : "Failed to save Segment geometry.",
@@ -440,6 +464,7 @@ export function useLayoutMutations({
       recordEdit({ kind: "delete", line: deletedLine });
       notePartContentChanged();
       setLineError(null);
+      await syncServerOrders();
       const pairing = await api.getPagePairing(projectId, documentId, partId);
       setTextLines(pairing.text_lines);
       setPairingProgress(pairing.pairing_progress);
@@ -486,6 +511,7 @@ export function useLayoutMutations({
       notePartContentChanged();
       setLineError(null);
       setEditUndoRevision((value) => value + 1);
+      if (edit.kind !== "points") await syncServerOrders();
       const pairing = await api.getPagePairing(projectId, documentId, partId);
       setTextLines(pairing.text_lines);
       setPairingProgress(pairing.pairing_progress);
@@ -529,6 +555,7 @@ export function useLayoutMutations({
       notePartContentChanged();
       setLineError(null);
       setEditUndoRevision((value) => value + 1);
+      if (edit.kind !== "points") await syncServerOrders();
       const pairing = await api.getPagePairing(projectId, documentId, partId);
       setTextLines(pairing.text_lines);
       setPairingProgress(pairing.pairing_progress);

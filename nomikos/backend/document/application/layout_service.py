@@ -14,7 +14,7 @@ do not, since they exist to hand geometry back to the model.
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from backend.document.application.patch_fields import (
     LINE_PATCH_FIELDS,
     reject_unknown_fields,
 )
+from backend.document.application.reading_order import insertion_index, renumber
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.orm_models import Block, Line, LineGeometryKind, LineSource
 from backend.project.infrastructure.project_repository import ProjectRepository
@@ -48,6 +49,12 @@ def _preserved(data: dict, field: str, prior: Line | None, default: object) -> o
     if prior is not None:
         return getattr(prior, field)
     return default
+
+
+def _apply_reading_order(lines: list[Line]) -> None:
+    orders = renumber(lines)
+    for line in lines:
+        line.order = orders[line.id]
 
 
 class LayoutService:
@@ -155,7 +162,7 @@ class LayoutService:
         document_id: UUID,
         part_id: UUID,
         *,
-        order: int,
+        order: int | None = None,
         kind: LineGeometryKind,
         points: list[list[float]],
         block_id: UUID | None = None,
@@ -172,9 +179,10 @@ class LayoutService:
         if block_id is not None:
             await self._block_or_404(session, part.id, block_id)
         line = Line(
+            id=uuid4(),
             part_id=part.id,
             block_id=block_id,
-            order=order,
+            order=0,
             kind=kind,
             points=points,
             baseline=baseline or {"points": points},
@@ -182,7 +190,17 @@ class LayoutService:
             source=LineSource.manual,
             manual_geometry=True,
         )
+        # The server owns reading order (ADR 0008). Without an ``order`` the line goes
+        # where it sits on the page; with one (undo restoring a deleted line) it goes
+        # before the first line numbered at least that. Either way every line after it
+        # moves down one, so the page stays numbered 0..n-1.
+        existing = await self._documents.list_part_lines(session, part.id)
+        if order is None:
+            index = insertion_index(existing, line)
+        else:
+            index = sum(1 for other in existing if other.order < order)
         session.add(line)
+        _apply_reading_order([*existing[:index], line, *existing[index:]])
         await session.commit()
         return await self._line_or_404(session, part.id, line.id)
 
@@ -237,7 +255,14 @@ class LayoutService:
         # the one that committed second would win on rows it never read.
         await self._documents.lock_part(session, part_id)
         line = await self._line_or_404(session, context.part.id, line_id)
+        remaining = [
+            other
+            for other in await self._documents.list_part_lines(session, context.part.id)
+            if other.id != line.id
+        ]
         await session.delete(line)
+        # Close the gap: the lines after it move up one.
+        _apply_reading_order(remaining)
         await session.commit()
 
     async def reset_part_layout(
@@ -313,15 +338,15 @@ class LayoutService:
             if line.id not in requested_id_set:
                 await session.delete(line)
 
+        written: list[Line] = []
         for data in lines:
             line_id = data.get("id")
             prior = existing_by_id.get(line_id) if line_id is not None else None
             line = prior
             if line is None:
-                line = Line(part_id=part.id, baseline={}, mask=None)
-                if line_id is not None:
-                    line.id = line_id
+                line = Line(id=line_id or uuid4(), part_id=part.id, baseline={}, mask=None)
                 session.add(line)
+            written.append(line)
 
             points = data["points"]
             if "block_id" in data:
@@ -366,6 +391,9 @@ class LayoutService:
 
             await self._ground_truth.write(session, line, ground_truth, data.get("approved_text"))
 
+        # The client's orders say the sequence; the server makes it dense. The sort is
+        # stable, so lines sent with the same order keep the order they were sent in.
+        _apply_reading_order(sorted(written, key=lambda line: line.order))
         await session.commit()
         return await self._documents.list_part_lines(session, part.id)
 

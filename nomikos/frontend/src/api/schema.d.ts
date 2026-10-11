@@ -2608,7 +2608,7 @@ export interface components {
         [key: string]: unknown;
       } | null;
       /** Order */
-      order: number;
+      order?: number | null;
       /** Points */
       points: number[][];
     };

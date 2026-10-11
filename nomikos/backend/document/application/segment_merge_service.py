@@ -18,13 +18,14 @@ lines is therefore not added: what it covers is already claimed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from shapely.geometry import Polygon
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.core.exceptions import NotFoundError
+from backend.document.application.reading_order import merge_reading_order, renumber
 from backend.document.infrastructure.orm_models import (
     Block,
     DocumentPart,
@@ -112,6 +113,7 @@ class SegmentMergeService:
         session.flush()
 
         kept_geometry = _polygons(line.points for line in kept_lines)
+        model_lines: list[Line] = []
         added_lines = 0
         skipped_covered_lines = 0
         for line_data in canonical_segment.lines:
@@ -125,6 +127,7 @@ class SegmentMergeService:
                 "job_id": str(job_id),
             }
             line = Line(
+                id=uuid4(),
                 part_id=part.id,
                 block_id=(
                     blocks_by_external_id[line_data.block_external_id].id
@@ -142,6 +145,17 @@ class SegmentMergeService:
                 order=line_data.order,
             )
             session.add(line)
+            model_lines.append(line)
+
+        # Kept lines still carry the numbers of the page they were kept from, and the
+        # segmenter numbers its own lines from 0, so the two collide. One reading order:
+        # the segmenter's sequence, with each kept line placed where it sits (ADR 0008).
+        model_lines.sort(key=lambda line: line.order)
+        kept_lines.sort(key=lambda line: (line.order, line.created_at))
+        sequence = merge_reading_order(kept_lines, model_lines)
+        orders = renumber(sequence)
+        for line in sequence:
+            line.order = orders[line.id]
 
         if commit:
             session.commit()

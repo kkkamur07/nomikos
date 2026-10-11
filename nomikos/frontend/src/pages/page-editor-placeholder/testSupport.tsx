@@ -389,10 +389,10 @@ export function resetPageEditorApiMocks() {
   mockedApi.deletePartLine.mockResolvedValue(undefined);
   mockedApi.createPartLine.mockImplementation(
     async (_projectId, _documentId, _partId, body) => ({
-      id: `line-${body.order + 1}`,
+      id: `line-${(body.order ?? 0) + 1}`,
       part_id: "part-1",
       block_id: body.block_id ?? null,
-      order: body.order,
+      order: body.order ?? 0,
       kind: body.kind,
       points: body.points,
       baseline: body.baseline ?? { points: body.points },
