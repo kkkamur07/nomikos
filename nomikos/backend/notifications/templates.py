@@ -51,6 +51,7 @@ def _shell(title: str, body_html: str, preheader: str = "") -> str:
         "@media (prefers-color-scheme: dark){"
         ".email-bg{background-color:#1c1917 !important;}"
         ".email-card{background-color:#292524 !important;}"
+        ".email-logo{background-color:#292524 !important;}"
         ".email-pad{background-color:#292524 !important;}"
         ".email-title{color:#fafaf9 !important;}"
         ".email-body{color:#e7e5e4 !important;}"
@@ -79,6 +80,24 @@ def _shell(title: str, body_html: str, preheader: str = "") -> str:
         f'border-radius:8px;" bgcolor="{_CARD}">' + body_html + "</td></tr>"
         "</table>"
         "</td></tr></table></body></html>"
+    )
+
+
+def _logo(app_url: str) -> str:
+    """Centred brand mark above the wordmark. The PNG is hosted, not attached:
+    email clients do not render SVG and strip inline images."""
+    src = html.escape(f"{app_url}/email/nomikos-logo.png", quote=True)
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+        ' align="center" style="margin:0 auto 16px auto;">'
+        "<tr>"
+        f'<td align="center" class="email-logo" bgcolor="{_CARD}"'
+        f' style="background-color:{_CARD};color:{_INK};">'
+        f'<img src="{src}" width="44" height="64" alt="Nomikos"'
+        ' style="display:block;border:0;outline:none;">'
+        "</td>"
+        "</tr>"
+        "</table>"
     )
 
 
@@ -163,7 +182,8 @@ def welcome_email(username: str, app_url: str, *, reply_to: str | None = None) -
     else:
         reply_text = ""
     body_html = (
-        _wordmark()
+        _logo(app_url)
+        + _wordmark()
         + _title(f"Welcome to Nomikos, {name}")
         + _paragraph(
             "Nomikos transcribes historical manuscripts in Greek, Armenian, Coptic and Syriac."
@@ -201,7 +221,8 @@ def signin_notice_email(username: str, when_utc: datetime, app_url: str) -> Emai
     when = when_utc.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
     name = html.escape(username)
     body_html = (
-        _wordmark()
+        _logo(app_url)
+        + _wordmark()
         + _title("New sign-in to your Nomikos account")
         + _paragraph(f"Hi {name}, your account was signed in on {when}.")
         + _paragraph("If this was you, nothing to do. If not, change your password now.")

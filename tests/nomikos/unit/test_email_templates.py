@@ -105,7 +105,10 @@ def test_emails_load_no_outside_resources() -> None:
         assert urls, "expected at least the button link"
         for url in urls:
             assert url.startswith(APP_URL), url
-        assert "<img" not in message.html
+        images = re.findall(r"<img[^>]*>", message.html)
+        assert len(images) == 1, images
+        assert f'src="{APP_URL}/email/nomikos-logo.png"' in images[0]
+        assert 'alt="Nomikos"' in images[0]
         assert "@import" not in message.html
         assert "url(" not in message.html
 
