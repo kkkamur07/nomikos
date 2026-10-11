@@ -6,6 +6,11 @@ registry path. Evidence for the export and the adapter lives in
 `docs/inference/ppocr-rec-onnx-parity-2026-09-20.md` and
 `docs/inference/ppocr-rec-adapter-2026-09-20.md`.
 
+> Note (2026-10-11): the catalog row this release created was renamed to
+> `syriac-v2` under the [language-vN scheme](model-catalog-names.md). The
+> registry id `syriac-ppocr-v1` and the SQL below are unchanged history.
+
+
 ## What was published
 
 | Field | Value |

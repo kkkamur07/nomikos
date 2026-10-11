@@ -50,8 +50,8 @@ const EMPTY_PAIRING = {
 };
 
 const TRANSCRIBE_MODEL = { id: "htr-1", task: "transcribe", name: "htr" };
-const SEGMENT_A = { id: "seg-a", task: "segment", name: "blla-segment" };
-const SEGMENT_B = { id: "seg-b", task: "segment", name: "pp-ocr" };
+const SEGMENT_A = { id: "seg-a", task: "segment", name: "seg-v1" };
+const SEGMENT_B = { id: "seg-b", task: "segment", name: "seg-v2" };
 
 describe("usePageEditorData segment models", () => {
   beforeEach(() => {

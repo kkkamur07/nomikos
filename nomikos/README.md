@@ -130,9 +130,10 @@ updated to match `VERSION`.
 
 `nomikos_inference/registry.yaml` is the runtime model catalog. The development seed
 creates `InferenceModel` rows with `registry://<model-id>?tag=stable` artifact
-references and project-level bindings. Its defaults are
-`blla-segment` for segmentation and `syriac-calamari-v2` for
-transcription.
+references and project-level bindings. It seeds two segment rows (`blla-segment`,
+`ppocr-segment`) and four transcribe rows (`greek-calamari-v1`, `armenian-calamari-v1`,
+`coptic-calamari-v1`, `syriac-ppocr-v1`); the pickers show short display names
+(`seg-v1`, `seg-v2`, `greek-v1`, …) per [`docs/inference/model-catalog-names.md`](../docs/inference/model-catalog-names.md).
 
 ```bash
 uv run --group platform python scripts/platform/seed_dev_inference.py
