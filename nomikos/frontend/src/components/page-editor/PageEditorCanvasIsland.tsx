@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type KeyboardEvent } from "react";
 
+import { TranscriptIcon } from "./EditorIcons";
 import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
 
 /**
@@ -34,6 +35,10 @@ type PageEditorCanvasIslandProps = {
   onResetZoom: () => void;
   /** Space is held, so every tool is temporarily the pan tool. */
   panOverride: boolean;
+  /** The side-by-side transcript pane is open. */
+  transcriptOpen?: boolean;
+  /** Opens or closes the transcript pane; the toggle shows only when given. */
+  onToggleTranscript?: () => void;
 };
 
 function toolClass(active: boolean): string {
@@ -47,6 +52,8 @@ function toolClass(active: boolean): string {
  * the keyboard.
  */
 const ISLAND_BUTTON_COUNT = 9;
+/** The transcript toggle, last in the island, when the page offers one. */
+const TRANSCRIPT_BUTTON_INDEX = ISLAND_BUTTON_COUNT;
 /** The one button that can be disabled, and so the one that can lose focus. */
 const DELETE_BUTTON_INDEX = 4;
 
@@ -62,7 +69,12 @@ export function PageEditorCanvasIsland({
   onFitToView,
   onResetZoom,
   panOverride,
+  transcriptOpen = false,
+  onToggleTranscript,
 }: PageEditorCanvasIslandProps) {
+  const buttonCount = onToggleTranscript
+    ? ISLAND_BUTTON_COUNT + 1
+    : ISLAND_BUTTON_COUNT;
   const islandRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);
 
@@ -87,8 +99,8 @@ export function PageEditorCanvasIsland({
       if (step !== 0) {
         event.preventDefault();
         let next = focusIndex;
-        for (let hop = 0; hop < ISLAND_BUTTON_COUNT; hop += 1) {
-          next = (next + step + ISLAND_BUTTON_COUNT) % ISLAND_BUTTON_COUNT;
+        for (let hop = 0; hop < buttonCount; hop += 1) {
+          next = (next + step + buttonCount) % buttonCount;
           if (isFocusable(next)) break;
         }
         focusButton(next);
@@ -99,10 +111,10 @@ export function PageEditorCanvasIsland({
         focusButton(0);
       } else if (event.key === "End") {
         event.preventDefault();
-        focusButton(ISLAND_BUTTON_COUNT - 1);
+        focusButton(buttonCount - 1);
       }
     },
-    [focusIndex, isFocusable, focusButton],
+    [focusIndex, isFocusable, focusButton, buttonCount],
   );
 
   // Focus is what moves; the roving tab stop follows it, whether it arrived by
@@ -299,6 +311,27 @@ export function PageEditorCanvasIsland({
           <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
         </svg>
       </button>
+
+      {onToggleTranscript && (
+        <>
+          <span className="pe-island__divider" aria-hidden="true" />
+          {/* A view toggle, not a tool: it stays pressed beside whichever tool
+              is armed, so it reads as on/off rather than as the active tool. */}
+          <button
+            type="button"
+            {...rove(TRANSCRIPT_BUTTON_INDEX)}
+            className={`pe-island__btn${transcriptOpen ? " pe-island__btn--on" : ""}`}
+            aria-pressed={transcriptOpen}
+            aria-keyshortcuts={PAGE_EDITOR_SHORTCUTS.TRANSCRIPT}
+            aria-label={`Transcript (${PAGE_EDITOR_SHORTCUTS.TRANSCRIPT})`}
+            title={`${transcriptOpen ? "Hide" : "Show"} transcript pane (${PAGE_EDITOR_SHORTCUTS.TRANSCRIPT})`}
+            onClick={onToggleTranscript}
+          >
+            <TranscriptIcon />
+            <span className="pe-island__label">Transcript</span>
+          </button>
+        </>
+      )}
     </div>
   );
 }

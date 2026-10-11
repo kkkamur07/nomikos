@@ -91,6 +91,25 @@ function maskScaledFontSizes(
   return sizes;
 }
 
+/**
+ * Scroll ``scroller`` so ``row`` rests in the middle of its visible area.
+ *
+ * ``scrollIntoView`` would also scroll every scrolling ancestor, which moves
+ * the whole editor; setting the pane's own ``scrollTop`` moves only the pane.
+ */
+export function centerRowInScroller(
+  row: HTMLElement,
+  scroller: HTMLElement,
+): void {
+  const rowBox = row.getBoundingClientRect();
+  const scrollerBox = scroller.getBoundingClientRect();
+  const offset = rowBox.top - scrollerBox.top;
+  const target =
+    scroller.scrollTop + offset - (scroller.clientHeight - rowBox.height) / 2;
+  const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  scroller.scrollTop = Math.round(Math.min(max, Math.max(0, target)));
+}
+
 function growToContent(element: HTMLTextAreaElement): void {
   element.style.height = "auto";
   element.style.height = `${element.scrollHeight}px`;
@@ -379,10 +398,24 @@ export function PageEditorTranscriptEditor(
 
   const textareaEls = useRef(new Map<string, HTMLTextAreaElement>());
   const rowEls = useRef(new Map<string, HTMLDivElement>());
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
-  const focusId = useCallback((id: string): void => {
-    textareaEls.current.get(id)?.focus();
+  const centerRow = useCallback((id: string): void => {
+    const row = rowEls.current.get(id);
+    const scroller = scrollerRef.current;
+    if (row && scroller) centerRowInScroller(row, scroller);
   }, []);
+
+  // Arrow keys, Enter and Tab move between rows here. The browser's own
+  // focus scroll would leave the new row at an edge, so it is suppressed and
+  // the row is centred like a selection from the canvas.
+  const focusId = useCallback(
+    (id: string): void => {
+      textareaEls.current.get(id)?.focus({ preventScroll: true });
+      centerRow(id);
+    },
+    [centerRow],
+  );
 
   const registerTextarea = useCallback(
     (id: string, element: HTMLTextAreaElement | null): void => {
@@ -400,16 +433,17 @@ export function PageEditorTranscriptEditor(
     [],
   );
 
-  // Scroll an incoming selection into view without moving keyboard focus.
+  // Centre an incoming selection (canvas click, canvas keyboard navigation)
+  // without moving keyboard focus. A row that already holds focus was picked
+  // here, by a click that must not slide it out from under the pointer or by
+  // a key that ``focusId`` has already centred.
   useEffect(() => {
     if (selectedSegmentId === null) return;
     const row = rowEls.current.get(selectedSegmentId);
     if (!row) return;
     if (row.contains(document.activeElement)) return;
-    if (typeof row.scrollIntoView === "function") {
-      row.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedSegmentId]);
+    centerRow(selectedSegmentId);
+  }, [selectedSegmentId, centerRow]);
 
   return (
     <div
@@ -447,6 +481,7 @@ export function PageEditorTranscriptEditor(
         </button>
       </div>
       <div
+        ref={scrollerRef}
         className="pe-transcript"
         role="list"
         style={{ flex: 1, minHeight: 0, height: "auto" }}

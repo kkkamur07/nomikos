@@ -2,7 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { LineResponse } from "../../api/client";
-import { PageEditorTranscriptEditor } from "./PageEditorTranscriptEditor";
+import {
+  centerRowInScroller,
+  PageEditorTranscriptEditor,
+} from "./PageEditorTranscriptEditor";
 import type { PageEditorTranscriptEditorProps } from "./PageEditorTranscriptEditor";
 
 function makeLine(
@@ -354,5 +357,81 @@ describe("PageEditorTranscriptEditor", () => {
     expect(close.textContent).toBe("");
     fireEvent.click(close);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("centres a row in the pane by setting the pane's own scrollTop", () => {
+    const scroller = document.createElement("div");
+    const row = document.createElement("div");
+    // Pane 400px tall at y=100, content 2000px; the row is 30px tall and sits
+    // 600px below the pane top at the current scroll of 50.
+    Object.defineProperty(scroller, "clientHeight", { value: 400 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 2000 });
+    scroller.scrollTop = 50;
+    scroller.getBoundingClientRect = () =>
+      ({ top: 100, height: 400 }) as DOMRect;
+    row.getBoundingClientRect = () => ({ top: 700, height: 30 }) as DOMRect;
+
+    centerRowInScroller(row, scroller);
+
+    // 50 + 600 - (400 - 30) / 2 = 465: the row's middle at the pane's middle.
+    expect(scroller.scrollTop).toBe(465);
+  });
+
+  it("clamps the centring scroll at the top and bottom of the pane", () => {
+    const scroller = document.createElement("div");
+    const row = document.createElement("div");
+    Object.defineProperty(scroller, "clientHeight", { value: 400 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000 });
+    scroller.getBoundingClientRect = () => ({ top: 0, height: 400 }) as DOMRect;
+
+    row.getBoundingClientRect = () => ({ top: 20, height: 30 }) as DOMRect;
+    centerRowInScroller(row, scroller);
+    expect(scroller.scrollTop).toBe(0);
+
+    row.getBoundingClientRect = () => ({ top: 990, height: 30 }) as DOMRect;
+    centerRowInScroller(row, scroller);
+    expect(scroller.scrollTop).toBe(600);
+  });
+
+  it("centres a selection from the canvas without scrollIntoView", () => {
+    const scrollIntoView = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const props = editorProps();
+    const { container, rerender } = render(
+      <PageEditorTranscriptEditor {...props} />,
+    );
+    const scroller = container.querySelector(".pe-transcript") as HTMLElement;
+    Object.defineProperty(scroller, "clientHeight", { value: 100 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000 });
+    scroller.getBoundingClientRect = () => ({ top: 0, height: 100 }) as DOMRect;
+    rowOf(textarea("Segment 2 text")).getBoundingClientRect = () =>
+      ({ top: 500, height: 20 }) as DOMRect;
+
+    rerender(
+      <PageEditorTranscriptEditor {...props} selectedSegmentId="line-b" />,
+    );
+
+    expect(scroller.scrollTop).toBe(460);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    Element.prototype.scrollIntoView = original;
+  });
+
+  it("centres the next row when the selection moves by keyboard", () => {
+    const { container } = render(
+      <PageEditorTranscriptEditor {...editorProps()} />,
+    );
+    const scroller = container.querySelector(".pe-transcript") as HTMLElement;
+    Object.defineProperty(scroller, "clientHeight", { value: 100 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000 });
+    scroller.getBoundingClientRect = () => ({ top: 0, height: 100 }) as DOMRect;
+    rowOf(textarea("Segment 2 text")).getBoundingClientRect = () =>
+      ({ top: 300, height: 20 }) as DOMRect;
+    const focus = vi.spyOn(textarea("Segment 2 text"), "focus");
+
+    fireEvent.keyDown(textarea("Segment 1 text"), { key: "ArrowDown" });
+
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(scroller.scrollTop).toBe(260);
   });
 });
