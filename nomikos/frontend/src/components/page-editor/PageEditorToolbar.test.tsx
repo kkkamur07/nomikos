@@ -78,10 +78,10 @@ beforeEach(() => {
 });
 
 describe("PageEditorToolbar feedback", () => {
-  it("renders the Feedback control beside the settings gear", () => {
+  it("renders the icon-only Feedback control beside the settings gear", () => {
     renderToolbar();
 
-    expect(screen.getByRole("button", { name: "Feedback" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Editor settings" }),
     ).toBeTruthy();
@@ -96,7 +96,7 @@ describe("PageEditorToolbar feedback", () => {
     });
     renderToolbar();
 
-    fireEvent.click(screen.getByRole("button", { name: "Feedback" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     fireEvent.change(screen.getByLabelText("Feedback"), {
       target: { value: "nice" },
     });

@@ -16,7 +16,7 @@ import { PageEditorSharingMenu } from "./PageEditorSharingMenu";
 import { PageEditorPageXmlButton } from "./PageEditorPageXmlButton";
 import { PageEditorDocxButton } from "./PageEditorDocxButton";
 import { exportFileStem } from "../../utils/exportFilename";
-import { SettingsIcon } from "./EditorIcons";
+import { CheckIcon, FeedbackIcon, SettingsIcon } from "./EditorIcons";
 import { editorButton } from "./editorButton";
 import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
 import { PageEditorSettingsPanel } from "./PageEditorSettingsPanel";
@@ -294,14 +294,14 @@ export function PageEditorToolbar({
             {processingLabel}
           </div>
         )}
-        <div className="pe-toolbar__stat">
+        <div className="pe-toolbar__stat" style={{ whiteSpace: "nowrap" }}>
           <strong>{lines.length}</strong> {segmentLabel}
         </div>
         <div
           className="pe-toolbar__progress"
           title={`${pairingProgress.paired_lines} of ${pairingProgress.total_lines} lines paired`}
         >
-          <span className="pe-toolbar__stat">
+          <span className="pe-toolbar__stat" style={{ whiteSpace: "nowrap" }}>
             <strong>{pairingProgress.paired_lines}</strong>/
             {pairingProgress.total_lines}
           </span>
@@ -592,15 +592,15 @@ export function PageEditorToolbar({
               />
             )}
           </div>
-          {/* Text button: the cluster is wide enough at 1440px that the label
-              costs no wrap, and the label says what an icon would not. */}
+          {/* Icon-only: the text label cost a wrap in the counter at 1440px. */}
           <button
             type="button"
-            className="pe-tb-btn"
-            title="Send feedback about this page"
+            className="pe-tb-btn pe-tb-btn--icon"
+            title={thanks ? "Thanks" : "Send feedback"}
+            aria-label={thanks ? "Thanks" : "Send feedback"}
             onClick={openDialog}
           >
-            {thanks ? "Thanks" : "Feedback"}
+            {thanks ? <CheckIcon /> : <FeedbackIcon />}
           </button>
           <div className="pe-dropdown-wrap" ref={settingsRef}>
             <button
