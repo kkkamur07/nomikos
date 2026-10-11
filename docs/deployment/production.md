@@ -177,18 +177,32 @@ sends nothing and logs instead, so this section is optional until real mail
 is wanted.
 
 1. In [resend.com](https://resend.com), verify the sending domain used in `EMAIL_FROM`.
-2. Create an API key (`re_...`) and a Coolify API token (Coolify: Keys & Tokens).
-3. Edit the marked lines at the top of `scripts/platform/apply_email_env.sh`
-   (`RESEND_API_KEY`, `COOLIFY_TOKEN`, `COOLIFY_URL`) and run it from your own
-   terminal. `--dry-run` prints the plan with the key masked and contacts nothing.
-   Never commit the edited script.
+2. Create an API key (`re_...`) and a Coolify API token (Coolify: Keys & Tokens,
+   abilities read, write and deploy).
+3. Put the secrets in `~/.nomikos-resend.env` (chmod 600, plain `KEY=VALUE`
+   lines, never committed). Placeholder example:
 
+   ```text
+   RESEND_API_KEY=re_xxxxxxxxxxxx
+   COOLIFY_URL=https://coolify.example.com:8000
+   COOLIFY_TOKEN=1|xxxxxxxxxxxx
+   ```
+
+   `COOLIFY_URL` is the Coolify dashboard origin. Optional overrides in the
+   same file: `EMAIL_FROM`, `EMAIL_REPLY_TO`, `APP_PUBLIC_URL`,
+   `EMAIL_SIGNIN_NOTICES`, `APP_NAME`. Use `NOMIKOS_SECRETS_FILE` for another path.
+4. From your own terminal run `scripts/platform/apply_email_env.sh --check`
+   (validates the file, contacts nothing), `--dry-run` (masked plan, contacts
+   nothing), then without flags to apply.
+
+Hosts: the API is the Coolify application on `root@65.21.249.167`. The ssh alias
+`nomikos` (95.217.208.209) is the inference box and needs no email variables.
 The script finds the API application in Coolify (name contains `api`, override
-with `APP_NAME=...`), sets the five variables below through the Coolify REST
-API, and redeploys, which is required because Coolify injects variables at
-deploy time. It never uses ssh. **Unverified against production:** it was
-written without inspecting the host, so confirm the application and the
-variables in Coolify after the first run. Manual fallback: Coolify, Projects,
+with `APP_NAME`), sets the five variables below through the Coolify REST API, and
+redeploys, which is required because Coolify injects variables at deploy time. It
+never uses ssh. **Unverified against production:** nothing on the Coolify server
+has been inspected, so confirm the application and variables in Coolify after the
+first run. Manual fallback: set the five variables by hand in Coolify, Projects,
 the API application, Environment Variables, then Redeploy.
 
 | Variable | Default | Purpose |

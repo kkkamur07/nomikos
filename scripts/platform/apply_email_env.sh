@@ -2,20 +2,31 @@
 # Apply the transactional email environment variables to the production API
 # through the Coolify REST API, then redeploy the API so they take effect.
 #
-# STATUS: UNVERIFIED AGAINST PRODUCTION. Written without inspecting the host.
-# It assumes the API runs as a Coolify application. If `docker ps` on the host
-# shows otherwise, this script must be adjusted (see "Fallback" below).
+# STATUS: UNVERIFIED AGAINST PRODUCTION.
+# Nothing on the Coolify server has been inspected. The API is assumed to be a
+# Coolify application on root@65.21.249.167. The ssh alias `nomikos`
+# (95.217.208.209) is the INFERENCE box (systemd nomikos-worker units, no
+# docker) and needs no email variables; this script never touches it, and
+# never uses ssh at all (HTTPS to Coolify only).
 #
-# What the user edits: the three lines marked EDIT below, most importantly
+# Secrets live OUTSIDE this script, in a file only you can read:
+#   ${NOMIKOS_SECRETS_FILE:-$HOME/.nomikos-resend.env}   (chmod 600)
+# Plain KEY=VALUE lines, `#` comments allowed, optional surrounding quotes.
+# The file is parsed line by line, never sourced. Example (placeholders):
 #
-#   RESEND_API_KEY="PASTE_YOUR_KEY_HERE"
+#   RESEND_API_KEY=re_xxxxxxxxxxxx
+#   COOLIFY_URL=https://coolify.example.com:8000
+#   COOLIFY_TOKEN=1|xxxxxxxxxxxx
 #
-# plus COOLIFY_TOKEN (Coolify UI: Keys & Tokens > API tokens, abilities
-# "read", "write" and "deploy") and COOLIFY_URL (the Coolify dashboard URL).
+# COOLIFY_URL is the Coolify dashboard origin. COOLIFY_TOKEN is created in the
+# Coolify UI under Keys & Tokens with the read, write and deploy abilities.
+# Optional overrides in the same file: EMAIL_FROM, EMAIL_REPLY_TO,
+# APP_PUBLIC_URL, EMAIL_SIGNIN_NOTICES, APP_NAME.
 #
-# What it does (no ssh, only HTTPS to Coolify):
-#   1. Refuses to run while a placeholder is unchanged or the key does not
-#      start with "re_". The key and token are never printed.
+# What it does:
+#   1. Refuses to run unless RESEND_API_KEY, COOLIFY_TOKEN and COOLIFY_URL are
+#      present, the key starts with "re_", and the file is not group or world
+#      readable. The key and token are never printed (masked re_**** / tok_****).
 #   2. GET  /api/v1/applications          find the API application by name
 #                                         (contains APP_NAME, default "api").
 #   3. PATCH /api/v1/applications/{uuid}/envs/bulk
@@ -32,48 +43,87 @@
 # Variables set: RESEND_API_KEY, EMAIL_FROM, EMAIL_REPLY_TO, APP_PUBLIC_URL,
 # EMAIL_SIGNIN_NOTICES. Read by nomikos/backend/core/settings/email.py.
 #
-# Usage: apply_email_env.sh [--dry-run]
-#   --dry-run  print the plan with the key masked (re_****); contacts nothing.
+# Usage: apply_email_env.sh [--check | --dry-run]
+#   --check    validate the secrets file only (presence, mode, key prefix) and
+#              list which keys are present, masked; contacts nothing.
+#   --dry-run  print the plan with masked values; contacts nothing.
 #
 # Fallback (token route not possible): open the Coolify dashboard, then
 #   Projects > (production project) > (API application) > Environment Variables,
-# add or edit the five variables above, then press Redeploy.
+# set the five variables above by hand, then press Redeploy.
 
 set -euo pipefail
 
-# ---- EDIT THESE ------------------------------------------------------------
-RESEND_API_KEY="PASTE_YOUR_KEY_HERE"
-COOLIFY_TOKEN="PASTE_TOKEN_HERE"
-COOLIFY_URL="https://PASTE_COOLIFY_HOST:8000"
-# ---- optional edits --------------------------------------------------------
+die() { echo "error: $*" >&2; exit 1; }
+
+MODE=run
+case "${1:-}" in
+  "") ;;
+  --check) MODE=check ;;
+  --dry-run) MODE=dry ;;
+  *) echo "usage: $0 [--check | --dry-run]" >&2; exit 2 ;;
+esac
+
+SECRETS_FILE="${NOMIKOS_SECRETS_FILE:-$HOME/.nomikos-resend.env}"
+
+RESEND_API_KEY="" COOLIFY_TOKEN="" COOLIFY_URL=""
 EMAIL_FROM="Nomikos <no-reply@nomikos.app>"
 EMAIL_REPLY_TO="no-reply@nomikos.app"
 APP_PUBLIC_URL="https://nomikos.app"
 EMAIL_SIGNIN_NOTICES="true"
-APP_NAME="${APP_NAME:-api}"   # substring of the Coolify application name
-# ----------------------------------------------------------------------------
+APP_NAME="api"   # substring of the Coolify application name
 
-DRY=0
-case "${1:-}" in
-  "") ;;
-  --dry-run) DRY=1 ;;
-  *) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
+[ -f "$SECRETS_FILE" ] || die "secrets file not found: $SECRETS_FILE (see the header of this script)"
+PERM=$(stat -f %Lp "$SECRETS_FILE" 2>/dev/null || stat -c %a "$SECRETS_FILE")
+case "$PERM" in
+  ?00) ;;
+  *) die "$SECRETS_FILE is mode $PERM; run: chmod 600 $SECRETS_FILE" ;;
 esac
 
-die() { echo "error: $*" >&2; exit 1; }
+PRESENT=""
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%$'\r'}"
+  case "$line" in ''|'#'*) continue ;; esac
+  key="${line%%=*}"
+  val="${line#*=}"
+  key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+  case "$val" in
+    \"*\") val="${val#\"}"; val="${val%\"}" ;;
+    \'*\') val="${val#\'}"; val="${val%\'}" ;;
+  esac
+  case "$key" in
+    RESEND_API_KEY|COOLIFY_TOKEN|COOLIFY_URL|EMAIL_FROM|EMAIL_REPLY_TO|APP_PUBLIC_URL|EMAIL_SIGNIN_NOTICES|APP_NAME)
+      printf -v "$key" '%s' "$val"
+      PRESENT="$PRESENT $key" ;;
+  esac
+done < "$SECRETS_FILE"
 
-[ "$RESEND_API_KEY" != "PASTE_YOUR_KEY_HERE" ] || die "edit RESEND_API_KEY at the top of this script first"
+[ -n "$RESEND_API_KEY" ] || die "RESEND_API_KEY is missing from $SECRETS_FILE"
+[ -n "$COOLIFY_TOKEN" ] || die "COOLIFY_TOKEN is missing from $SECRETS_FILE"
+[ -n "$COOLIFY_URL" ] || die "COOLIFY_URL is missing from $SECRETS_FILE"
 case "$RESEND_API_KEY" in re_*) ;; *) die "RESEND_API_KEY must start with re_" ;; esac
-[ "$COOLIFY_TOKEN" != "PASTE_TOKEN_HERE" ] || die "edit COOLIFY_TOKEN at the top of this script (Coolify > Keys & Tokens)"
-case "$COOLIFY_URL" in https://PASTE_*|"") die "edit COOLIFY_URL at the top of this script" ;; esac
 COOLIFY_URL="${COOLIFY_URL%/}"
 
 MASKED="re_****"
+TOKMASK="tok_****"
 
-if [ "$DRY" = 1 ]; then
+if [ "$MODE" = check ]; then
+  echo "ok: $SECRETS_FILE (mode $PERM)"
+  echo "keys present (values masked):"
+  for k in $PRESENT; do
+    case $k in
+      RESEND_API_KEY) echo "  $k=$MASKED" ;;
+      COOLIFY_TOKEN) echo "  $k=$TOKMASK" ;;
+      *) echo "  $k=set" ;;
+    esac
+  done
+  exit 0
+fi
+
+if [ "$MODE" = dry ]; then
   cat <<EOF
 dry run: nothing is contacted.
-Coolify:   $COOLIFY_URL (token: ****)
+Coolify:   $COOLIFY_URL (token: $TOKMASK)
 Would, in order:
   1. GET   $COOLIFY_URL/api/v1/applications   (pick the one whose name contains "$APP_NAME")
   2. PATCH $COOLIFY_URL/api/v1/applications/<uuid>/envs/bulk with:
