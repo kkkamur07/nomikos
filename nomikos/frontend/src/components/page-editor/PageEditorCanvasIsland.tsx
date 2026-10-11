@@ -16,12 +16,15 @@ import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
  * over one canvas is one too many.
  */
 
-export type CanvasTool = "none" | "rectangle" | "polygon";
+export type CanvasTool = "none" | "rectangle" | "polygon" | "region";
+
+/** The tools that draw: two kinds of Segment and a region (ADR 0011). */
+export type DrawTool = Exclude<CanvasTool, "none">;
 
 type PageEditorCanvasIslandProps = {
   tool: CanvasTool;
   onSelectTool: () => void;
-  onPickDrawMode: (mode: "rectangle" | "polygon") => void;
+  onPickDrawMode: (mode: DrawTool) => void;
   canDelete: boolean;
   onDeleteSelected: () => void;
   zoomPercent: number;
@@ -43,9 +46,9 @@ function toolClass(active: boolean): string {
  * canvas would put the page image eight presses away for anyone working from
  * the keyboard.
  */
-const ISLAND_BUTTON_COUNT = 8;
+const ISLAND_BUTTON_COUNT = 9;
 /** The one button that can be disabled, and so the one that can lose focus. */
-const DELETE_BUTTON_INDEX = 3;
+const DELETE_BUTTON_INDEX = 4;
 
 export function PageEditorCanvasIsland({
   tool,
@@ -182,6 +185,30 @@ export function PageEditorCanvasIsland({
       <button
         type="button"
         {...rove(3)}
+        className={toolClass(tool === "region")}
+        aria-pressed={tool === "region"}
+        aria-keyshortcuts={PAGE_EDITOR_SHORTCUTS.REGION}
+        aria-label={`Region (${PAGE_EDITOR_SHORTCUTS.REGION})`}
+        title={`Draw a region around a folio or column (${PAGE_EDITOR_SHORTCUTS.REGION})`}
+        onClick={() => onPickDrawMode("region")}
+      >
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray="2.2 1.6"
+          aria-hidden="true"
+        >
+          <rect x="1.8" y="2.3" width="12.4" height="11.4" rx="0.8" />
+          <path d="M4.5 5.5h7M4.5 8h7M4.5 10.5h4.5" strokeDasharray="none" />
+        </svg>
+        <span className="pe-island__label">Region</span>
+      </button>
+
+      <button
+        type="button"
+        {...rove(4)}
         className="pe-island__btn"
         disabled={!canDelete}
         aria-keyshortcuts={PAGE_EDITOR_SHORTCUTS.DELETE}
@@ -206,7 +233,7 @@ export function PageEditorCanvasIsland({
 
       <button
         type="button"
-        {...rove(4)}
+        {...rove(5)}
         className="pe-island__btn pe-island__btn--icon"
         onClick={onZoomOut}
         aria-label="Zoom out"
@@ -225,7 +252,7 @@ export function PageEditorCanvasIsland({
       </button>
       <button
         type="button"
-        {...rove(5)}
+        {...rove(6)}
         className="pe-island__zoom"
         onClick={onResetZoom}
         aria-label={`Zoom ${zoomPercent}%. Reset to 100%`}
@@ -235,7 +262,7 @@ export function PageEditorCanvasIsland({
       </button>
       <button
         type="button"
-        {...rove(6)}
+        {...rove(7)}
         className="pe-island__btn pe-island__btn--icon"
         onClick={onZoomIn}
         aria-label="Zoom in"
@@ -254,7 +281,7 @@ export function PageEditorCanvasIsland({
       </button>
       <button
         type="button"
-        {...rove(7)}
+        {...rove(8)}
         className="pe-island__btn pe-island__btn--icon"
         onClick={onFitToView}
         aria-label="Fit page to view"

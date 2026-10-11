@@ -1,19 +1,42 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { JSX } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { CSSProperties, JSX } from "react";
 
 import type { LineResponse } from "../../api/client";
 import { dominantScript, textDirection } from "../../utils/scriptDirection";
 import type { Script, TextDirection } from "../../utils/scriptDirection";
 import { segmentNumbersById, segmentsInNumberOrder } from "./segmentNumbering";
+import { regionSeparators, type Region } from "./regions";
 import { displayText, maskStripHeight } from "./textPanelGeometry";
 import type { TextSource } from "./textPanelGeometry";
 
 const BASE_FONT_SIZE = 16;
+const EMPTY_REGIONS: Region[] = [];
+const REGION_SEPARATOR_STYLE: CSSProperties = {
+  padding: "10px 12px 4px",
+  borderTop: "1px solid var(--border, #ebe8e3)",
+  fontSize: "0.75rem",
+  fontWeight: 600,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  color: "var(--text-3, #6b6b6b)",
+};
 const MIN_MASK_FONT_SIZE = 11;
 const MAX_MASK_FONT_SIZE = 28;
 
 export type PageEditorTranscriptEditorProps = {
   lines: LineResponse[];
+  /**
+   * The Page's regions (ADR 0011). When there are any, each region's rows
+   * open with its name, and the rows in no region with "Unassigned".
+   */
+  regions?: Region[];
   selectedSegmentId: string | null;
   hoveredSegmentId: string | null;
   preferredLayerId?: string | null;
@@ -308,6 +331,7 @@ export function PageEditorTranscriptEditor(
 ): JSX.Element {
   const {
     lines,
+    regions = EMPTY_REGIONS,
     selectedSegmentId,
     hoveredSegmentId,
     preferredLayerId = null,
@@ -322,6 +346,10 @@ export function PageEditorTranscriptEditor(
   // Rows follow the stored Segment order, the same sequence the canvas numbers.
   const ordered = useMemo(() => segmentsInNumberOrder(lines), [lines]);
   const numbers = useMemo(() => segmentNumbersById(lines), [lines]);
+  const separators = useMemo(
+    () => regionSeparators(ordered, regions),
+    [ordered, regions],
+  );
   const seeds = useMemo(
     () =>
       new Map(
@@ -386,27 +414,38 @@ export function PageEditorTranscriptEditor(
         <p className="pe-transcript-empty">No segments on this page yet.</p>
       ) : (
         ordered.map((line, index) => (
-          <TranscriptRow
-            key={line.id}
-            line={line}
-            number={numbers.get(line.id) ?? index + 1}
-            seedText={seeds.get(line.id)?.text ?? ""}
-            seedSource={seeds.get(line.id)?.source ?? "none"}
-            selected={line.id === selectedSegmentId}
-            hovered={line.id === hoveredSegmentId}
-            pageDirection={pageDirection}
-            pageScript={pageScript}
-            fontSize={maskFontSizes.get(line.id) ?? baseFontSize}
-            prevId={ordered[index - 1]?.id ?? null}
-            nextId={ordered[index + 1]?.id ?? null}
-            onSelectSegment={onSelectSegment}
-            onHoverSegment={onHoverSegment}
-            onFocusSegment={onFocusSegment}
-            onCommitText={onCommitText}
-            onFocusId={focusId}
-            registerTextarea={registerTextarea}
-            registerRow={registerRow}
-          />
+          <Fragment key={line.id}>
+            {separators.has(line.id) ? (
+              <div
+                className="pe-transcript-region"
+                role="heading"
+                aria-level={3}
+                style={REGION_SEPARATOR_STYLE}
+              >
+                {separators.get(line.id)}
+              </div>
+            ) : null}
+            <TranscriptRow
+              line={line}
+              number={numbers.get(line.id) ?? index + 1}
+              seedText={seeds.get(line.id)?.text ?? ""}
+              seedSource={seeds.get(line.id)?.source ?? "none"}
+              selected={line.id === selectedSegmentId}
+              hovered={line.id === hoveredSegmentId}
+              pageDirection={pageDirection}
+              pageScript={pageScript}
+              fontSize={maskFontSizes.get(line.id) ?? baseFontSize}
+              prevId={ordered[index - 1]?.id ?? null}
+              nextId={ordered[index + 1]?.id ?? null}
+              onSelectSegment={onSelectSegment}
+              onHoverSegment={onHoverSegment}
+              onFocusSegment={onFocusSegment}
+              onCommitText={onCommitText}
+              onFocusId={focusId}
+              registerTextarea={registerTextarea}
+              registerRow={registerRow}
+            />
+          </Fragment>
         ))
       )}
     </div>

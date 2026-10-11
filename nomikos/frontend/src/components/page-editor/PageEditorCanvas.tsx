@@ -35,7 +35,11 @@ import type { PageEditorCanvasSettings } from "./pageEditorSettings";
 import { segmentNumbersById, segmentsInNumberOrder } from "./segmentNumbering";
 import { resetPanVelocityTracking } from "../../utils/zoomPanVelocity";
 import { useZoomLayerHint } from "../../utils/zoomLayerHint";
-import { PageEditorCanvasIsland } from "./PageEditorCanvasIsland";
+import {
+  PageEditorCanvasIsland,
+  type DrawTool,
+} from "./PageEditorCanvasIsland";
+import { regionName } from "./regions";
 import { useSmoothWheelZoom } from "./useSmoothWheelZoom";
 
 const ZOOM_ANIMATION_MS = 220;
@@ -104,6 +108,9 @@ type CanvasSurfaceProps = {
   onPolygonComplete: () => void;
   onSelectLine: (lineId: string) => void;
   onSelectSegment: (lineId: string) => void;
+  /** The region (block) picked on the canvas, ADR 0011. */
+  selectedRegionId?: string | null;
+  onSelectRegion?: (regionId: string) => void;
   segmentVertexEditEnabled: boolean;
   /**
    * Space is held, so the pointer belongs to the pan gesture no matter which
@@ -154,6 +161,8 @@ function CanvasSurfaceInner({
   onPolygonComplete,
   onSelectLine,
   onSelectSegment,
+  selectedRegionId = null,
+  onSelectRegion,
   segmentVertexEditEnabled,
   suppressBaselineSegmentId,
   vertexEditPoints,
@@ -316,16 +325,63 @@ function CanvasSurfaceInner({
         }}
       >
         {settings.showLayoutBlocks &&
-          layout.blocks.map((block) => (
-            <polygon
-              key={block.id}
-              aria-label={`Block ${block.id}`}
-              points={points(block.box)}
-              fill="rgba(216, 199, 161, 0.08)"
-              stroke="#d8c7a1"
-              strokeWidth={strokeWidth(1.2)}
-            />
-          ))}
+          layout.blocks.map((block) => {
+            const regionPoints = normalizeGeometryPoints(block.box);
+            const selected = block.id === selectedRegionId;
+            const name = regionName(block, layout.blocks);
+            const labelSize = Math.max(14, canvasMax / 70);
+            const labelX = regionPoints.length
+              ? Math.min(...regionPoints.map(([x]) => x))
+              : 0;
+            const labelY = regionPoints.length
+              ? Math.min(...regionPoints.map(([, y]) => y))
+              : 0;
+            const selectable = !drawingRectangle && !drawingPolygon;
+            return (
+              <g key={block.id}>
+                <polygon
+                  role="button"
+                  tabIndex={selectable ? 0 : -1}
+                  aria-label={`Region ${name}`}
+                  aria-current={selected ? "true" : undefined}
+                  points={points(block.box)}
+                  fill={
+                    selected
+                      ? "rgba(37, 99, 235, 0.08)"
+                      : "rgba(216, 199, 161, 0.08)"
+                  }
+                  stroke={selected ? "#2563eb" : "#b8a06a"}
+                  strokeWidth={strokeWidth(selected ? 2.2 : 1.4)}
+                  strokeDasharray={`${strokeWidth(8)},${strokeWidth(4)}`}
+                  style={selectable ? { cursor: "pointer" } : undefined}
+                  onClick={(event) => {
+                    if (!selectable || panOverride) return;
+                    event.stopPropagation();
+                    onSelectRegion?.(block.id);
+                  }}
+                  onKeyDown={(event) =>
+                    activateWithKeyboard(event, () =>
+                      onSelectRegion?.(block.id),
+                    )
+                  }
+                />
+                <text
+                  aria-hidden="true"
+                  x={labelX + labelSize * 0.4}
+                  y={labelY + labelSize * 1.2}
+                  fontSize={labelSize}
+                  fontWeight={600}
+                  fill={selected ? "#1d4ed8" : "#7a6531"}
+                  stroke="rgba(255, 255, 255, 0.9)"
+                  strokeWidth={labelSize / 6}
+                  paintOrder="stroke"
+                  style={{ pointerEvents: "none", userSelect: "none" }}
+                >
+                  {name}
+                </text>
+              </g>
+            );
+          })}
         {orderedLines.map((line) => {
           const selected = line.id === selectedSegmentId;
           const paired = pairedSegmentIds.has(line.id);
@@ -553,7 +609,9 @@ type PageEditorCanvasProps = Omit<
 > & {
   /** Tool controls for the on-canvas island. */
   onSelectTool: () => void;
-  onPickDrawMode: (mode: "rectangle" | "polygon") => void;
+  onPickDrawMode: (mode: DrawTool) => void;
+  /** The Region tool is armed: the rectangle drag draws a region, not a Segment. */
+  drawingRegion?: boolean;
   canDelete: boolean;
   onDeleteSelected: () => void;
   selectedVertexIndex: number | null;
@@ -589,12 +647,15 @@ export function PageEditorCanvas({
   viewportRef,
   onTransformed,
   focusRequest,
-  drawingRectangle,
+  drawingRectangle: drawingSegmentRectangle,
+  drawingRegion = false,
   drawingPolygon,
   draftStart,
   draftPolygon,
   settings,
   segmentVertexEditEnabled,
+  selectedRegionId,
+  onSelectRegion,
   onSelectTool,
   onPickDrawMode,
   canDelete,
@@ -610,6 +671,9 @@ export function PageEditorCanvas({
   onSelectSegment,
   onSegmentPointsChange,
 }: PageEditorCanvasProps) {
+  // The Region tool draws with the same drag as a rectangle Segment; only
+  // what the page does with the finished rectangle differs.
+  const drawingRectangle = drawingSegmentRectangle || drawingRegion;
   const [zoomLevel, setZoomLevel] = useState(1);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const { transforming, markTransforming } = useZoomLayerHint();
@@ -1019,11 +1083,13 @@ export function PageEditorCanvas({
           <>
             <PageEditorCanvasIsland
               tool={
-                drawingRectangle
-                  ? "rectangle"
-                  : drawingPolygon
-                    ? "polygon"
-                    : "none"
+                drawingRegion
+                  ? "region"
+                  : drawingSegmentRectangle
+                    ? "rectangle"
+                    : drawingPolygon
+                      ? "polygon"
+                      : "none"
               }
               onSelectTool={onSelectTool}
               onPickDrawMode={onPickDrawMode}
@@ -1078,6 +1144,8 @@ export function PageEditorCanvas({
                 onPolygonComplete={onPolygonComplete}
                 onSelectLine={onSelectLine}
                 onSelectSegment={onSelectSegment}
+                selectedRegionId={selectedRegionId}
+                onSelectRegion={onSelectRegion}
                 segmentVertexEditEnabled={segmentVertexEditEnabled}
                 panOverride={spaceHeld}
                 suppressBaselineSegmentId={vertexEdit?.segmentId ?? null}
