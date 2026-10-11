@@ -119,18 +119,13 @@ export function ProjectsPage() {
       title="Projects"
       subtitle="Owned and shared"
       headerActions={
-        <>
-          <a href="/guides/coptic/start.html" className="btn btn-ghost btn-sm">
-            Coptic annotation guide
-          </a>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => setCreateModalOpen(true)}
-          >
-            New project
-          </button>
-        </>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={() => setCreateModalOpen(true)}
+        >
+          New project
+        </button>
       }
     >
       {error && (
