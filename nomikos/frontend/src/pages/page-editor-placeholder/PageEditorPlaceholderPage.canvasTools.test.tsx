@@ -131,7 +131,7 @@ describe("PageEditorPlaceholderPage canvas tools", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
 
     // Vertex handles used to require Layout mode. Selection is the only
     // condition now, so they are present without any mode being chosen.

@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 const platformApi = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 ).replace(/\/$/, "");
+const platformApiOrigin = new URL(platformApi).origin;
 const frontendRoot = fileURLToPath(new URL(".", import.meta.url));
 
 // Kept in sync with vercel.json. Vercel serves those at the edge; the self-hosted
 // `node server.js` runtime never reads vercel.json, so the same headers are applied
-// here for the Docker deployment.
+// here for the Docker deployment. The API origin comes from NEXT_PUBLIC_API_BASE_URL.
 const securityHeaders = [
   {
     key: "Strict-Transport-Security",
@@ -23,8 +24,7 @@ const securityHeaders = [
   },
   {
     key: "Content-Security-Policy",
-    value:
-      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://api.nomikos.app; frame-src 'self' blob:; connect-src 'self' https://api.nomikos.app https://mknnoqpavpmxsyctwjdt.supabase.co; worker-src 'self' blob:",
+    value: `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: ${platformApiOrigin}; frame-src 'self' blob:; connect-src 'self' ${platformApiOrigin}; worker-src 'self' blob:`,
   },
 ];
 

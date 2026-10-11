@@ -106,7 +106,7 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     fireEvent.click(screen.getByRole("button", { name: /delete selected/i }));
 
     await waitFor(() => {
@@ -130,12 +130,12 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     fireEvent.click(screen.getByRole("button", { name: /delete selected/i }));
 
     await flushPageEditorEffects();
     expect(mockedApi.deletePartLine).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(/^Segment 1/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Segment 1/ })).toBeTruthy();
     confirmSpy.mockRestore();
   });
 
@@ -154,7 +154,7 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     const vertex = await screen.findByLabelText(/Segment vertex 2/);
     fireEvent.pointerDown(vertex, { clientX: 80, clientY: 10, pointerId: 1 });
     fireEvent.pointerUp(vertex, { clientX: 80, clientY: 10, pointerId: 1 });
@@ -218,7 +218,7 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
 
     renderPageEditor();
 
-    const segment = await screen.findByLabelText(/^Segment 1/);
+    const segment = await screen.findByRole("button", { name: /^Segment 1/ });
     fireEvent.click(segment);
     // Midpoint of top edge in image coords; SVG maps client → viewBox via getBoundingClientRect.
     Object.defineProperty(segment, "ownerSVGElement", {
@@ -264,7 +264,7 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     expect(await screen.findByLabelText(/Segment vertex 1/)).toBeTruthy();
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -273,6 +273,6 @@ describe("PageEditorPlaceholderPage segment mutations", () => {
       expect(screen.queryByLabelText(/Segment vertex 1/)).toBeNull();
     });
     expect(mockedApi.deletePartLine).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(/^Segment 1/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Segment 1/ })).toBeTruthy();
   });
 });

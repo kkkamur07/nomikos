@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { type LayoutPoint, type LinePoint } from "../api/client";
+import type { LayoutPoint, LinePoint } from "../api/client";
 import { invalidateAfter } from "../api/resources";
 import { useHostPreference } from "../inference";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { PageEditorCanvas } from "../components/page-editor/PageEditorCanvas";
+import { PageEditorSplitPane } from "../components/page-editor/PageEditorSplitPane";
+import { PageEditorTranscriptEditor } from "../components/page-editor/PageEditorTranscriptEditor";
 import {
   PageEditorPageRail,
   PageEditorPageRailTab,
@@ -81,6 +83,11 @@ export function PageEditorPlaceholderPage() {
   const [submissionRefusal, setSubmissionRefusal] = useState<string | null>(
     null,
   );
+  const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{
+    segmentId: string;
+    nonce: number;
+  } | null>(null);
 
   // The page the editor is on. The route seeds it and mirrors it back, but the
   // editor turns pages by changing this rather than by re-entering the route,
@@ -97,6 +104,8 @@ export function PageEditorPlaceholderPage() {
     setDraftStart(null);
     setStripDismissed(false);
     setSelectedVertexIndex(null);
+    setHoveredSegmentId(null);
+    setFocusRequest(null);
   });
   const {
     document,
@@ -247,6 +256,7 @@ export function PageEditorPlaceholderPage() {
     selectedSegmentNumber,
     selectedTranscriptionLayer,
     pairTextLine,
+    commitLineText,
     saveApprovedText,
     selectTranscriptionLayer,
     saveGroundTruthText,
@@ -263,7 +273,8 @@ export function PageEditorPlaceholderPage() {
   selectedSegmentIdRef.current = selectedSegmentId;
 
   const pairedIds = useMemo(() => segmentIdsWithGroundTruth(lines), [lines]);
-  const stripVisible = Boolean(selectedSegment) && !stripDismissed;
+  const stripVisible =
+    Boolean(selectedSegment) && !stripDismissed && !canvasSettings.sideBySide;
 
   // The jobs panel floats above the strip (see --nk-bottom-inset). The strip
   // owns the nonzero value via useStripResize; when it is closed there is no
@@ -408,6 +419,89 @@ export function PageEditorPlaceholderPage() {
       ? `/projects/${projectId}/documents/${documentId}`
       : "/projects";
 
+  const imageWidth = part?.width ?? 640;
+  const imageHeight = part?.height ?? 900;
+  const preferredModelLayerId =
+    selectedTranscriptionLayer?.kind === "model"
+      ? selectedTranscriptionLayer.id
+      : null;
+
+  const canvasPaneContent = (
+    <>
+      <PageEditorCanvas
+        imageUrl={part?.image_url ?? ""}
+        imageAlt={`Page ${partIndex}`}
+        imageWidth={imageWidth}
+        imageHeight={imageHeight}
+        layout={layout}
+        lines={lines}
+        selectedSegmentId={selectedSegmentId}
+        pairedSegmentIds={pairedIds}
+        hoveredSegmentId={hoveredSegmentId}
+        onHoverSegment={setHoveredSegmentId}
+        focusRequest={focusRequest}
+        settings={canvasSettings}
+        drawingRectangle={drawMode === "rectangle"}
+        drawingPolygon={drawMode === "polygon"}
+        draftStart={draftStart}
+        draftPolygon={draftPolygon}
+        onDraftStart={setDraftStart}
+        onRectangleDrawn={async (end) => {
+          if (!draftStart) return;
+          const rectangle = rectanglePoints(draftStart, end);
+          await replaceWithManualLine("rectangle", rectangle);
+          setDraftStart(null);
+        }}
+        onPolygonPoint={(point) =>
+          setDraftPolygon((current) => [...current, point])
+        }
+        onPolygonComplete={completeDraftPolygon}
+        onSelectLine={(lineId) => {
+          const selectedLine = layout.lines.find((line) => line.id === lineId);
+          setSelectedLineId(lineId);
+          setSelectedSegmentId(null);
+          setSelectedVertexIndex(null);
+          setSelectedLineSnapshot({
+            baseline: selectedLine?.baseline,
+            mask: selectedLine?.mask,
+          });
+        }}
+        onSelectSegment={handleSelectSegment}
+        segmentVertexEditEnabled={
+          drawMode === "none" && Boolean(selectedSegmentId)
+        }
+        onSelectTool={handlePanSelect}
+        onPickDrawMode={pickDrawMode}
+        canDelete={Boolean(selectedSegmentId || selectedLineId)}
+        onDeleteSelected={() => {
+          if (selectedSegmentId) void deleteSelectedSegment();
+          if (selectedLineId) void resetSelectedLine();
+        }}
+        selectedVertexIndex={selectedVertexIndex}
+        onSelectedVertexChange={setSelectedVertexIndex}
+        commitSignal={vertexCommitSignal}
+        onSegmentPointsChange={updateSegmentPoints}
+      />
+      <p
+        className={`pe-canvas-hint${runState.processingKind ? " pe-canvas-hint--processing" : ""}`}
+        id="canvas-hint"
+        role="status"
+      >
+        {canvasHint}
+      </p>
+      <div className="pe-seg-legend" aria-label="Segment pairing">
+        <div className="pe-seg-legend__item">
+          <span className="pe-seg-legend__swatch pe-seg-legend__swatch--paired" />
+          paired
+        </div>
+        <div className="pe-seg-legend__item">
+          <span className="pe-seg-legend__swatch pe-seg-legend__swatch--unpaired" />
+          unpaired
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <PageEditorShell
       loading={loading}
@@ -510,76 +604,35 @@ export function PageEditorPlaceholderPage() {
                 />
               ))}
             <div className="pe-canvas-pane">
-              <PageEditorCanvas
-                imageUrl={part.image_url}
-                imageAlt={`Page ${partIndex}`}
-                imageWidth={part.width ?? 640}
-                imageHeight={part.height ?? 900}
-                layout={layout}
-                lines={lines}
-                selectedSegmentId={selectedSegmentId}
-                pairedSegmentIds={pairedIds}
-                settings={canvasSettings}
-                drawingRectangle={drawMode === "rectangle"}
-                drawingPolygon={drawMode === "polygon"}
-                draftStart={draftStart}
-                draftPolygon={draftPolygon}
-                onDraftStart={setDraftStart}
-                onRectangleDrawn={async (end) => {
-                  if (!draftStart) return;
-                  const rectangle = rectanglePoints(draftStart, end);
-                  await replaceWithManualLine("rectangle", rectangle);
-                  setDraftStart(null);
-                }}
-                onPolygonPoint={(point) =>
-                  setDraftPolygon((current) => [...current, point])
-                }
-                onPolygonComplete={completeDraftPolygon}
-                onSelectLine={(lineId) => {
-                  const selectedLine = layout.lines.find(
-                    (line) => line.id === lineId,
-                  );
-                  setSelectedLineId(lineId);
-                  setSelectedSegmentId(null);
-                  setSelectedVertexIndex(null);
-                  setSelectedLineSnapshot({
-                    baseline: selectedLine?.baseline,
-                    mask: selectedLine?.mask,
-                  });
-                }}
-                onSelectSegment={handleSelectSegment}
-                segmentVertexEditEnabled={
-                  drawMode === "none" && Boolean(selectedSegmentId)
-                }
-                onSelectTool={handlePanSelect}
-                onPickDrawMode={pickDrawMode}
-                canDelete={Boolean(selectedSegmentId || selectedLineId)}
-                onDeleteSelected={() => {
-                  if (selectedSegmentId) void deleteSelectedSegment();
-                  if (selectedLineId) void resetSelectedLine();
-                }}
-                selectedVertexIndex={selectedVertexIndex}
-                onSelectedVertexChange={setSelectedVertexIndex}
-                commitSignal={vertexCommitSignal}
-                onSegmentPointsChange={updateSegmentPoints}
-              />
-              <p
-                className={`pe-canvas-hint${runState.processingKind ? " pe-canvas-hint--processing" : ""}`}
-                id="canvas-hint"
-                role="status"
-              >
-                {canvasHint}
-              </p>
-              <div className="pe-seg-legend" aria-label="Segment pairing">
-                <div className="pe-seg-legend__item">
-                  <span className="pe-seg-legend__swatch pe-seg-legend__swatch--paired" />
-                  paired
-                </div>
-                <div className="pe-seg-legend__item">
-                  <span className="pe-seg-legend__swatch pe-seg-legend__swatch--unpaired" />
-                  unpaired
-                </div>
-              </div>
+              {canvasSettings.sideBySide ? (
+                <PageEditorSplitPane
+                  ratio={canvasSettings.splitRatio}
+                  onRatioChange={(ratio) =>
+                    handleCanvasSettingsChange({
+                      ...canvasSettings,
+                      splitRatio: ratio,
+                    })
+                  }
+                  left={canvasPaneContent}
+                  right={
+                    <PageEditorTranscriptEditor
+                      lines={lines}
+                      selectedSegmentId={selectedSegmentId}
+                      hoveredSegmentId={hoveredSegmentId}
+                      preferredLayerId={preferredModelLayerId}
+                      onSelectSegment={handleSelectSegment}
+                      onHoverSegment={setHoveredSegmentId}
+                      onFocusSegment={(id) =>
+                        setFocusRequest({ segmentId: id, nonce: Date.now() })
+                      }
+                      onCommitText={commitLineText}
+                      scaleFontToMask={canvasSettings.transcriptFontFromMask}
+                    />
+                  }
+                />
+              ) : (
+                canvasPaneContent
+              )}
             </div>
             {transcriptionPdfOpen && projectId && documentId && partId && (
               <PageEditorTranscriptionPdfWrap
