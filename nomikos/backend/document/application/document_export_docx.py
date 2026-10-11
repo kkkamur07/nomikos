@@ -8,7 +8,8 @@ manuscript. Both come from the line's own characters (see ``script_detection``),
 Greek gloss on a Syriac page stays left to right.
 
 Same pages, same text and same page numbers as the text export: the selector, the
-ground-truth rule and the position-based numbering are shared, not restated.
+ground-truth rule and the position-based numbering are shared, not restated. So is the
+region grouping (ADR 0011): a labelled region's lines follow its label in bold.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from backend.document.application.document_export_selection import (
 )
 from backend.document.application.document_export_text import _ground_truth_text
 from backend.document.application.document_service import DocumentService
+from backend.document.application.regions import RegionHeading, region_text
 from backend.document.application.script_detection import Script, detect_script, is_rtl
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.users.infrastructure.orm_models import User
@@ -52,10 +54,13 @@ class DocumentDocxExport:
 
 @dataclass(frozen=True)
 class DocxPage:
-    """One page reduced to its number and its transcribed lines, off the session."""
+    """One page reduced to its number and its transcribed lines, off the session.
+
+    A :class:`RegionHeading` among the lines opens a labelled region.
+    """
 
     number: int
-    lines: list[str]
+    lines: list[str | RegionHeading]
 
 
 class DocumentDocxExportService:
@@ -85,7 +90,10 @@ class DocumentDocxExportService:
         pages: list[DocxPage] = []
         for part in selection.parts:
             lines = await self._documents.list_part_lines(session, part.id)
-            pages.append(DocxPage(number=selection.page_number(part), lines=_page_text(lines)))
+            blocks = await self._documents.list_part_blocks(session, part.id)
+            pages.append(
+                DocxPage(number=selection.page_number(part), lines=_page_text(blocks, lines))
+            )
         content = await asyncio.to_thread(render_docx, pages)
         return DocumentDocxExport(
             filename=document_download_name(selection.document.name, "transcription.docx"),
@@ -139,11 +147,12 @@ class DocumentDocxExportService:
     async def _part_page(self, session: AsyncSession, part) -> DocxPage:
         number = await self._documents.part_page_number(session, part)
         lines = await self._documents.list_part_lines(session, part.id)
-        return DocxPage(number=number, lines=_page_text(lines))
+        blocks = await self._documents.list_part_blocks(session, part.id)
+        return DocxPage(number=number, lines=_page_text(blocks, lines))
 
 
-def _page_text(lines) -> list[str]:
-    return [text for text in (_ground_truth_text(line) for line in lines) if text.strip()]
+def _page_text(blocks, lines) -> list[str | RegionHeading]:
+    return region_text(blocks, lines, _ground_truth_text)
 
 
 def render_docx(pages: list[DocxPage]) -> bytes:
@@ -158,8 +167,11 @@ def render_docx(pages: list[DocxPage]) -> bytes:
         # A page with nothing transcribed still gets its heading, for the reason the
         # text export keeps its marker: a missing "Page 7" reads as a missing page.
         word.add_heading(f"Page {page.number}", level=2)
-        for text in page.lines:
-            _add_line(word, text)
+        for item in page.lines:
+            if isinstance(item, RegionHeading):
+                _add_region_heading(word, item.label)
+            else:
+                _add_line(word, item)
     buffer = io.BytesIO()
     word.save(buffer)
     return buffer.getvalue()
@@ -174,6 +186,13 @@ def _set_default_font(word: WordDocument) -> None:
     _add_in_schema_order(run_properties, "w:szCs").set(
         qn("w:val"), str(int(_BODY_FONT_SIZE.pt * 2))
     )
+
+
+def _add_region_heading(word: WordDocument, label: str) -> Paragraph:
+    """A region's label on a line of its own, in bold: a folio name, not a heading level."""
+    paragraph = word.add_paragraph()
+    paragraph.add_run(label).bold = True
+    return paragraph
 
 
 def _add_line(word: WordDocument, text: str) -> Paragraph:

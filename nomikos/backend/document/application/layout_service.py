@@ -27,7 +27,14 @@ from backend.document.application.patch_fields import (
     LINE_PATCH_FIELDS,
     reject_unknown_fields,
 )
-from backend.document.application.reading_order import insertion_index, renumber
+from backend.document.application.reading_order import (
+    BlockOrders,
+    block_ranks,
+    insertion_index,
+    region_sequence,
+    renumber,
+)
+from backend.document.application.regions import line_in_box
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.orm_models import Block, Line, LineGeometryKind, LineSource
 from backend.project.infrastructure.project_repository import ProjectRepository
@@ -51,10 +58,17 @@ def _preserved(data: dict, field: str, prior: Line | None, default: object) -> o
     return default
 
 
-def _apply_reading_order(lines: list[Line]) -> None:
-    orders = renumber(lines)
+def _apply_reading_order(lines: list[Line], block_orders: BlockOrders | None = None) -> None:
+    orders = renumber(lines, block_orders)
     for line in lines:
         line.order = orders[line.id]
+
+
+def _sorted_blocks(blocks: list[Block]) -> list[Block]:
+    # The repository lists by (order, created_at); a block added in this transaction has
+    # no created_at yet and is the newest, so a stable sort on order puts it last of its
+    # order, where the repository will list it once committed.
+    return sorted(blocks, key=lambda block: block.order)
 
 
 class LayoutService:
@@ -104,12 +118,26 @@ class LayoutService:
         *,
         order: int,
         box: dict,
+        label: str | None = None,
+        assign_contained: bool = True,
     ) -> Block:
         context = await self._access.require_part(session, user, project_id, document_id, part_id)
         # A block is part of the same layout segment health renumbers.
         await self._documents.lock_part(session, part_id)
-        block = Block(part_id=context.part.id, order=order, box=box, manual_geometry=True)
+        part = context.part
+        blocks = await self._documents.list_part_blocks(session, part.id)
+        lines = await self._documents.list_part_lines(session, part.id)
+        block = Block(
+            id=uuid4(), part_id=part.id, order=order, box=box, label=label, manual_geometry=True
+        )
         session.add(block)
+        if assign_contained:
+            # Only lines in no region yet: drawing a region never steals lines from
+            # another one; moving a line between regions is an explicit PATCH.
+            for line in lines:
+                if line.block_id is None and line_in_box(line.points, box):
+                    line.block_id = block.id
+        _apply_reading_order(lines, block_ranks(_sorted_blocks([*blocks, block])))
         await session.commit()
         await session.refresh(block)
         return block
@@ -134,6 +162,9 @@ class LayoutService:
         for key, value in updates.items():
             setattr(block, key, value)
         block.manual_geometry = True
+        if "order" in updates:
+            # Lines are numbered region-first (ADR 0011), so moving a region moves its lines.
+            await self._renumber_part(session, context.part.id)
         await session.commit()
         await session.refresh(block)
         return block
@@ -151,7 +182,19 @@ class LayoutService:
         # A block is part of the same layout segment health renumbers.
         await self._documents.lock_part(session, part_id)
         block = await self._block_or_404(session, context.part.id, block_id)
+        # The lines stay where they are and become unblocked. The foreign key would null
+        # them too, but only after the renumber below has read the rows in memory.
+        lines = await self._documents.list_part_lines(session, context.part.id)
+        for line in lines:
+            if line.block_id == block.id:
+                line.block_id = None
+        remaining = [
+            other
+            for other in await self._documents.list_part_blocks(session, context.part.id)
+            if other.id != block.id
+        ]
         await session.delete(block)
+        _apply_reading_order(lines, block_ranks(remaining))
         await session.commit()
 
     async def create_part_line(
@@ -194,13 +237,16 @@ class LayoutService:
         # where it sits on the page; with one (undo restoring a deleted line) it goes
         # before the first line numbered at least that. Either way every line after it
         # moves down one, so the page stays numbered 0..n-1.
-        existing = await self._documents.list_part_lines(session, part.id)
+        block_orders = await self._block_orders(session, part.id)
+        existing = region_sequence(
+            await self._documents.list_part_lines(session, part.id), block_orders
+        )
         if order is None:
-            index = insertion_index(existing, line)
+            index = insertion_index(existing, line, block_orders)
         else:
             index = sum(1 for other in existing if other.order < order)
         session.add(line)
-        _apply_reading_order([*existing[:index], line, *existing[index:]])
+        _apply_reading_order([*existing[:index], line, *existing[index:]], block_orders)
         await session.commit()
         return await self._line_or_404(session, part.id, line.id)
 
@@ -231,10 +277,25 @@ class LayoutService:
         # ``updates`` already went through ``exclude_unset``: every key present was sent by
         # the client. Applying it verbatim is what lets a client clear a nullable field
         # (``block_id``/``mask``); the request schema rejects nulls for the rest.
+        moved_region = "block_id" in updates and updates["block_id"] != line.block_id
         for key, value in updates.items():
             setattr(line, key, value)
         line.manual_geometry = True
         line.source = LineSource.manual
+        if moved_region:
+            # A line moved to another region is placed among that region's lines by
+            # where it sits, as a newly drawn line would be (ADR 0011).
+            block_orders = await self._block_orders(session, part.id)
+            others = region_sequence(
+                [
+                    other
+                    for other in await self._documents.list_part_lines(session, part.id)
+                    if other.id != line.id
+                ],
+                block_orders,
+            )
+            others.insert(insertion_index(others, line, block_orders), line)
+            _apply_reading_order(others, block_orders)
         await session.commit()
         return await self._line_or_404(session, part.id, line.id)
 
@@ -262,7 +323,7 @@ class LayoutService:
         ]
         await session.delete(line)
         # Close the gap: the lines after it move up one.
-        _apply_reading_order(remaining)
+        _apply_reading_order(remaining, await self._block_orders(session, context.part.id))
         await session.commit()
 
     async def reset_part_layout(
@@ -393,9 +454,21 @@ class LayoutService:
 
         # The client's orders say the sequence; the server makes it dense. The sort is
         # stable, so lines sent with the same order keep the order they were sent in.
-        _apply_reading_order(sorted(written, key=lambda line: line.order))
+        _apply_reading_order(
+            sorted(written, key=lambda line: line.order),
+            await self._block_orders(session, part.id),
+        )
         await session.commit()
         return await self._documents.list_part_lines(session, part.id)
+
+    async def _block_orders(self, session: AsyncSession, part_id: UUID) -> BlockOrders:
+        return block_ranks(await self._documents.list_part_blocks(session, part_id))
+
+    async def _renumber_part(self, session: AsyncSession, part_id: UUID) -> None:
+        """Regroup the page region-first, keeping each region's lines in their sequence."""
+        lines = await self._documents.list_part_lines(session, part_id)
+        blocks = _sorted_blocks(await self._documents.list_part_blocks(session, part_id))
+        _apply_reading_order(lines, block_ranks(blocks))
 
     async def _block_or_404(self, session: AsyncSession, part_id: UUID, block_id: UUID) -> Block:
         block = await self._documents.get_block_in_part(session, part_id, block_id)

@@ -155,7 +155,7 @@ describe("PageEditorPlaceholderPage canvas tools", () => {
       name: /rectangle segment/i,
     });
 
-    // Eight buttons floating over the canvas must not cost eight presses to
+    // Nine buttons floating over the canvas must not cost eight presses to
     // get past, so exactly one of them is in the tab order at a time.
     const stops = [...island.querySelectorAll("button")].filter(
       (button) => button.tabIndex === 0,
@@ -167,8 +167,10 @@ describe("PageEditorPlaceholderPage canvas tools", () => {
     expect(rectangle.tabIndex).toBe(0);
     expect(select.tabIndex).toBe(-1);
 
-    // Delete is greyed out with nothing selected, so the arrow walk steps over
-    // it rather than parking the island's only tab stop somewhere unfocusable.
+    // Polygon, then Region. Delete is greyed out with nothing selected, so the
+    // arrow walk steps over it rather than parking the island's only tab stop
+    // somewhere unfocusable.
+    fireEvent.keyDown(island, { key: "ArrowRight" });
     fireEvent.keyDown(island, { key: "ArrowRight" });
     fireEvent.keyDown(island, { key: "ArrowRight" });
     expect(globalThis.document.activeElement).toBe(

@@ -10,11 +10,14 @@ from backend.document.application.document_access import PartContext
 from backend.document.application.layout_service import LayoutService
 from backend.document.application.reading_order import (
     LineShape,
+    block_ranks,
     insertion_index,
     merge_reading_order,
+    region_sequence,
     renumber,
 )
 from backend.document.infrastructure.orm_models import (
+    Block,
     Document,
     DocumentPart,
     Line,
@@ -138,8 +141,15 @@ def test_only_kept_lines_keep_their_sequence():
 
 
 class _Repository:
-    def __init__(self, lines: list[Line]) -> None:
+    def __init__(self, lines: list[Line], blocks: list[Block] | None = None) -> None:
         self.lines = lines
+        self.blocks = blocks or []
+
+    async def list_part_blocks(self, _session, _part_id) -> list[Block]:
+        return sorted(self.blocks, key=lambda block: block.order)
+
+    async def get_block_in_part(self, _session, _part_id, block_id):
+        return next((block for block in self.blocks if block.id == block_id), None)
 
     async def lock_part(self, _session, _part_id) -> None:
         pass
@@ -157,9 +167,15 @@ class _Session:
         self.added: list[Line] = []
         self.deleted: list[Line] = []
 
-    def add(self, item: Line) -> None:
+    def add(self, item: Line | Block) -> None:
         self.added.append(item)
-        self._repository.lines.append(item)
+        if isinstance(item, Block):
+            self._repository.blocks.append(item)
+        else:
+            self._repository.lines.append(item)
+
+    async def refresh(self, _item: object) -> None:
+        pass
 
     async def delete(self, item: object) -> None:
         self.deleted.append(item)
@@ -245,3 +261,209 @@ async def test_delete_closes_the_gap():
 
     assert session.deleted == [lines[1]]
     assert [line.order for line in lines if line is not lines[1]] == [0, 1, 2, 3]
+
+
+# --- Regions first (ADR 0011) ---
+
+
+def _in(block: str | None, lines: list[LineShape]) -> list[LineShape]:
+    for line in lines:
+        line.block_id = block
+    return lines
+
+
+def test_renumber_puts_each_region_together_and_unblocked_lines_last():
+    # A segmenter that interleaved the folios row by row.
+    verso = _in("v", _column("v", 50, 650, 3))
+    recto = _in("r", _column("r", 750, 1400, 3))
+    loose = _in(None, [_line("x", 1500, 50, 1600, 80)])
+    interleaved = [loose[0], *[line for pair in zip(verso, recto, strict=True) for line in pair]]
+    orders = renumber(interleaved, {"v": 0, "r": 1})
+    sequence = sorted(orders, key=orders.get)
+    assert sequence == ["v0", "v1", "v2", "r0", "r1", "r2", "x"]
+
+
+def test_region_order_not_page_position_decides_which_folio_comes_first():
+    verso = _in("v", _column("v", 50, 650, 2))
+    recto = _in("r", _column("r", 750, 1400, 2))
+    sequence = region_sequence(verso + recto, {"r": 0, "v": 1})
+    assert [line.id for line in sequence] == ["r0", "r1", "v0", "v1"]
+
+
+def test_no_regions_means_no_change():
+    lines = _column("a", 100, 900, 3)
+    assert renumber(lines, {}) == renumber(lines) == {"a0": 0, "a1": 1, "a2": 2}
+
+
+def test_insertion_in_a_region_compares_only_that_regions_lines():
+    # Two regions over the same x-range (a page with a heading region on top): a line
+    # of region "b" drawn high up must not land among region "a"'s lines.
+    a = _in("a", _column("a", 100, 900, 3))
+    b = _in("b", [_line("b0", 100, 400, 900, 440), _line("b1", 100, 450, 900, 490)])
+    new = _drawn(110, 120, 880, 130)
+    new.block_id = "b"
+    assert insertion_index(a + b, new, {"a": 0, "b": 1}) == 3
+
+
+def test_a_region_line_overlapping_nothing_goes_to_the_end_of_its_region():
+    a = _in("a", _column("a", 100, 400, 2))
+    b = _in("b", _column("b", 600, 900, 2))
+    loose = _in(None, [_line("x", 1000, 50, 1100, 80)])
+    new = _drawn(450, 10, 550, 20)
+    new.block_id = "a"
+    assert insertion_index(a + b + loose, new, {"a": 0, "b": 1}) == 2
+
+
+def test_merge_keeps_kept_lines_inside_their_region():
+    model = _in("v", _column("v", 50, 650, 3)) + _in("r", _column("r", 750, 1400, 3))
+    kept = _drawn(760, 192, 1390, 202)  # between r1 and r2
+    kept.block_id = "r"
+    sequence = merge_reading_order([kept], model, {"v": 0, "r": 1})
+    assert [line.id for line in sequence] == ["v0", "v1", "v2", "r0", "r1", "new", "r2"]
+
+
+def test_block_ranks_follow_the_given_sequence():
+    blocks = [Block(id="p", order=0), Block(id="q", order=0), Block(id="s", order=3)]
+    assert block_ranks(blocks) == {"p": 0, "q": 1, "s": 2}
+
+
+def _spread() -> tuple[DocumentPart, list[Line]]:
+    """Verso lines at x 50-650, recto at 750-1400, numbered row by row (interleaved)."""
+    part = DocumentPart(id=uuid.uuid4(), document_id=uuid.uuid4(), order=0, image_key="k")
+    lines = []
+    for i in range(3):
+        for prefix, x0, x1 in (("v", 50, 650), ("r", 750, 1400)):
+            shape = _line(f"{prefix}{i}", x0, 100 + 50 * i, x1, 140 + 50 * i)
+            lines.append(
+                Line(
+                    id=uuid.uuid4(),
+                    part_id=part.id,
+                    order=len(lines),
+                    points=shape.points,
+                    baseline=shape.baseline,
+                )
+            )
+    return part, lines
+
+
+async def _create_block(part, repository, box, *, order, assign=True, label=None) -> Block:
+    session = _Session(repository)
+    service = LayoutService(documents=repository, access=_Access(part))
+    return await service.create_part_block(
+        session,
+        object(),
+        uuid.uuid4(),
+        part.document_id,
+        part.id,
+        order=order,
+        box={"points": box},
+        label=label,
+        assign_contained=assign,
+    )
+
+
+@pytest.mark.asyncio
+async def test_drawing_a_region_assigns_the_lines_inside_it_and_numbers_them_first():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    recto = await _create_block(part, repository, _box(700, 0, 1450, 400), order=0, label="5r")
+
+    assert recto.label == "5r"
+    recto_lines = [line for line in lines if line.points[0][0] == 750]
+    verso_lines = [line for line in lines if line.points[0][0] == 50]
+    assert all(line.block_id == recto.id for line in recto_lines)
+    assert all(line.block_id is None for line in verso_lines)
+    assert [line.order for line in recto_lines] == [0, 1, 2]
+    assert [line.order for line in verso_lines] == [3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_a_region_does_not_take_lines_that_already_have_one():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    first = await _create_block(part, repository, _box(0, 0, 1450, 400), order=0)
+    second = await _create_block(part, repository, _box(700, 0, 1450, 400), order=1)
+
+    assert all(line.block_id == first.id for line in lines)
+    assert second.id not in {line.block_id for line in lines}
+
+
+@pytest.mark.asyncio
+async def test_assign_contained_false_leaves_lines_alone():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    await _create_block(part, repository, _box(0, 0, 1450, 400), order=0, assign=False)
+
+    assert all(line.block_id is None for line in lines)
+    assert [line.order for line in lines] == list(range(6))
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_region_unblocks_its_lines_and_renumbers():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    verso = await _create_block(part, repository, _box(0, 0, 700, 400), order=0)
+    recto = await _create_block(part, repository, _box(700, 0, 1450, 400), order=1)
+    assert [line.order for line in lines] == [0, 3, 1, 4, 2, 5]
+
+    service = LayoutService(documents=repository, access=_Access(part))
+    session = _Session(repository)
+    await service.delete_part_block(
+        session, object(), uuid.uuid4(), part.document_id, part.id, verso.id
+    )
+    repository.blocks.remove(verso)
+
+    assert session.deleted == [verso]
+    assert all(line.block_id in (None, recto.id) for line in lines)
+    # The recto comes first now; the former verso lines follow, unblocked, in sequence.
+    assert [line.order for line in lines] == [3, 0, 4, 1, 5, 2]
+
+
+@pytest.mark.asyncio
+async def test_moving_a_line_to_another_region_numbers_it_within_that_region():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    verso = await _create_block(part, repository, _box(0, 0, 700, 400), order=0)
+    await _create_block(part, repository, _box(700, 0, 1450, 400), order=1)
+    moved = lines[3]  # r1, the middle recto line
+
+    service = LayoutService(documents=repository, access=_Access(part))
+    await service.patch_part_line(
+        _Session(repository),
+        object(),
+        uuid.uuid4(),
+        part.document_id,
+        part.id,
+        moved.id,
+        block_id=verso.id,
+    )
+
+    # It overlaps no verso column, so it goes to the end of the verso region, ahead
+    # of the recto that it left.
+    assert moved.block_id == verso.id
+    assert moved.order == 3
+    assert sorted(line.order for line in lines) == list(range(6))
+
+
+@pytest.mark.asyncio
+async def test_a_line_drawn_inside_a_region_is_numbered_within_it():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    verso = await _create_block(part, repository, _box(0, 0, 700, 400), order=0)
+    await _create_block(part, repository, _box(700, 0, 1450, 400), order=1)
+
+    session = _Session(repository)
+    service = LayoutService(documents=repository, access=_Access(part))
+    await service.create_part_line(
+        session,
+        object(),
+        uuid.uuid4(),
+        part.document_id,
+        part.id,
+        kind=LineGeometryKind.polygon,
+        points=_box(60, 300, 640, 340),
+        block_id=verso.id,
+    )
+    (created,) = [item for item in session.added if isinstance(item, Line)]
+    assert created.order == 3
+    assert sorted(line.order for line in repository.lines) == list(range(7))

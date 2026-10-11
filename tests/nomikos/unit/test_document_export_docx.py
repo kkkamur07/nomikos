@@ -15,7 +15,10 @@ from backend.document.application.document_export_docx import (
     render_docx,
 )
 from backend.document.application.document_export_selection import DocumentExportSelection
+from backend.document.application.document_export_text import DocumentTextExportService
+from backend.document.application.regions import RegionHeading
 from backend.document.infrastructure.orm_models import (
+    Block,
     Document,
     DocumentPart,
     Line,
@@ -50,16 +53,21 @@ class _Repository:
     def __init__(
         self,
         lines: dict[uuid.UUID, list[Line]],
+        blocks: dict[uuid.UUID, list[Block]] | None = None,
         *,
         parts: dict[uuid.UUID, DocumentPart] | None = None,
         page_numbers: dict[uuid.UUID, int] | None = None,
     ) -> None:
         self._lines = lines
+        self._blocks = blocks or {}
         self._parts = parts or {}
         self._page_numbers = page_numbers or {}
 
     async def list_part_lines(self, _session, part_id):
         return list(self._lines[part_id])
+
+    async def list_part_blocks(self, _session, part_id):
+        return list(self._blocks.get(part_id, []))
 
     async def get_part(self, _session, part_id):
         return self._parts.get(part_id)
@@ -192,3 +200,65 @@ async def test_member_part_docx_names_the_page_stem_and_keeps_ground_truth() -> 
         ("Heading 2", "Page 2"),
         ("Normal", _SYRIAC),
     ]
+
+
+# --- Regions (ADR 0011) ---
+
+
+def _spread_page():
+    """A spread: verso and recto regions, labelled, plus one line in no region.
+
+    The line list is deliberately not region-first, as on a page numbered before the
+    regions were drawn: the export groups by region, it does not trust the order.
+    """
+    document = Document(id=uuid.uuid4(), project_id=uuid.uuid4(), name="Grec 1360")
+    part = DocumentPart(id=uuid.uuid4(), document_id=document.id, order=0)
+    verso = Block(id=uuid.uuid4(), part_id=part.id, order=0, box={"points": []}, label="4v")
+    recto = Block(id=uuid.uuid4(), part_id=part.id, order=1, box={"points": []}, label="5r")
+    lines = [_line("recto one"), _line("verso one"), _line("loose"), _line("verso two")]
+    for line, block in zip(lines, (recto, verso, None, verso), strict=True):
+        line.block_id = block.id if block is not None else None
+    selection = DocumentExportSelection(document=document, parts=[part], page_numbers={part.id: 1})
+    repository = _Repository({part.id: lines}, {part.id: [verso, recto]})
+    return document, selection, repository
+
+
+@pytest.mark.asyncio
+async def test_docx_prints_regions_in_order_under_bold_labels_and_loose_lines_last() -> None:
+    document, selection, repository = _spread_page()
+    service = DocumentDocxExportService(documents=repository, selector=_Selector(selection))
+
+    export = await service.export_document_docx(
+        object(), object(), document.project_id, document.id
+    )
+
+    word = _word(export.content)
+    assert [p.text for p in word.paragraphs] == [
+        "Page 1",
+        "4v",
+        "verso one",
+        "verso two",
+        "5r",
+        "recto one",
+        "loose",
+    ]
+    labels = [p for p in word.paragraphs if p.text in {"4v", "5r"}]
+    assert all(p.runs[0].bold for p in labels)
+    assert not any(p.runs[0].bold for p in word.paragraphs if p.text == "verso one")
+
+
+@pytest.mark.asyncio
+async def test_text_export_prints_region_labels_on_their_own_lines() -> None:
+    document, selection, repository = _spread_page()
+    service = DocumentTextExportService(documents=repository, selector=_Selector(selection))
+
+    export = await service.export_document_text(
+        object(), object(), document.project_id, document.id
+    )
+
+    assert export.text == "[p.1]\n4v\nverso one\nverso two\n5r\nrecto one\nloose\n"
+
+
+def test_an_unlabelled_region_has_no_heading_but_keeps_its_lines_together() -> None:
+    word = _word(render_docx([DocxPage(number=1, lines=[RegionHeading("4v"), "a", "b", "c"])]))
+    assert [p.text for p in word.paragraphs] == ["Page 1", "4v", "a", "b", "c"]

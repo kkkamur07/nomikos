@@ -138,7 +138,15 @@ type NarrowGeometry<T> = {
       : T[K];
 };
 
-type BlockResponse = NarrowGeometry<components["schemas"]["BlockResponse"]>;
+export type BlockResponse = NarrowGeometry<
+  components["schemas"]["BlockResponse"]
+>;
+export type BlockCreateRequest = NarrowGeometry<
+  components["schemas"]["BlockCreateRequest"]
+>;
+export type BlockPatchRequest = NarrowGeometry<
+  components["schemas"]["BlockPatchRequest"]
+>;
 export type LineGeometryKind = components["schemas"]["LineGeometryKind"];
 export type LineSource = components["schemas"]["LineSource"];
 export type LineResponse = Omit<
@@ -182,7 +190,7 @@ export type ResetPartLayoutRequest =
  * names and types are the generated ones; the optionality is the editor's own.
  */
 export type LayoutBlockResponse = Pick<BlockResponse, "id"> &
-  Partial<Pick<BlockResponse, "box" | "manual_geometry">>;
+  Partial<Pick<BlockResponse, "box" | "manual_geometry" | "order" | "label">>;
 export type SegmentHealthResponse =
   components["schemas"]["SegmentHealthResponse"];
 export type SegmentSuspectResponse =
@@ -864,6 +872,46 @@ export const api = {
   listPartLines: (projectId: string, documentId: string, partId: string) =>
     apiRequest<LineResponse[]>(
       `/projects/${projectId}/documents/${documentId}/parts/${partId}/lines`,
+    ),
+
+  /**
+   * A region (ADR 0011). With `assign_contained` (the server default) every
+   * unassigned line whose centre lies inside the box joins it, and the page is
+   * renumbered region-first: reload the lines after.
+   */
+  createPartBlock: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    body: BlockCreateRequest,
+  ) =>
+    apiRequest<BlockResponse>(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/blocks`,
+      { method: "POST", body },
+    ),
+
+  patchPartBlock: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    blockId: string,
+    body: BlockPatchRequest,
+  ) =>
+    apiRequest<BlockResponse>(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/blocks/${blockId}`,
+      { method: "PATCH", body },
+    ),
+
+  /** The region's lines stay on the page, in no region. */
+  deletePartBlock: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    blockId: string,
+  ) =>
+    apiRequest<void>(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/blocks/${blockId}`,
+      { method: "DELETE" },
     ),
 
   createPartLine: (

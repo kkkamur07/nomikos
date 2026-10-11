@@ -10,13 +10,20 @@ spread or carry two columns, so "sort by y" interleaves the columns. A line of t
 column or folio never shares much of its x-range with the new line, so only lines of the
 same column take part in the comparison; a line that overlaps nothing goes last.
 
+Regions come first (ADR 0011). When a page has blocks, its lines are numbered region by
+region: every line of the block with the lowest order, then the next block, and the lines
+in no block last. Inside one region the geometric rule above applies unchanged. Callers
+pass ``block_orders`` (block id to its rank on the page); without it, or with an empty
+one, every line is in the same group and nothing differs from a page with no regions.
+
 Everything here is pure: it takes anything with ``points`` and ``baseline`` (an ORM
-``Line`` qualifies) and never touches a session.
+``Line`` qualifies; ``block_id`` is read when present) and never touches a session.
 """
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+import math
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, TypeVar
 
@@ -27,6 +34,8 @@ _COLUMN_OVERLAP = 0.3
 
 
 class ReadingLine(Protocol):
+    """A line as ordering reads it. ``block_id`` is optional and read with ``getattr``."""
+
     points: list[list[float]] | None
     baseline: dict | None
 
@@ -47,6 +56,36 @@ class LineShape:
     order: int = 0
     points: list[list[float]] | None = field(default_factory=list)
     baseline: dict | None = None
+    block_id: Hashable = None
+
+
+BlockOrders = Mapping[Hashable, int]
+
+
+def block_ranks(blocks: Iterable[object]) -> dict[Hashable, int]:
+    """Rank of each block on its page, from blocks already sorted by ``(order, created_at)``.
+
+    A rank rather than the stored ``order``: two blocks can share an order, and the
+    lines of each must still form one contiguous run.
+    """
+    return {block.id: rank for rank, block in enumerate(blocks)}  # type: ignore[attr-defined]
+
+
+def _group(line: object, block_orders: BlockOrders | None) -> float:
+    """The region a line is numbered in: its block's rank, or after every block."""
+    if not block_orders:
+        return 0
+    block_id = getattr(line, "block_id", None)
+    if block_id is None or block_id not in block_orders:
+        return math.inf
+    return block_orders[block_id]
+
+
+def region_sequence(lines: Sequence[L], block_orders: BlockOrders | None = None) -> list[L]:
+    """``lines`` regrouped region-first, keeping the given sequence inside each region."""
+    if not block_orders:
+        return list(lines)
+    return sorted(lines, key=lambda line: _group(line, block_orders))
 
 
 def _x_range(line: ReadingLine) -> tuple[float, float] | None:
@@ -84,20 +123,33 @@ def _same_column(a: tuple[float, float], b: tuple[float, float]) -> bool:
     return overlap >= _COLUMN_OVERLAP * narrower
 
 
-def insertion_index(existing_lines: Sequence[ReadingLine], new_line: ReadingLine) -> int:
+def insertion_index(
+    existing_lines: Sequence[ReadingLine],
+    new_line: ReadingLine,
+    block_orders: BlockOrders | None = None,
+) -> int:
     """Where ``new_line`` belongs in ``existing_lines``, which are in reading order.
 
     After the nearest same-column line above it; failing that, before the nearest
-    same-column line below it; failing that, at the end.
+    same-column line below it; failing that, at the end. With ``block_orders`` only
+    lines of the new line's own region are compared, and "the end" is the end of that
+    region (``existing_lines`` must then already be region-first).
     """
+    group = _group(new_line, block_orders)
+    end = next(
+        (index for index, line in enumerate(existing_lines) if _group(line, block_orders) > group),
+        len(existing_lines),
+    )
     new_x = _x_range(new_line)
     new_y = _centre_y(new_line)
     if new_x is None or new_y is None:
-        return len(existing_lines)
+        return end
 
     above: tuple[float, int] | None = None
     below: tuple[float, int] | None = None
     for index, line in enumerate(existing_lines):
+        if _group(line, block_orders) != group:
+            continue
         x_range = _x_range(line)
         y = _centre_y(line)
         if x_range is None or y is None or not _same_column(new_x, x_range):
@@ -114,22 +166,26 @@ def insertion_index(existing_lines: Sequence[ReadingLine], new_line: ReadingLine
         return above[1] + 1
     if below is not None:
         return below[1]
-    return len(existing_lines)
+    return end
 
 
-def renumber(lines: Sequence[I]) -> dict[Hashable, int]:
-    """Dense 0-based orders for ``lines``, keeping the sequence they are given in."""
-    return {line.id: index for index, line in enumerate(lines)}
+def renumber(lines: Sequence[I], block_orders: BlockOrders | None = None) -> dict[Hashable, int]:
+    """Dense 0-based orders for ``lines``: region-first, else the sequence given."""
+    return {line.id: index for index, line in enumerate(region_sequence(lines, block_orders))}
 
 
-def merge_reading_order(kept_lines: Sequence[L], model_lines: Sequence[L]) -> list[L]:
+def merge_reading_order(
+    kept_lines: Sequence[L],
+    model_lines: Sequence[L],
+    block_orders: BlockOrders | None = None,
+) -> list[L]:
     """One reading order for a re-segmented page.
 
-    The segmenter's lines keep the order it gave them; each line a human kept is
-    placed among them by position, in its own previous order so that two kept lines
-    in one gap stay in the order they had.
+    The segmenter's lines keep the order it gave them (regrouped region-first); each
+    line a human kept is placed among them by position, in its own previous order so
+    that two kept lines in one gap stay in the order they had.
     """
-    sequence = list(model_lines)
+    sequence = region_sequence(model_lines, block_orders)
     for line in kept_lines:
-        sequence.insert(insertion_index(sequence, line), line)
+        sequence.insert(insertion_index(sequence, line, block_orders), line)
     return sequence

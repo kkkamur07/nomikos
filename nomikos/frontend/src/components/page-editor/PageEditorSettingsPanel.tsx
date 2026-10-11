@@ -217,7 +217,7 @@ export function PageEditorSettingsPanel({
           }
           onClick={(event) => event.stopPropagation()}
         />
-        Show layout blocks
+        Show regions
       </label>
       <label className="pe-dd-check">
         <input

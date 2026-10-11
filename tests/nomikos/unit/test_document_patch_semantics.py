@@ -62,6 +62,9 @@ class _StubRepository:
     async def list_part_lines(self, _session, _part_id):
         return [self._line] if self._line is not None else []
 
+    async def list_part_blocks(self, _session, _part_id):
+        return [self._block] if self._block is not None else []
+
 
 def _service_with(monkeypatch, *, part: DocumentPart, line: Line | None, block: Block | None):
     document = Document(id=part.document_id, name="codex")

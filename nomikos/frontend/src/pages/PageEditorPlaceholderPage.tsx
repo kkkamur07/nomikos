@@ -5,6 +5,8 @@ import { invalidateAfter } from "../api/resources";
 import { useHostPreference } from "../inference";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { PageEditorCanvas } from "../components/page-editor/PageEditorCanvas";
+import type { DrawTool } from "../components/page-editor/PageEditorCanvasIsland";
+import { PageEditorRegionPanel } from "../components/page-editor/PageEditorRegionPanel";
 import { PageEditorSplitPane } from "../components/page-editor/PageEditorSplitPane";
 import { PageEditorTranscriptEditor } from "../components/page-editor/PageEditorTranscriptEditor";
 import {
@@ -37,6 +39,7 @@ import {
   usePageEditorJobQueue,
   usePageEditorRunState,
   usePairingState,
+  useRegions,
   useSegmentHealth,
 } from "../components/page-editor/hooks";
 import {
@@ -59,9 +62,7 @@ export function PageEditorPlaceholderPage() {
     partId: string;
   }>() ?? {};
 
-  const [drawMode, setDrawMode] = useState<"none" | "rectangle" | "polygon">(
-    "none",
-  );
+  const [drawMode, setDrawMode] = useState<"none" | DrawTool>("none");
   const [draftStart, setDraftStart] = useState<LayoutPoint | null>(null);
   const [draftPolygon, setDraftPolygon] = useState<LinePoint[]>([]);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -243,6 +244,16 @@ export function PageEditorPlaceholderPage() {
     runAutoSegment,
   } = layoutMutations;
 
+  const regions = useRegions({
+    projectId,
+    documentId,
+    partId,
+    layout,
+    setLayout,
+    setLines,
+  });
+  const { selectedRegionId, setSelectedRegionId } = regions;
+
   const {
     selectedSegmentId,
     setSelectedSegmentId,
@@ -296,6 +307,7 @@ export function PageEditorPlaceholderPage() {
   }, [stripVisible]);
 
   function handleSelectSegment(lineId: string) {
+    setSelectedRegionId(null);
     setSelectedLineId(null);
     setSaveMessage(null);
     setStripDismissed(false);
@@ -329,15 +341,19 @@ export function PageEditorPlaceholderPage() {
           : `Polygon: ${draftPolygon.length} point${draftPolygon.length === 1 ? "" : "s"} · click to add · double-click or Enter to finish`
         : drawMode === "rectangle"
           ? "Rectangle: drag to draw a segment · hold Space to pan"
-          : selectedSegment
-            ? selectedVertexIndex !== null
-              ? `Segment ${selectedSegmentNumber} · vertex ${selectedVertexIndex + 1} selected · Delete removes point · Esc deselects`
-              : `Segment ${selectedSegmentNumber} ${
-                  segmentHasGroundTruth(selectedSegment) ? "paired" : "unpaired"
-                } · click edge to add · click handle to select · Esc deselects`
-            : "Drag to pan · scroll to zoom · Page Up/Down for pages · select a segment to edit it";
+          : drawMode === "region"
+            ? "Region: drag around a folio or column · the segments inside join it"
+            : selectedSegment
+              ? selectedVertexIndex !== null
+                ? `Segment ${selectedSegmentNumber} · vertex ${selectedVertexIndex + 1} selected · Delete removes point · Esc deselects`
+                : `Segment ${selectedSegmentNumber} ${
+                    segmentHasGroundTruth(selectedSegment)
+                      ? "paired"
+                      : "unpaired"
+                  } · click edge to add · click handle to select · Esc deselects`
+              : "Drag to pan · scroll to zoom · Page Up/Down for pages · select a segment to edit it";
 
-  function pickDrawMode(nextMode: "rectangle" | "polygon") {
+  function pickDrawMode(nextMode: DrawTool) {
     setDrawMode((mode) => (mode === nextMode ? "none" : nextMode));
     setDraftPolygon([]);
     setDraftStart(null);
@@ -353,9 +369,37 @@ export function PageEditorPlaceholderPage() {
     setSelectedVertexIndex(null);
     setSelectedSegmentId(null);
     setSelectedLineId(null);
+    setSelectedRegionId(null);
     setApprovedTextDraft("");
     setStripDismissed(false);
-  }, [setSelectedSegmentId, setSelectedLineId, setApprovedTextDraft]);
+  }, [
+    setSelectedSegmentId,
+    setSelectedLineId,
+    setSelectedRegionId,
+    setApprovedTextDraft,
+  ]);
+
+  // G arms the Region tool. Kept here rather than in the shared shortcut hook,
+  // with the same rule that hook applies: never while typing.
+  const pickDrawModeRef = useRef(pickDrawMode);
+  pickDrawModeRef.current = pickDrawMode;
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "g") return;
+      event.preventDefault();
+      pickDrawModeRef.current("region");
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function completeDraftPolygon() {
     if (draftPolygon.length >= 3) {
@@ -442,6 +486,7 @@ export function PageEditorPlaceholderPage() {
         focusRequest={focusRequest}
         settings={canvasSettings}
         drawingRectangle={drawMode === "rectangle"}
+        drawingRegion={drawMode === "region"}
         drawingPolygon={drawMode === "polygon"}
         draftStart={draftStart}
         draftPolygon={draftPolygon}
@@ -449,6 +494,13 @@ export function PageEditorPlaceholderPage() {
         onRectangleDrawn={async (end) => {
           if (!draftStart) return;
           const rectangle = rectanglePoints(draftStart, end);
+          if (drawMode === "region") {
+            setDraftStart(null);
+            setDrawMode("none");
+            setSelectedSegmentId(null);
+            await regions.createRegion(rectangle);
+            return;
+          }
           await replaceWithManualLine("rectangle", rectangle);
           setDraftStart(null);
         }}
@@ -467,6 +519,13 @@ export function PageEditorPlaceholderPage() {
           });
         }}
         onSelectSegment={handleSelectSegment}
+        selectedRegionId={selectedRegionId}
+        onSelectRegion={(regionId) => {
+          setSelectedSegmentId(null);
+          setSelectedLineId(null);
+          setSelectedVertexIndex(null);
+          setSelectedRegionId(regionId);
+        }}
         segmentVertexEditEnabled={
           drawMode === "none" && Boolean(selectedSegmentId)
         }
@@ -481,6 +540,21 @@ export function PageEditorPlaceholderPage() {
         onSelectedVertexChange={setSelectedVertexIndex}
         commitSignal={vertexCommitSignal}
         onSegmentPointsChange={updateSegmentPoints}
+      />
+      <PageEditorRegionPanel
+        regions={layout.blocks}
+        selectedRegionId={selectedRegionId}
+        selectedSegment={selectedSegment ?? null}
+        selectedSegmentNumber={selectedSegmentNumber}
+        onRename={(regionId, label) =>
+          void regions.renameRegion(regionId, label)
+        }
+        onDelete={(regionId) => void regions.deleteRegion(regionId)}
+        onAssign={(segmentId, regionId) =>
+          void regions.assignSegmentToRegion(segmentId, regionId)
+        }
+        onClose={() => setSelectedRegionId(null)}
+        error={regions.regionError}
       />
       <p
         className={`pe-canvas-hint${runState.processingKind ? " pe-canvas-hint--processing" : ""}`}
@@ -617,6 +691,7 @@ export function PageEditorPlaceholderPage() {
                   right={
                     <PageEditorTranscriptEditor
                       lines={lines}
+                      regions={layout.blocks}
                       selectedSegmentId={selectedSegmentId}
                       hoveredSegmentId={hoveredSegmentId}
                       preferredLayerId={preferredModelLayerId}
