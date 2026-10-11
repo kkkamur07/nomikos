@@ -9,7 +9,7 @@
 
 .pe-transcript-row {
   display: grid;
-  grid-template-columns: 2.5em minmax(0, 1fr);
+  grid-template-columns: 2.5em minmax(0, 1fr) 1.25em;
   column-gap: 8px;
   align-items: start;
   font-size: 16px;
@@ -65,6 +65,50 @@
 .pe-transcript-row.is-model .pe-transcript-input {
   color: #78716c;
   font-style: italic;
+}
+
+/* Joining scripts must never be letter-spaced, or Syriac letters detach. */
+.pe-transcript-input[dir="rtl"] {
+  letter-spacing: normal;
+}
+
+.pe-transcript-input[data-script="syriac"] {
+  font-family:
+    "Noto Sans Syriac", "Noto Sans Syriac Eastern", "Estrangelo Edessa",
+    "Segoe UI Historic", serif;
+}
+
+.pe-transcript-input[data-script="hebrew"] {
+  font-family: "Noto Serif Hebrew", "SBL Hebrew", "Times New Roman", serif;
+}
+
+.pe-transcript-input[data-script="arabic"] {
+  font-family: "Noto Naskh Arabic", "Geeza Pro", "Times New Roman", serif;
+}
+
+.pe-transcript-input[data-script="coptic"] {
+  font-family: "Noto Sans Coptic", "Antinoou", "Segoe UI Historic", serif;
+}
+
+.pe-transcript-status {
+  text-align: center;
+  line-height: 1.5;
+  font-size: 0.75em;
+  color: #78716c;
+  user-select: none;
+}
+
+.pe-transcript-row[data-status="dirty"] .pe-transcript-status {
+  color: #b45309;
+}
+
+.pe-transcript-row[data-status="saved"] .pe-transcript-status {
+  color: var(--accent, #0d9488);
+}
+
+.pe-transcript-row[data-status="unsaved"] .pe-transcript-status {
+  color: #b40000;
+  font-weight: 600;
 }
 
 .pe-transcript-row.has-error .pe-transcript-input {

@@ -247,6 +247,21 @@ export function PageEditorSettingsPanel({
         />
         Side by side text panel
       </label>
+      <label className="pe-dd-check">
+        <input
+          type="checkbox"
+          checked={settings.transcriptFontFromMask}
+          disabled={!settings.sideBySide}
+          onChange={(event) =>
+            onSettingsChange({
+              ...settings,
+              transcriptFontFromMask: event.target.checked,
+            })
+          }
+          onClick={(event) => event.stopPropagation()}
+        />
+        Size transcript text by segment height
+      </label>
 
       <div className="pe-dd-divider" />
 

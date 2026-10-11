@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { api, type LayoutPoint, type LinePoint } from "../api/client";
+import type { LayoutPoint, LinePoint } from "../api/client";
 import { invalidateAfter } from "../api/resources";
 import { useHostPreference } from "../inference";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
@@ -46,7 +46,6 @@ import {
 import {
   segmentHasGroundTruth,
   segmentIdsWithGroundTruth,
-  withLocalGroundTruth,
 } from "../components/page-editor/hooks/utils";
 
 export function PageEditorPlaceholderPage() {
@@ -89,8 +88,6 @@ export function PageEditorPlaceholderPage() {
     segmentId: string;
     nonce: number;
   } | null>(null);
-  // The document response carries no script or direction field, so the transcript reads left to right.
-  const textDirection = "ltr" as const;
 
   // The page the editor is on. The route seeds it and mirrors it back, but the
   // editor turns pages by changing this rather than by re-entering the route,
@@ -259,6 +256,7 @@ export function PageEditorPlaceholderPage() {
     selectedSegmentNumber,
     selectedTranscriptionLayer,
     pairTextLine,
+    commitLineText,
     saveApprovedText,
     selectTranscriptionLayer,
     saveGroundTruthText,
@@ -284,50 +282,6 @@ export function PageEditorPlaceholderPage() {
     setStripDismissed(false);
     setSelectedVertexIndex(null);
     selectSegment(lineId);
-  }
-
-  async function handleCommitText(lineId: string, text: string): Promise<void> {
-    if (!projectId || !documentId || !partId) {
-      setPairingError("Page context is missing. Reload and try again.");
-      throw new Error("Page context is missing.");
-    }
-    if (!groundTruthTranscriptionId) {
-      setPairingError("Ground truth transcription layer is not available.");
-      throw new Error("Ground truth transcription layer is not available.");
-    }
-    try {
-      const updated = await api.updateGroundTruthLineText(
-        projectId,
-        documentId,
-        groundTruthTranscriptionId,
-        lineId,
-        { text },
-      );
-      setLines((current) =>
-        withLocalGroundTruth(
-          current,
-          groundTruthTranscriptionId,
-          lineId,
-          updated.text,
-        ),
-      );
-      const pairingData = await api.getPagePairing(
-        projectId,
-        documentId,
-        partId,
-      );
-      setTextLines(pairingData.text_lines);
-      setPairingProgress(pairingData.pairing_progress);
-      invalidateAfter.partContentChanged(projectId, documentId);
-      setPairingError(null);
-    } catch (err) {
-      setPairingError(
-        err instanceof Error
-          ? err.message
-          : "Failed to save Ground truth text.",
-      );
-      throw err;
-    }
   }
 
   function handleRemoveSelectedVertex() {
@@ -646,14 +600,14 @@ export function PageEditorPlaceholderPage() {
                       lines={lines}
                       selectedSegmentId={selectedSegmentId}
                       hoveredSegmentId={hoveredSegmentId}
-                      textDirection={textDirection}
                       preferredLayerId={preferredModelLayerId}
                       onSelectSegment={handleSelectSegment}
                       onHoverSegment={setHoveredSegmentId}
                       onFocusSegment={(id) =>
                         setFocusRequest({ segmentId: id, nonce: Date.now() })
                       }
-                      onCommitText={handleCommitText}
+                      onCommitText={commitLineText}
+                      scaleFontToMask={canvasSettings.transcriptFontFromMask}
                     />
                   }
                 />

@@ -46,7 +46,6 @@ function editorProps(
     ],
     selectedSegmentId: null,
     hoveredSegmentId: null,
-    textDirection: "ltr",
     onSelectSegment: () => {},
     onHoverSegment: () => {},
     onFocusSegment: () => {},
@@ -66,7 +65,7 @@ function rowOf(element: HTMLElement): HTMLElement {
 }
 
 describe("PageEditorTranscriptEditor", () => {
-  it("renders rows in reading order with the canvas numbers", () => {
+  it("renders rows in stored segment order with the canvas numbers", () => {
     const lines = [
       makeLine("line-c", 3, 90, [{ kind: "ground_truth", text: "third" }]),
       makeLine("line-a", 5, 10, [{ kind: "ground_truth", text: "first" }]),
@@ -75,14 +74,14 @@ describe("PageEditorTranscriptEditor", () => {
     render(<PageEditorTranscriptEditor {...editorProps({ lines })} />);
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((row) => row.getAttribute("data-line-id"))).toEqual([
-      "line-a",
       "line-b",
       "line-c",
+      "line-a",
     ]);
     const numbers = rows.map(
       (row) => row.querySelector(".pe-transcript-num")?.textContent,
     );
-    expect(numbers).toEqual(["3", "1", "2"]);
+    expect(numbers).toEqual(["1", "2", "3"]);
     expect(textarea("Segment 3 text").value).toBe("first");
   });
 
@@ -138,8 +137,9 @@ describe("PageEditorTranscriptEditor", () => {
     fireEvent.change(first, { target: { value: "bad edit" } });
     fireEvent.blur(first);
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("save failed");
+    expect(alert.textContent).toBe("Not saved: save failed");
     expect(rowOf(first).className).toContain("has-error");
+    expect(rowOf(first).getAttribute("data-status")).toBe("unsaved");
     expect(first.value).toBe("bad edit");
   });
 
@@ -197,5 +197,151 @@ describe("PageEditorTranscriptEditor", () => {
     const empty = screen.getByText("No segments on this page yet.");
     expect(empty.className).toContain("pe-transcript-empty");
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("marks a row dirty while edited and saved after the commit", async () => {
+    let resolveCommit: () => void = () => {};
+    const onCommitText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCommit = resolve;
+        }),
+    );
+    render(<PageEditorTranscriptEditor {...editorProps({ onCommitText })} />);
+    const first = textarea("Segment 1 text");
+    expect(rowOf(first).getAttribute("data-status")).toBeNull();
+    fireEvent.change(first, { target: { value: "draft" } });
+    expect(rowOf(first).className).toContain("is-dirty");
+    expect(rowOf(first).getAttribute("data-status")).toBe("dirty");
+    expect(screen.getByLabelText("Unsaved changes")).toBeTruthy();
+    fireEvent.keyDown(first, { key: "Enter", ctrlKey: true });
+    await waitFor(() =>
+      expect(rowOf(first).getAttribute("data-status")).toBe("saving"),
+    );
+    resolveCommit();
+    await waitFor(() =>
+      expect(rowOf(first).getAttribute("data-status")).toBe("saved"),
+    );
+    expect(rowOf(first).className).not.toContain("is-dirty");
+  });
+
+  it("commits without advancing on Ctrl+Enter and Cmd+Enter", async () => {
+    const onCommitText = vi.fn(() => Promise.resolve());
+    render(<PageEditorTranscriptEditor {...editorProps({ onCommitText })} />);
+    const first = textarea("Segment 1 text");
+    first.focus();
+    fireEvent.change(first, { target: { value: "stay here" } });
+    fireEvent.keyDown(first, { key: "Enter", metaKey: true });
+    await waitFor(() =>
+      expect(onCommitText).toHaveBeenCalledWith("line-a", "stay here"),
+    );
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("moves rows with Tab and Shift+Tab and leaves the list past the ends", () => {
+    render(<PageEditorTranscriptEditor {...editorProps()} />);
+    const first = textarea("Segment 1 text");
+    const second = textarea("Segment 2 text");
+    first.focus();
+    fireEvent.keyDown(first, { key: "Tab" });
+    expect(document.activeElement).toBe(second);
+    fireEvent.keyDown(second, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(first);
+    // Shift+Tab on the first row is not swallowed, so focus can leave.
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    first.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("sets right-to-left direction per row from the row's own text", () => {
+    const lines = [
+      makeLine("line-a", 0, 10, [
+        { kind: "ground_truth", text: "ܫܠܡܐ ܥܠܝܟܘܢ" },
+      ]),
+      makeLine("line-b", 1, 50, [
+        { kind: "ground_truth", text: "καὶ ἐγένετο" },
+      ]),
+    ];
+    render(<PageEditorTranscriptEditor {...editorProps({ lines })} />);
+    const syriac = textarea("Segment 1 text");
+    const greek = textarea("Segment 2 text");
+    expect(syriac.getAttribute("dir")).toBe("rtl");
+    expect(syriac.style.textAlign).toBe("right");
+    expect(syriac.getAttribute("data-script")).toBe("syriac");
+    expect(greek.getAttribute("dir")).toBe("ltr");
+    expect(greek.style.textAlign).toBe("left");
+    fireEvent.change(greek, { target: { value: "ܐܒܐ" } });
+    expect(greek.getAttribute("dir")).toBe("rtl");
+  });
+
+  it("gives empty rows the page's dominant direction", () => {
+    const lines = [
+      makeLine("line-a", 0, 10, [{ kind: "ground_truth", text: "ܫܠܡܐ" }]),
+      makeLine("line-b", 1, 50, [{ kind: "ground_truth", text: "ܥܠܝܟܘܢ" }]),
+      makeLine("line-c", 2, 90, []),
+    ];
+    render(<PageEditorTranscriptEditor {...editorProps({ lines })} />);
+    expect(textarea("Segment 3 text").getAttribute("dir")).toBe("rtl");
+    expect(
+      screen
+        .getAllByRole("listitem")
+        .every((row) => row.closest("[dir]") === null),
+    ).toBe(true);
+  });
+
+  it("keeps rows mounted and an unsaved draft when a segment is added or deleted", () => {
+    const base = editorProps();
+    const { rerender } = render(<PageEditorTranscriptEditor {...base} />);
+    const second = textarea("Segment 2 text");
+    fireEvent.change(second, { target: { value: "half typed" } });
+    const added = [...base.lines, makeLine("line-new", 2, 90, [])];
+    rerender(<PageEditorTranscriptEditor {...base} lines={added} />);
+    expect(textarea("Segment 2 text")).toBe(second);
+    expect(second.value).toBe("half typed");
+    rerender(
+      <PageEditorTranscriptEditor
+        {...base}
+        lines={added.filter((line) => line.id !== "line-a")}
+      />,
+    );
+    expect(textarea("Segment 1 text")).toBe(second);
+    expect(second.value).toBe("half typed");
+    expect(rowOf(second).getAttribute("data-status")).toBe("dirty");
+  });
+
+  it("sizes rows by mask height only when the option is on", () => {
+    const short = makeLine("line-a", 0, 10, [
+      { kind: "ground_truth", text: "a" },
+    ]);
+    const tall = {
+      ...makeLine("line-b", 1, 50, [{ kind: "ground_truth", text: "b" }]),
+      mask: [
+        [10, 50],
+        [110, 50],
+        [110, 110],
+        [10, 110],
+      ],
+    } as unknown as LineResponse;
+    const { rerender } = render(
+      <PageEditorTranscriptEditor {...editorProps({ lines: [short, tall] })} />,
+    );
+    expect(rowOf(textarea("Segment 2 text")).style.fontSize).toBe("16px");
+    rerender(
+      <PageEditorTranscriptEditor
+        {...editorProps({ lines: [short, tall], scaleFontToMask: true })}
+      />,
+    );
+    const shortSize = parseFloat(
+      rowOf(textarea("Segment 1 text")).style.fontSize,
+    );
+    const tallSize = parseFloat(
+      rowOf(textarea("Segment 2 text")).style.fontSize,
+    );
+    expect(tallSize).toBeGreaterThan(shortSize);
   });
 });

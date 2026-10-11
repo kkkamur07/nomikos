@@ -164,22 +164,27 @@ export function usePairingState({
     }
   }
 
-  /** Resolves true when the text was saved, false when the save failed. */
-  async function saveApprovedText(): Promise<boolean> {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) {
-      return false;
+  /**
+   * Saves one Segment's Ground truth text. The one write path for approved
+   * text: the strip saves the open Segment through it, the transcript column
+   * saves any row. Throws when the save fails, after recording the error.
+   */
+  async function commitLineText(lineId: string, text: string): Promise<void> {
+    if (!projectId || !documentId || !partId) {
+      setPairingError("Page context is missing. Reload and try again.");
+      throw new Error("Page context is missing.");
     }
     if (!groundTruthTranscriptionId) {
       setPairingError("Ground truth transcription layer is not available.");
-      return false;
+      throw new Error("Ground truth transcription layer is not available.");
     }
     try {
       const updated = await api.updateGroundTruthLineText(
         projectId,
         documentId,
         groundTruthTranscriptionId,
-        selectedSegmentId,
-        { text: approvedTextDraft },
+        lineId,
+        { text },
       );
       // Read-modify-write after an await: fold into the current segments, not
       // into the render-time snapshot, or a concurrent edit is reverted.
@@ -187,7 +192,7 @@ export function usePairingState({
         withLocalGroundTruth(
           current,
           groundTruthTranscriptionId,
-          selectedSegmentId,
+          lineId,
           updated.text,
         ),
       );
@@ -196,11 +201,21 @@ export function usePairingState({
       setPairingProgress(pairing.pairing_progress);
       notePartContentChanged();
       setPairingError(null);
-      return true;
     } catch (err) {
       setPairingError(
         err instanceof Error ? err.message : "Failed to save approved text.",
       );
+      throw err;
+    }
+  }
+
+  /** Resolves true when the text was saved, false when the save failed. */
+  async function saveApprovedText(): Promise<boolean> {
+    if (!selectedSegmentId) return false;
+    try {
+      await commitLineText(selectedSegmentId, approvedTextDraft);
+      return true;
+    } catch {
       return false;
     }
   }
@@ -581,6 +596,7 @@ export function usePairingState({
     selectedSegmentNumber,
     selectedTranscriptionLayer,
     pairTextLine,
+    commitLineText,
     saveApprovedText,
     selectTranscriptionLayer,
     saveGroundTruthText,

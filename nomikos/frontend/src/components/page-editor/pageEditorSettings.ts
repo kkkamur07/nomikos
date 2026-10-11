@@ -25,6 +25,8 @@ export type PageEditorCanvasSettings = {
   sideBySide: boolean;
   /** Width share of the manuscript pane, 0.2 to 0.8. */
   splitRatio: number;
+  /** Size each transcript row's text by its segment's mask height. */
+  transcriptFontFromMask: boolean;
 };
 
 export const DEFAULT_PAGE_EDITOR_SETTINGS: PageEditorCanvasSettings = {
@@ -37,6 +39,7 @@ export const DEFAULT_PAGE_EDITOR_SETTINGS: PageEditorCanvasSettings = {
   wheelZoomSpeed: 1,
   sideBySide: true,
   splitRatio: 0.55,
+  transcriptFontFromMask: false,
 };
 
 function clampNumber(
@@ -103,6 +106,10 @@ export function loadPageEditorSettings(): PageEditorCanvasSettings {
         Number.isFinite(parsed.splitRatio)
           ? Math.min(0.8, Math.max(0.2, parsed.splitRatio))
           : DEFAULT_PAGE_EDITOR_SETTINGS.splitRatio,
+      transcriptFontFromMask:
+        typeof parsed.transcriptFontFromMask === "boolean"
+          ? parsed.transcriptFontFromMask
+          : DEFAULT_PAGE_EDITOR_SETTINGS.transcriptFontFromMask,
     };
   } catch {
     return DEFAULT_PAGE_EDITOR_SETTINGS;

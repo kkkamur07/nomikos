@@ -145,6 +145,74 @@ describe("PageEditorPlaceholderPage side by side", () => {
     });
   });
 
+  it("saves any row through the pairing hook and refreshes pairing progress", async () => {
+    seedSideBySide(true);
+    seedEditor();
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    const pairingCallsBefore = mockedApi.getPagePairing.mock.calls.length;
+
+    const second = screen.getByLabelText("Segment 2 text");
+    second.focus();
+    fireEvent.change(second, { target: { value: "second edited" } });
+    fireEvent.keyDown(second, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(mockedApi.updateGroundTruthLineText).toHaveBeenLastCalledWith(
+        "project-1",
+        "doc-1",
+        "ground-truth-1",
+        "line-2",
+        { text: "second edited" },
+      );
+    });
+    await waitFor(() => {
+      expect(mockedApi.getPagePairing.mock.calls.length).toBeGreaterThan(
+        pairingCallsBefore,
+      );
+    });
+    expect(document.activeElement).toBe(second);
+  });
+
+  it("keeps the draft and shows the row unsaved when the server rejects", async () => {
+    seedSideBySide(true);
+    seedEditor();
+    mockedApi.updateGroundTruthLineText.mockRejectedValueOnce(
+      new Error("Server said no"),
+    );
+    const { container } = renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+
+    const editor = screen.getByLabelText(
+      "Segment 1 text",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "rejected words" } });
+    fireEvent.blur(editor);
+
+    await waitFor(() => {
+      expect(
+        transcriptRow(container, "line-1").getAttribute("data-status"),
+      ).toBe("unsaved");
+    });
+    expect(editor.value).toBe("rejected words");
+  });
+
+  it("lays a Syriac row out right to left", async () => {
+    seedSideBySide(true);
+    mockedApi.getDocument.mockResolvedValue(DOCUMENT);
+    mockedApi.listPartLines.mockResolvedValue([
+      groundTruthLine("line-1", 0, "ܫܠܡܐ ܥܠܝܟܘܢ"),
+      groundTruthLine("line-2", 1, "first words"),
+    ]);
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    const syriac = screen.getByLabelText("Segment 1 text");
+    expect(syriac.getAttribute("dir")).toBe("rtl");
+    expect(screen.getByLabelText("Segment 2 text").getAttribute("dir")).toBe(
+      "ltr",
+    );
+  });
+
   it("marks the transcript row selected without focusing it when its canvas segment is clicked", async () => {
     seedSideBySide(true);
     seedEditor();

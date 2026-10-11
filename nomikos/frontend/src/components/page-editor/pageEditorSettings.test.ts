@@ -76,6 +76,16 @@ describe("pageEditorSettings", () => {
     expect(loadPageEditorSettings().splitRatio).toBe(0.55);
   });
 
+  it("keeps the mask-scaled transcript font off by default and round-trips it", () => {
+    expect(DEFAULT_PAGE_EDITOR_SETTINGS.transcriptFontFromMask).toBe(false);
+    expect(loadPageEditorSettings().transcriptFontFromMask).toBe(false);
+    savePageEditorSettings({
+      ...DEFAULT_PAGE_EDITOR_SETTINGS,
+      transcriptFontFromMask: true,
+    });
+    expect(loadPageEditorSettings().transcriptFontFromMask).toBe(true);
+  });
+
   it("round-trips a saved split ratio", () => {
     savePageEditorSettings({
       ...DEFAULT_PAGE_EDITOR_SETTINGS,
