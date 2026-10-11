@@ -27,6 +27,7 @@ from docx.text.paragraph import Paragraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.annotation.application.page_xml_export_service import export_file_stem
+from backend.core.exceptions import NotFoundError
 from backend.core.fonts import SCRIPT_FONT_FAMILIES
 from backend.document.application.document_export_selection import (
     DocumentExportSelector,
@@ -91,6 +92,26 @@ class DocumentDocxExportService:
             content=content,
         )
 
+    async def export_part_docx(
+        self,
+        session: AsyncSession,
+        user: User,
+        project_id: UUID,
+        document_id: UUID,
+        part_id: UUID,
+    ) -> DocumentDocxExport:
+        """One page as a Word file, for a project member in the page editor."""
+        document = await self._document_service.get_document(session, user, project_id, document_id)
+        part = await self._documents.get_part(session, part_id)
+        if part is None or part.document_id != document.id:
+            raise NotFoundError("Part not found")
+        page = await self._part_page(session, part)
+        content = await asyncio.to_thread(render_docx, [page])
+        return DocumentDocxExport(
+            filename=f"{export_file_stem(document.name, page.number)}.docx",
+            content=content,
+        )
+
     async def export_part_docx_public(
         self,
         session: AsyncSession,
@@ -108,15 +129,17 @@ class DocumentDocxExportService:
         context = await self._document_service.get_published_part_context(
             session, project_id, document_id, part_id, token=token
         )
-        number = await self._documents.part_page_number(session, context.part)
-        lines = await self._documents.list_part_lines(session, context.part.id)
-        content = await asyncio.to_thread(
-            render_docx, [DocxPage(number=number, lines=_page_text(lines))]
-        )
+        page = await self._part_page(session, context.part)
+        content = await asyncio.to_thread(render_docx, [page])
         return DocumentDocxExport(
-            filename=f"{export_file_stem(context.document.name, number)}.docx",
+            filename=f"{export_file_stem(context.document.name, page.number)}.docx",
             content=content,
         )
+
+    async def _part_page(self, session: AsyncSession, part) -> DocxPage:
+        number = await self._documents.part_page_number(session, part)
+        lines = await self._documents.list_part_lines(session, part.id)
+        return DocxPage(number=number, lines=_page_text(lines))
 
 
 def _page_text(lines) -> list[str]:
@@ -127,7 +150,11 @@ def render_docx(pages: list[DocxPage]) -> bytes:
     """Write ``pages`` as a Word document: a heading per page, a paragraph per line."""
     word = new_word_document()
     _set_default_font(word)
-    for page in pages:
+    for index, page in enumerate(pages):
+        if index > 0:
+            # A reader continuing onto the next page should find it at the top of a
+            # fresh sheet, not where the previous page's last line happened to end.
+            word.add_page_break()
         # A page with nothing transcribed still gets its heading, for the reason the
         # text export keeps its marker: a missing "Page 7" reads as a missing page.
         word.add_heading(f"Page {page.number}", level=2)

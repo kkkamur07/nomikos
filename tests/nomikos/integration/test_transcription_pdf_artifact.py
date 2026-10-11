@@ -392,3 +392,81 @@ def test_outsider_cannot_export_page_xml_bundle(
     )
 
     assert response.status_code in (403, 404)
+
+
+# --- Per-page Word export ---
+# Tests the member-route docx twin of the transcription PDF: one page as a Word file
+# with its ground-truth lines. Does not unzip styles or fonts.
+
+
+def test_member_exports_part_docx_with_ground_truth_text(
+    client: TestClient, owner_headers: dict[str, str], owner_project: dict
+) -> None:
+    project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
+        client, owner_headers, owner_project
+    )
+    base = documents_url(project_id)
+    replace = client.put(
+        f"{base}/{document_id}/parts/{part_id}/lines",
+        headers=owner_headers,
+        json={
+            "lines": [
+                {
+                    "order": 0,
+                    "kind": "polygon",
+                    "points": [[10, 10], [120, 10], [120, 30], [10, 30]],
+                    "source": "manual",
+                    "approved_text": "alpha",
+                },
+                {
+                    "order": 1,
+                    "kind": "polygon",
+                    "points": [[10, 45], [120, 45], [120, 65], [10, 65]],
+                    "source": "manual",
+                    "approved_text": "beta",
+                },
+            ]
+        },
+    )
+    assert replace.status_code == 200, replace.text
+
+    response = client.get(
+        f"{base}/{document_id}/parts/{part_id}/docx",
+        headers=owner_headers,
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.headers["content-type"]
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="PDF_codex_page_1.docx"'
+    )
+    assert response.content.startswith(b"PK")
+    assert len(response.content) > 1000
+
+    with ZipFile(BytesIO(response.content)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    assert "Page 1" in document_xml
+    assert "alpha" in document_xml
+    assert "beta" in document_xml
+
+
+def test_outsider_cannot_export_part_docx(
+    client: TestClient,
+    owner_headers: dict[str, str],
+    outsider_headers: dict[str, str],
+    owner_project: dict,
+) -> None:
+    project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
+        client, owner_headers, owner_project
+    )
+    base = documents_url(project_id)
+
+    response = client.get(
+        f"{base}/{document_id}/parts/{part_id}/docx",
+        headers=outsider_headers,
+    )
+
+    assert response.status_code in (403, 404)

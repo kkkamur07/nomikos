@@ -971,6 +971,11 @@ export const api = {
       { method: "POST" },
     ),
 
+  exportPartDocx: (projectId: string, documentId: string, partId: string) =>
+    fetchBinaryApi(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/docx`,
+    ),
+
   getPageXml: (projectId: string, documentId: string, partId: string) =>
     fetchBinaryApi(
       `/projects/${projectId}/documents/${documentId}/parts/${partId}/page-xml`,
