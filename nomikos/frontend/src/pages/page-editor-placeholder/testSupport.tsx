@@ -350,7 +350,7 @@ export function resetPageEditorApiMocks() {
     },
     model: {
       id: "model-1",
-      name: "kraken-transcribe-default",
+      name: "greek-v1",
       provider: "kraken",
       task: "transcribe",
       artifact_ref: "x",

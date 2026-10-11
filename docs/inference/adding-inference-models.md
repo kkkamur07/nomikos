@@ -252,15 +252,15 @@ The editor lists models from **`inference_models`**, not directly from `registry
 
 | Column | Value |
 |--------|-------|
-| `name` | Same as **registry model id** (unique) |
-| `provider` | Architecture the row runs on: `calamari` for Calamari HTR, `kraken` for BLLA segmentation. A label for humans reading the table; nothing dispatches on it, and `list_models` only orders by it |
+| `name` | Picker display name ([language-vN scheme](model-catalog-names.md), unique) |
+| `provider` | Architecture the row runs on: `calamari` for Calamari HTR, `kraken` for BLLA segmentation, `ppocr` for PP-OCR. A label for humans reading the table; nothing dispatches on it, and `list_models` only orders by it |
 | `task` | `segment` or `transcribe` |
 | `artifact_ref` | `registry://<registry_model_id>?tag=stable` |
 | `default_params` | JSON, e.g. `{"device": "cpu"}` |
 
 ### Development
 
-Add the registry model id to `SEGMENT_MODELS` or `TRANSCRIBE_MODELS` in
+Add a `(registry_id, display_name)` pair to `SEGMENT_MODELS` or `TRANSCRIBE_MODELS` in
 [`scripts/platform/seed_dev_inference.py`](../../scripts/platform/seed_dev_inference.py) and run:
 
 ```bash
@@ -269,7 +269,7 @@ uv run --group platform python scripts/platform/seed_dev_inference.py
 
 ### Production
 
-Insert the row (migration, admin script, or one-off SQL). `name` must match the registry model id so `artifact_ref` resolution stays consistent with cloud jobs.
+Insert the row (migration, admin script, or one-off SQL). `name` is the picker display name per the [language-vN scheme](model-catalog-names.md); `artifact_ref` carries the registry model id so resolution stays consistent with cloud jobs.
 
 Optional: create a **ModelBinding** at project, document, or part scope so the new model is the default for a workspace.
 
@@ -341,7 +341,7 @@ uv run --group platform --group inference pytest tests/nomikos/integration/test_
 1. Stage `best.pt` → `nomikos_inference/publish/artifacts/staging/models/{script}/calamari/v1/stable/`, then export `best.onnx` beside it
 2. `publish_model.py … --upload` (both files go up at one revision)
 3. Add block to `nomikos_inference/registry.yaml` with `hf://…` **weights_source**, `hub_revision`, and the `artifact_sha256` **of `best.onnx`**
-4. Add the id to `TRANSCRIBE_MODELS` in `scripts/platform/seed_dev_inference.py`, which upserts the `InferenceModel` with `provider: calamari` and `artifact_ref: registry://{id}?tag=stable`
+4. Add a `(registry_id, display_name)` pair to `TRANSCRIBE_MODELS` in `scripts/platform/seed_dev_inference.py`, which upserts the `InferenceModel` with `provider: calamari` and `artifact_ref: registry://{id}?tag=stable`
 5. Run tests → deploy API → publish the package
 6. Agents carry the entry once upgraded; weights download on first use
 

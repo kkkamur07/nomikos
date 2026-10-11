@@ -3,10 +3,16 @@
 
 The editor's model pickers list rows from ``inference_models``, not from
 ``registry.yaml``, so a registry entry is invisible in dev until this script
-puts a row beside it. It seeds the five transcribe models (four Calamari and
-one PP-OCR) and the BLLA segment model, and is an upsert: re-running it
-after a registry edit
+puts a row beside it. It seeds four transcribe models (three Calamari and one
+PP-OCR) and two segment models (BLLA and PP-OCR detection), and is an upsert:
+re-running it after a registry edit
 rewrites the existing rows rather than duplicating them.
+
+Each row carries a registry id (what dispatch resolves through
+``artifact_ref``) and a short display name (what the pickers print,
+``docs/inference/model-catalog-names.md``): ``seg-v1``/``seg-v2`` for the
+segmenters, ``greek-v1``, ``armenian-v1``, ``coptic-v1``, ``syriac-v2`` for
+the transcribers.
 
 Task and provider are read out of ``registry.yaml`` rather than restated here.
 A catalog row whose ``task`` disagrees with the registry entry its
@@ -17,12 +23,13 @@ Binds to the project named by ``BINDING_PROJECT_SLUG`` (default:
 byzantine-greek-manuscripts) if it exists. Transcribe bindings are skipped by
 default since script-specific models get attached per project when available.
 
-Overrides, both optional and both comma-separated:
+Overrides, both optional and both comma-separated ``registry_id[:display_name]``
+pairs (an entry without ``:display_name`` keeps the registry id as its name):
 
-* ``DEFAULT_SEGMENT_MODEL`` - the segment row, and the model the project-level
-  segment binding points at.
+* ``DEFAULT_SEGMENT_MODEL`` - the segment rows, and the models the
+  project-level segment binding points at (first entry wins).
 * ``DEFAULT_TRANSCRIBE_MODEL`` - the transcribe rows to seed *instead of* the
-  five defaults, for a dev database that should only see one script.
+  four defaults, for a dev database that should only see one script.
 """
 
 import asyncio
@@ -45,21 +52,36 @@ from nomikos_inference.contracts.common import RegistryArchitecture  # noqa: E40
 from nomikos_inference.registry import load_registry  # noqa: E402
 
 
-def _ids(env_var: str, default: tuple[str, ...]) -> tuple[str, ...]:
+def _parse_entry(part: str) -> tuple[str, str]:
+    """Split one ``registry_id[:display_name]`` override entry."""
+    registry_id, _, display_name = part.partition(":")
+    registry_id = registry_id.strip()
+    display_name = display_name.strip()
+    return (registry_id, display_name or registry_id)
+
+
+def _pairs(env_var: str, default: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
     raw = os.environ.get(env_var, "")
-    override = tuple(part.strip() for part in raw.split(",") if part.strip())
+    override = tuple(
+        _parse_entry(part) for part in (item.strip() for item in raw.split(",")) if part
+    )
     return override or default
 
 
-SEGMENT_MODELS = _ids("DEFAULT_SEGMENT_MODEL", ("blla-segment",))
-TRANSCRIBE_MODELS = _ids(
+SEGMENT_MODELS = _pairs(
+    "DEFAULT_SEGMENT_MODEL",
+    (
+        ("blla-segment", "seg-v1"),
+        ("ppocr-segment", "seg-v2"),
+    ),
+)
+TRANSCRIBE_MODELS = _pairs(
     "DEFAULT_TRANSCRIBE_MODEL",
     (
-        "greek-calamari-v1",
-        "armenian-calamari-v1",
-        "syriac-calamari-v2",
-        "syriac-ppocr-v1",
-        "coptic-calamari-v1",
+        ("greek-calamari-v1", "greek-v1"),
+        ("armenian-calamari-v1", "armenian-v1"),
+        ("coptic-calamari-v1", "coptic-v1"),
+        ("syriac-ppocr-v1", "syriac-v2"),
     ),
 )
 BINDING_PROJECT_SLUG = os.environ.get(
@@ -81,32 +103,42 @@ _PROVIDER_BY_ARCHITECTURE: dict[RegistryArchitecture, str] = {
     RegistryArchitecture.blla_segment: "kraken",
     RegistryArchitecture.calamari: "calamari",
     RegistryArchitecture.ppocr_rec: "ppocr",
+    RegistryArchitecture.ppocr_det: "ppocr",
 }
 
 
-async def _upsert_model(*, name: str, task: InferenceTask) -> InferenceModel:
+async def _upsert_model(
+    *, registry_id: str, display_name: str, task: InferenceTask
+) -> InferenceModel:
     """Write one catalog row for a registry model id, creating or rewriting it.
 
-    An id the Registry does not know raises here rather than seeding a row that
+    The row is found by ``artifact_ref`` so re-seeding after a display-name
+    change renames the existing row instead of duplicating it. An id the
+    Registry does not know raises here rather than seeding a row that
     resolves to nothing at dispatch time.
     """
-    entry = load_registry().models.get(name)
+    entry = load_registry().models.get(registry_id)
     if entry is None:
-        raise SystemExit(f"{name!r} is not in registry.yaml; add the entry before seeding it")
+        raise SystemExit(
+            f"{registry_id!r} is not in registry.yaml; add the entry before seeding it"
+        )
     if entry.task.value != task.value:
         raise SystemExit(
-            f"{name!r} is a {entry.task.value} model in registry.yaml, seeded here as {task.value}"
+            f"{registry_id!r} is a {entry.task.value} model in registry.yaml, "
+            f"seeded here as {task.value}"
         )
     provider = _PROVIDER_BY_ARCHITECTURE[entry.architecture]
-    artifact_ref = f"registry://{name}?tag=stable"
+    artifact_ref = f"registry://{registry_id}?tag=stable"
     default_params = {"device": entry.device.value}
 
     async with system_session() as session:
-        result = await session.execute(select(InferenceModel).where(InferenceModel.name == name))
+        result = await session.execute(
+            select(InferenceModel).where(InferenceModel.artifact_ref == artifact_ref)
+        )
         model = result.scalar_one_or_none()
         if model is None:
             model = InferenceModel(
-                name=name,
+                name=display_name,
                 provider=provider,
                 task=task,
                 artifact_ref=artifact_ref,
@@ -114,9 +146,9 @@ async def _upsert_model(*, name: str, task: InferenceTask) -> InferenceModel:
             )
             session.add(model)
         else:
+            model.name = display_name
             model.provider = provider
             model.task = task
-            model.artifact_ref = artifact_ref
             model.default_params = default_params
         await session.commit()
         await session.refresh(model)
@@ -154,10 +186,16 @@ async def _upsert_project_binding(
 
 async def main() -> None:
     segment_models = [
-        await _upsert_model(name=name, task=InferenceTask.segment) for name in SEGMENT_MODELS
+        await _upsert_model(
+            registry_id=registry_id, display_name=display_name, task=InferenceTask.segment
+        )
+        for registry_id, display_name in SEGMENT_MODELS
     ]
     transcribe_models = [
-        await _upsert_model(name=name, task=InferenceTask.transcribe) for name in TRANSCRIBE_MODELS
+        await _upsert_model(
+            registry_id=registry_id, display_name=display_name, task=InferenceTask.transcribe
+        )
+        for registry_id, display_name in TRANSCRIBE_MODELS
     ]
 
     for model in segment_models:
@@ -182,7 +220,7 @@ async def main() -> None:
         return
 
     # The project-level segment binding still points at one model, the first
-    # seeded. Transcribe stays unbound on purpose: five scripts are now in the
+    # seeded. Transcribe stays unbound on purpose: four scripts are now in the
     # catalog and picking one of them as a workspace default here would put a
     # Greek model in front of a Syriac manuscript.
     segment_binding = await _upsert_project_binding(
