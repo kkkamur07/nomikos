@@ -60,9 +60,21 @@ def _footer(message: str) -> str:
     )
 
 
-def welcome_email(username: str, app_url: str) -> EmailMessage:
-    """First mail after registration. The caller sets ``to`` from the account address."""
+def welcome_email(username: str, app_url: str, *, reply_to: str | None = None) -> EmailMessage:
+    """First mail after registration. The caller sets ``to`` from the account address.
+
+    The reply invitation appears only when ``reply_to`` names a mailbox that
+    reads replies; otherwise the mail invites none.
+    """
     name = html.escape(username)
+    reply_html = (
+        '<p style="margin:0;">Reply to this email if you need help getting started.</p>'
+        if reply_to is not None
+        else ""
+    )
+    reply_text = (
+        "Reply to this email if you need help getting started.\n\n" if reply_to is not None else ""
+    )
     body_html = (
         '<h1 style="margin:0 0 16px 0;font-size:22px;color:#1a1a1a;">'
         f"Welcome to Nomikos, {name}</h1>"
@@ -79,7 +91,7 @@ def welcome_email(username: str, app_url: str) -> EmailMessage:
         "<li>Correct the result in the editor</li>"
         "<li>Export to Word or PDF</li>"
         "</ul>"
-        '<p style="margin:0;">Reply to this email if you need help getting started.</p>'
+        + reply_html
         + _footer("You received this because an account was created with this address.")
     )
     text = (
@@ -93,8 +105,8 @@ def welcome_email(username: str, app_url: str) -> EmailMessage:
         "- Run segmentation then transcription\n"
         "- Correct the result in the editor\n"
         "- Export to Word or PDF\n\n"
-        "Reply to this email if you need help getting started.\n\n"
-        "You received this because an account was created with this address."
+        + reply_text
+        + "You received this because an account was created with this address."
     )
     return EmailMessage(
         subject="Welcome to Nomikos", to="", html=_shell("Welcome to Nomikos", body_html), text=text

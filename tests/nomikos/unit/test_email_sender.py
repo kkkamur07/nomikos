@@ -131,3 +131,28 @@ async def test_background_helper_delivers_on_success(monkeypatch) -> None:
     await tasks()
 
     assert [m.subject for m in delivered] == ["Hello"]
+
+
+async def test_resend_includes_reply_to_only_when_configured() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json={"id": "mail_123"})
+
+    sender = ResendEmailSender(
+        httpx.AsyncClient(transport=_transport(handler)),
+        api_key="re_test_key",
+        from_address="Nomikos <x@y.z>",
+        reply_to="hello@nomikos.app",
+    )
+    await sender.send(_message())
+    assert seen[0]["reply_to"] == ["hello@nomikos.app"]
+
+    plain = ResendEmailSender(
+        httpx.AsyncClient(transport=_transport(handler)),
+        api_key="re_test_key",
+        from_address="Nomikos <x@y.z>",
+    )
+    await plain.send(_message())
+    assert "reply_to" not in seen[1]

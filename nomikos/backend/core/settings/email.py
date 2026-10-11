@@ -14,6 +14,8 @@ class EmailSettings(BaseSettings):
     #: must treat a missing key as "log instead of send", never as a boot error.
     resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
     email_from: str = Field(default="Nomikos <no-reply@nomikos.app>", alias="EMAIL_FROM")
+    #: Where replies to the welcome mail go. None means the mail invites no reply.
+    reply_to: str | None = Field(default=None, alias="EMAIL_REPLY_TO")
     app_public_url: str = Field(default="https://nomikos.app", alias="APP_PUBLIC_URL")
     signin_notices: bool = Field(default=True, alias="EMAIL_SIGNIN_NOTICES")
 

@@ -91,7 +91,10 @@ async def register(
         password=body.password,
     )
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
-    message = welcome_email(user.username, get_email_settings().app_public_url)
+    email_settings = get_email_settings()
+    message = welcome_email(
+        user.username, email_settings.app_public_url, reply_to=email_settings.reply_to
+    )
     message.to = user.email
     send_in_background(background_tasks, message)
     return _issue_session(response, tokens)

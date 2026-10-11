@@ -142,3 +142,22 @@ async def test_login_schedules_nothing_when_notices_are_off(auth_routes, monkeyp
     )
 
     assert tasks.tasks == []
+
+
+async def test_register_passes_configured_reply_to(auth_routes, monkeypatch) -> None:
+    monkeypatch.setenv("EMAIL_REPLY_TO", "hello@nomikos.app")
+    reset_settings_caches()
+    _install_fakes(auth_routes, monkeypatch, register_user=_user())
+    tasks = BackgroundTasks()
+
+    await auth_routes.register(
+        RegisterRequest(email="ada@example.com", username="ada", password="long-enough-pass"),
+        None,
+        object(),
+        Response(),
+        tasks,
+    )
+
+    sender = _RecordingSender()
+    await _run(tasks, sender, monkeypatch)
+    assert "Reply to this email if you need help getting started." in sender.sent[0].html

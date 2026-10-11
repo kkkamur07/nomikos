@@ -39,23 +39,33 @@ class EmailSender(Protocol):
 class ResendEmailSender:
     """One POST to the Resend HTTP API per message. Raises on non-2xx."""
 
-    def __init__(self, client: httpx.AsyncClient, api_key: str, from_address: str) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        api_key: str,
+        from_address: str,
+        reply_to: str | None = None,
+    ) -> None:
         self._client = client
         self._api_key = api_key
         self._from_address = from_address
+        self._reply_to = reply_to
 
     async def send(self, message: EmailMessage) -> None:
+        payload = {
+            "from": self._from_address,
+            "to": [message.to],
+            "subject": message.subject,
+            "html": message.html,
+            "text": message.text,
+        }
+        if self._reply_to is not None:
+            payload["reply_to"] = [self._reply_to]
         try:
             response = await self._client.post(
                 RESEND_API_URL,
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "from": self._from_address,
-                    "to": [message.to],
-                    "subject": message.subject,
-                    "html": message.html,
-                    "text": message.text,
-                },
+                json=payload,
                 timeout=RESEND_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as exc:
@@ -83,6 +93,7 @@ def get_email_sender() -> EmailSender:
             httpx.AsyncClient(),
             api_key=settings.resend_api_key,
             from_address=settings.email_from,
+            reply_to=settings.reply_to,
         )
     return LoggingEmailSender()
 

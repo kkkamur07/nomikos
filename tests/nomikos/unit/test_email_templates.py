@@ -59,3 +59,17 @@ def test_templates_escape_user_input() -> None:
     notice = signin_notice_email("<b>Ada</b>", datetime(2026, 10, 11, tzinfo=UTC), APP_URL)
     assert "<b>Ada</b>" not in notice.html
     assert "&lt;b&gt;Ada&lt;/b&gt;" in notice.html
+
+
+def test_welcome_omits_the_reply_invite_without_reply_to() -> None:
+    message = welcome_email("Ada", APP_URL)
+
+    assert "Reply to this email" not in message.html
+    assert "Reply to this email" not in message.text
+
+
+def test_welcome_invites_a_reply_with_reply_to() -> None:
+    message = welcome_email("Ada", APP_URL, reply_to="hello@nomikos.app")
+
+    assert "Reply to this email if you need help getting started." in message.html
+    assert "Reply to this email if you need help getting started." in message.text

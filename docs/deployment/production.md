@@ -184,11 +184,13 @@ is wanted.
 | -------- | ------- | ------- |
 | `RESEND_API_KEY` | *(unset)* | Enables sending; when unset, mail is logged, not sent |
 | `EMAIL_FROM` | `Nomikos <no-reply@nomikos.app>` | Sender identity, must use a verified domain |
+| `EMAIL_REPLY_TO` | *(unset)* | Reply-to address on the welcome mail; when unset, the mail invites no reply |
 | `APP_PUBLIC_URL` | `https://nomikos.app` | Link target of the "Open Nomikos" button |
 | `EMAIL_SIGNIN_NOTICES` | `true` | Set `false` to stop sign-in notices (welcome mail still sends) |
 
 Preview the templates without a key: `python scripts/platform/preview_emails.py <out_dir>`
 renders `welcome.html`, `welcome.txt`, `signin.html`, `signin.txt`.
+
 ---
 
 ## 3. Optional cloud inference + platform worker (persistent host)
