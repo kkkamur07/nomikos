@@ -14,6 +14,8 @@ import { PageEditorPageXmlButton } from "./PageEditorPageXmlButton";
 import { PageEditorDocxButton } from "./PageEditorDocxButton";
 import { exportFileStem } from "../../utils/exportFilename";
 import { SettingsIcon } from "./EditorIcons";
+import { editorButton } from "./editorButton";
+import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
 import { PageEditorSettingsPanel } from "./PageEditorSettingsPanel";
 import {
   PageEditorSegmentHealthPanel,
@@ -537,6 +539,25 @@ export function PageEditorToolbar({
         </div>
 
         <div className="pe-toolbar__cluster">
+          {/* The pane's own close button is the way out while it is open; this
+              is only the way back in, so it never shows beside that button. */}
+          {!canvasSettings.sideBySide && (
+            <button
+              type="button"
+              className={editorButton(false)}
+              title={`Show transcript pane (${PAGE_EDITOR_SHORTCUTS.TRANSCRIPT})`}
+              aria-label={`Show transcript pane (${PAGE_EDITOR_SHORTCUTS.TRANSCRIPT})`}
+              aria-keyshortcuts={PAGE_EDITOR_SHORTCUTS.TRANSCRIPT}
+              onClick={() =>
+                onCanvasSettingsChange({
+                  ...canvasSettings,
+                  sideBySide: true,
+                })
+              }
+            >
+              Transcript
+            </button>
+          )}
           <div className="pe-dropdown-wrap" ref={segmentHealthRef}>
             <button
               type="button"

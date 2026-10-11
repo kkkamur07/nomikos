@@ -50,6 +50,7 @@ function editorProps(
     onHoverSegment: () => {},
     onFocusSegment: () => {},
     onCommitText: () => Promise.resolve(),
+    onClose: () => {},
     ...overrides,
   };
 }
@@ -343,5 +344,15 @@ describe("PageEditorTranscriptEditor", () => {
       rowOf(textarea("Segment 2 text")).style.fontSize,
     );
     expect(tallSize).toBeGreaterThan(shortSize);
+  });
+
+  it("shows an icon-only close button that calls onClose", () => {
+    const onClose = vi.fn();
+    render(<PageEditorTranscriptEditor {...editorProps({ onClose })} />);
+    const close = screen.getByRole("button", { name: "Hide transcript pane" });
+    expect(close).toHaveAttribute("title", "Hide transcript pane");
+    expect(close.textContent).toBe("");
+    fireEvent.click(close);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
