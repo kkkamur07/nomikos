@@ -1,6 +1,6 @@
 """Stateless Transcription PDF artifact generation.
 
-Drawn with fpdf2 and shaped with HarfBuzz (ADR 0008). Every line is placed at its own
+Drawn with fpdf2 and shaped with HarfBuzz (ADR 0009). Every line is placed at its own
 geometry, in the bundled font for the script its characters are in: Syriac joins and
 runs right to left, Armenian and Coptic get a font that has their glyphs, and Greek and
 Latin stay in Noto Sans. A line that mixes scripts falls back to Noto Sans for the

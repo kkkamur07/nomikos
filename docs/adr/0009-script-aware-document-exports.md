@@ -1,4 +1,4 @@
-# 0008. Script-aware document exports (docx and shaped PDF)
+# 0009. Script-aware document exports (docx and shaped PDF)
 
 - Status: Accepted
 - Date: 2026-10-11

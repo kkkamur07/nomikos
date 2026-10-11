@@ -209,7 +209,7 @@ platform-prod = [
     "zxcvbn>=4.5.0",
     "sqlalchemy[asyncio]>=2.0.36",
     "pillow>=12.3.0",
-    # Document exports (ADR 0008): fpdf2 draws the transcription PDF and shapes text
+    # Document exports (ADR 0009): fpdf2 draws the transcription PDF and shapes text
     # through uharfbuzz, so Syriac joins and runs right to left; python-docx writes the
     # Word export. All three are pure-Python or ship binary wheels, no system library.
     "fpdf2>=2.8.9",
