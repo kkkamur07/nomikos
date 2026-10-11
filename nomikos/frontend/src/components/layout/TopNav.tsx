@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthSession } from "../../auth/AuthProvider";
 import { FeedbackDialog } from "./FeedbackDialog";
+import { useFeedbackButton } from "./useFeedbackButton";
 export type BreadcrumbItem = {
   label: string;
   href?: string;
@@ -26,18 +27,8 @@ export function TopNav({
   const router = useRouter();
   const pathname = usePathname();
   const { logout, isAdmin } = useAuthSession();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [thanks, setThanks] = useState(false);
-  const thanksTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => clearTimeout(thanksTimer.current), []);
-
-  const handleSent = () => {
-    setDialogOpen(false);
-    setThanks(true);
-    clearTimeout(thanksTimer.current);
-    thanksTimer.current = window.setTimeout(() => setThanks(false), 2000);
-  };
+  const { dialogOpen, thanks, openDialog, closeDialog, handleSent } =
+    useFeedbackButton();
   const handleLogout = () => {
     if (onLogout) {
       onLogout();
@@ -92,7 +83,7 @@ export function TopNav({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => setDialogOpen(true)}
+            onClick={openDialog}
           >
             {thanks ? "Thanks" : "Feedback"}
           </button>
@@ -117,7 +108,7 @@ export function TopNav({
         <FeedbackDialog
           open={dialogOpen}
           pagePath={pathname ?? "/"}
-          onClose={() => setDialogOpen(false)}
+          onClose={closeDialog}
           onSent={handleSent}
         />
       )}

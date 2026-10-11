@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type {
   DocumentWithPartsResponse,
   InferenceModelResponse,
@@ -7,13 +8,15 @@ import type {
   SegmentHealthResponse,
 } from "../../api/client";
 import { PageEditorBackLink } from "./PageEditorNavHeader";
+import { FeedbackDialog } from "../layout/FeedbackDialog";
+import { useFeedbackButton } from "../layout/useFeedbackButton";
 import { PageEditorModelSelect } from "./PageEditorModelSelect";
 import { PageEditorPager } from "./PageEditorPager";
 import { PageEditorSharingMenu } from "./PageEditorSharingMenu";
 import { PageEditorPageXmlButton } from "./PageEditorPageXmlButton";
 import { PageEditorDocxButton } from "./PageEditorDocxButton";
 import { exportFileStem } from "../../utils/exportFilename";
-import { SettingsIcon } from "./EditorIcons";
+import { CheckIcon, FeedbackIcon, SettingsIcon } from "./EditorIcons";
 import { editorButton } from "./editorButton";
 import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
 import { PageEditorSettingsPanel } from "./PageEditorSettingsPanel";
@@ -136,6 +139,9 @@ export function PageEditorToolbar({
   hasLocalCapacity,
   hostPreferenceLoading,
 }: PageEditorToolbarProps) {
+  const pathname = usePathname();
+  const { dialogOpen, thanks, openDialog, closeDialog, handleSent } =
+    useFeedbackButton();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const segmentHealthRef = useRef<HTMLDivElement>(null);
@@ -288,14 +294,14 @@ export function PageEditorToolbar({
             {processingLabel}
           </div>
         )}
-        <div className="pe-toolbar__stat">
+        <div className="pe-toolbar__stat" style={{ whiteSpace: "nowrap" }}>
           <strong>{lines.length}</strong> {segmentLabel}
         </div>
         <div
           className="pe-toolbar__progress"
           title={`${pairingProgress.paired_lines} of ${pairingProgress.total_lines} lines paired`}
         >
-          <span className="pe-toolbar__stat">
+          <span className="pe-toolbar__stat" style={{ whiteSpace: "nowrap" }}>
             <strong>{pairingProgress.paired_lines}</strong>/
             {pairingProgress.total_lines}
           </span>
@@ -586,6 +592,16 @@ export function PageEditorToolbar({
               />
             )}
           </div>
+          {/* Icon-only: the text label cost a wrap in the counter at 1440px. */}
+          <button
+            type="button"
+            className="pe-tb-btn pe-tb-btn--icon"
+            title={thanks ? "Thanks" : "Send feedback"}
+            aria-label={thanks ? "Thanks" : "Send feedback"}
+            onClick={openDialog}
+          >
+            {thanks ? <CheckIcon /> : <FeedbackIcon />}
+          </button>
           <div className="pe-dropdown-wrap" ref={settingsRef}>
             <button
               type="button"
@@ -611,6 +627,12 @@ export function PageEditorToolbar({
           </div>
         </div>
       </div>
+      <FeedbackDialog
+        open={dialogOpen}
+        pagePath={pathname ?? "/"}
+        onClose={closeDialog}
+        onSent={handleSent}
+      />
     </header>
   );
 }
