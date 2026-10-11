@@ -1,0 +1,59 @@
+.pe-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pe-split-left,
+.pe-split-right {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.pe-split-left {
+  flex-shrink: 0;
+}
+
+.pe-split-right {
+  min-width: 0;
+}
+
+.pe-split-handle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.pe-split-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border, #d9dee5);
+}
+
+.pe-split-handle:hover::after,
+.pe-split-handle:focus-visible::after,
+.pe-split.is-dragging .pe-split-handle::after {
+  background: var(--accent, #0d9488);
+}
+
+.pe-split-handle:focus-visible {
+  outline: 2px solid var(--accent, #0d9488);
+  outline-offset: -2px;
+}
+
+.pe-split.is-dragging {
+  user-select: none;
+  cursor: col-resize;
+}

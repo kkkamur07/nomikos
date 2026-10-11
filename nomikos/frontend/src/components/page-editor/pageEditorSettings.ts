@@ -21,6 +21,10 @@ export type PageEditorCanvasSettings = {
   showBaselines: boolean;
   /** Multiplier on how far one wheel notch or trackpad step zooms (0.25-3). */
   wheelZoomSpeed: number;
+  /** Show the text panel next to the canvas in a side-by-side layout. */
+  sideBySide: boolean;
+  /** Width share of the manuscript pane, 0.2 to 0.8. */
+  splitRatio: number;
 };
 
 export const DEFAULT_PAGE_EDITOR_SETTINGS: PageEditorCanvasSettings = {
@@ -31,6 +35,8 @@ export const DEFAULT_PAGE_EDITOR_SETTINGS: PageEditorCanvasSettings = {
   showLayoutBlocks: true,
   showBaselines: false,
   wheelZoomSpeed: 1,
+  sideBySide: true,
+  splitRatio: 0.55,
 };
 
 function clampNumber(
@@ -88,6 +94,15 @@ export function loadPageEditorSettings(): PageEditorCanvasSettings {
         WHEEL_ZOOM_SPEED_MAX,
         DEFAULT_PAGE_EDITOR_SETTINGS.wheelZoomSpeed,
       ),
+      sideBySide:
+        typeof parsed.sideBySide === "boolean"
+          ? parsed.sideBySide
+          : DEFAULT_PAGE_EDITOR_SETTINGS.sideBySide,
+      splitRatio:
+        typeof parsed.splitRatio === "number" &&
+        Number.isFinite(parsed.splitRatio)
+          ? Math.min(0.8, Math.max(0.2, parsed.splitRatio))
+          : DEFAULT_PAGE_EDITOR_SETTINGS.splitRatio,
     };
   } catch {
     return DEFAULT_PAGE_EDITOR_SETTINGS;

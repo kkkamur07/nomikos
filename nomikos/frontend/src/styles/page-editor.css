@@ -1975,3 +1975,9 @@
     display: none;
   }
 }
+
+/* Linked hover from the text panel: brighten the segment without touching
+   the selection colours, which stay inline on the shape. */
+.pe-segment-shape.is-hovered {
+  filter: brightness(1.2);
+}

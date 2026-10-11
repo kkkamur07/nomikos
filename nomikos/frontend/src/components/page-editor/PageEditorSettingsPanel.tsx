@@ -233,6 +233,20 @@ export function PageEditorSettingsPanel({
         />
         Show line baselines (Kraken layout)
       </label>
+      <label className="pe-dd-check">
+        <input
+          type="checkbox"
+          checked={settings.sideBySide}
+          onChange={(event) =>
+            onSettingsChange({
+              ...settings,
+              sideBySide: event.target.checked,
+            })
+          }
+          onClick={(event) => event.stopPropagation()}
+        />
+        Side by side text panel
+      </label>
 
       <div className="pe-dd-divider" />
 

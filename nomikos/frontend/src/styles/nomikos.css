@@ -1,5 +1,8 @@
 @import "./theme-shell.css";
 @import "./page-editor.css";
+@import "./page-editor-text-panel.css";
+@import "./page-editor-transcript.css";
+@import "./page-editor-split.css";
 @import "./document-actions.css";
 
 /* Page editor status bar */
