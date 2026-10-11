@@ -1,10 +1,14 @@
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, type AdminOverview } from "../api/client";
+import { api, type AdminOverview, type FeedbackRow } from "../api/client";
+import type * as ClientModule from "../api/client";
 import * as session from "../auth/session";
-import { AdminDashboardPage, windowDays } from "./AdminDashboardPage";
-
+import {
+  AdminDashboardPage,
+  AdminFeedbackTable,
+  windowDays,
+} from "./AdminDashboardPage";
 const auth = vi.hoisted(() => ({ isAdmin: true as boolean | null }));
 const navigation = vi.hoisted(() => ({ notFound: vi.fn() }));
 
@@ -32,10 +36,10 @@ vi.mock("../auth/AuthProvider", () => ({
 }));
 
 vi.mock("../api/client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api/client")>();
+  const actual = await importOriginal<ClientModule>();
   return {
     ...actual,
-    api: { ...actual.api, adminOverview: vi.fn() },
+    api: { ...actual.api, adminOverview: vi.fn(), listFeedback: vi.fn() },
   };
 });
 
@@ -153,6 +157,7 @@ describe("AdminDashboardPage", () => {
     vi.spyOn(session, "hasAccessToken").mockReturnValue(true);
     vi.spyOn(session, "navigateToLogin").mockImplementation(() => {});
     vi.mocked(api.adminOverview).mockResolvedValue(overview);
+    vi.mocked(api.listFeedback).mockResolvedValue([]);
   });
 
   it("renders every card from one overview response", async () => {
@@ -187,5 +192,55 @@ describe("AdminDashboardPage", () => {
     expect(navigation.notFound).toHaveBeenCalled();
     expect(api.adminOverview).not.toHaveBeenCalled();
     expect(screen.queryByText("Admin")).toBeNull();
+  });
+});
+
+describe("AdminFeedbackTable", () => {
+  const rows: FeedbackRow[] = [
+    {
+      id: "f-2",
+      created_at: "2026-10-11T12:00:00Z",
+      email: "ada@example.edu",
+      username: "ada",
+      message: "Second note",
+      page_path: "/projects/1",
+    },
+    {
+      id: "f-1",
+      created_at: "2026-10-10T12:00:00Z",
+      email: "bea@example.edu",
+      username: "bea",
+      message: "First note",
+      page_path: null,
+    },
+  ];
+
+  it("renders one row per note with when, who, page, and message", () => {
+    render(<AdminFeedbackTable rows={rows} />);
+
+    expect(screen.getByText("Second note")).toBeTruthy();
+    expect(screen.getByText("First note")).toBeTruthy();
+    expect(screen.getByText("ada")).toBeTruthy();
+    expect(screen.getByText("/projects/1")).toBeTruthy();
+    expect(screen.queryByText("No feedback yet.")).toBeNull();
+  });
+
+  it("shows a one-line empty state", () => {
+    render(<AdminFeedbackTable rows={[]} />);
+
+    expect(screen.getByText("No feedback yet.")).toBeTruthy();
+  });
+
+  it("appears on the admin page backed by the feedback list", async () => {
+    auth.isAdmin = true;
+    vi.mocked(api.adminOverview).mockResolvedValue(overview);
+    vi.mocked(api.listFeedback).mockResolvedValue(rows);
+    vi.spyOn(session, "hasAccessToken").mockReturnValue(true);
+    vi.spyOn(session, "navigateToLogin").mockImplementation(() => {});
+
+    render(<AdminDashboardPage />);
+
+    expect(await screen.findByText("Second note")).toBeTruthy();
+    expect(api.listFeedback).toHaveBeenCalledWith(50);
   });
 });

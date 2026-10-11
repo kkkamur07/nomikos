@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.api import request_metrics
-from backend.core.application import admin_stats_service
+from backend.core.application import admin_stats_service, feedback_service
 from backend.users.api.dependencies import require_admin
 from backend.users.infrastructure.orm_models import User
 from infrastructure.db import engine, get_db
@@ -188,3 +188,23 @@ async def admin_overview(
             "requests": request_metrics.snapshot(),
         }
     )
+
+
+class FeedbackRow(BaseModel):
+    id: UUID
+    created_at: datetime
+    email: str
+    username: str
+    message: str
+    page_path: str | None = None
+
+
+@router.get("/feedback", response_model=list[FeedbackRow])
+async def admin_feedback(
+    _admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[FeedbackRow]:
+    """Newest feedback notes with their authors, for the admin dashboard."""
+    rows = await feedback_service.list_feedback(db, limit=limit)
+    return [FeedbackRow.model_validate(row) for row in rows]

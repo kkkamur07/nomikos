@@ -24,5 +24,6 @@ from backend.project.infrastructure.orm_models import Project, project_shared_us
 from backend.users.infrastructure.orm_models import (  # noqa: F401
     AuthRateLimitAttempt,
     AuthSession,
+    Feedback,
     User,
 )

@@ -54,6 +54,25 @@ class User(Base):
     )
 
 
+class Feedback(Base):
+    """Short free-text note a signed-in user sends from anywhere in the app."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (Index("ix_feedback_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    message: Mapped[str] = mapped_column(String(2000), nullable=False)
+    page_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship("User")
+
+
 class AuthSession(Base):
     """Durable rotating browser session; only credential hashes are stored."""
 

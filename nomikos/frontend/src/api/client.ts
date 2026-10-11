@@ -24,6 +24,10 @@ import type { components } from "./schema";
 export type TokenResponse = components["schemas"]["TokenResponse"];
 export type UserResponse = components["schemas"]["UserResponse"];
 export type AdminOverview = components["schemas"]["AdminOverview"];
+export type FeedbackCreateRequest =
+  components["schemas"]["FeedbackCreateRequest"];
+export type FeedbackResponse = components["schemas"]["FeedbackResponse"];
+export type FeedbackRow = components["schemas"]["FeedbackRow"];
 export type LoginRequest = components["schemas"]["LoginRequest"];
 export type RegisterRequest = components["schemas"]["RegisterRequest"];
 export type ProjectResponse = components["schemas"]["ProjectResponse"];
@@ -582,6 +586,14 @@ export const api = {
   /** Everything the admin dashboard shows; 403 unless `users.is_admin`. */
   adminOverview: (days: number) =>
     apiRequest<AdminOverview>(`/admin/overview?days=${days}`),
+
+  /** Newest feedback notes with their authors; 403 unless `users.is_admin`. */
+  listFeedback: (limit = 50) =>
+    apiRequest<FeedbackRow[]>(`/admin/feedback?limit=${limit}`),
+
+  /** Send a short note from anywhere; 429 past 20 notes in an hour. */
+  sendFeedback: (body: FeedbackCreateRequest) =>
+    apiRequest<FeedbackResponse>("/feedback", { method: "POST", body }),
 
   /**
    * The account-level **host preference** - "use my computer when it is
