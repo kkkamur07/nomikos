@@ -10,12 +10,12 @@ characters its own font lacks.
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from fpdf import FPDF
-from PIL import ImageFont
+from fpdf.fonts import TTFFont
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import NotFoundError, ValidationError
@@ -38,6 +38,9 @@ _TEXT_FILL = (0.1, 0.1, 0.35)
 # Machine text nobody has approved yet. Legible, but unmistakably not the ink colour of
 # approved text: a reader must be able to tell a model's guess from a researcher's word.
 _MODEL_TEXT_FILL = (0.55, 0.55, 0.6)
+# The range a line's text is sized within to fit its box, in points.
+_MIN_FONT_SIZE = 8
+_MAX_FONT_SIZE = 48
 
 
 @dataclass(frozen=True)
@@ -216,12 +219,13 @@ def draw_page(pdf: _TranscriptionPdf, *, width: int, height: int, lines: list[_P
         x0, y0, x1, y1 = _line_bbox(line.points)
         box_w = max(x1 - x0, 1)
         box_h = max(y1 - y0, 1)
-        font_size = _fit_font_size(
-            line.text, font_for_script(script.value), box_w * 0.95, box_h * 0.85
-        )
-        pdf.set_font(family, size=font_size)
+        # Font, fallback and shaping are set before sizing so the line is measured as it
+        # will be drawn: shaped by HarfBuzz, with the base font filling in missing glyphs.
+        pdf.set_font(family, size=_MAX_FONT_SIZE)
         pdf.set_fallback_fonts([] if family == _BASE_FAMILY else [_BASE_FAMILY])
         pdf.set_text_shaping(use_shaping_engine=True, direction="rtl" if rtl else "ltr")
+        font_size = _fit_font_size(pdf, line.text, box_w * 0.95, box_h * 0.85)
+        pdf.set_font_size(font_size)
         pdf.set_text_color(*_rgb(line.fill))
         # A cell of one font size high puts the baseline 0.8 em below its top, so the
         # top sits 0.2 em down to keep the baseline one em under the line's top edge.
@@ -242,17 +246,63 @@ def _line_bbox(points: list[list[float]]) -> tuple[float, float, float, float]:
 
 
 def _fit_font_size(
+    pdf: _TranscriptionPdf,
     text: str,
-    font_path: Path,
     max_width: float,
     max_height: float,
     *,
-    min_size: int = 8,
-    max_size: int = 48,
+    min_size: int = _MIN_FONT_SIZE,
+    max_size: int = _MAX_FONT_SIZE,
 ) -> int:
-    for size in range(max_size, min_size - 1, -1):
-        font = ImageFont.truetype(str(font_path), size=size)
-        bbox = font.getbbox(text)
-        if bbox[2] - bbox[0] <= max_width and bbox[3] - bbox[1] <= max_height:
-            return size
-    return min_size
+    """The largest whole size at which ``text`` fits the box, in the font ``pdf`` has set.
+
+    Measured once, in the unhinted font units the PDF is drawn in, and scaled: width and
+    ink height both grow linearly with the size. Rasterising the line at every candidate
+    size instead cost about 0.2 ms a glyph (FreeType runs Noto Sans's hinting program on
+    each one), which came to 13 seconds for a 50-line page.
+    """
+    unit_width = pdf.get_string_width(text) / pdf.font_size_pt
+    unit_height = _ink_height(pdf, text)
+    limits = [float(max_size)]
+    if unit_width > 0:
+        limits.append(max_width / unit_width)
+    if unit_height > 0:
+        limits.append(max_height / unit_height)
+    return max(min_size, min(max_size, math.floor(min(limits))))
+
+
+def _ink_height(pdf: _TranscriptionPdf, text: str) -> float:
+    """The vertical ink extent of ``text`` at a size of one, from the glyph bounding boxes.
+
+    A character the current font lacks is measured in the base font, which is where the
+    fallback draws it from; one neither font has adds nothing.
+    """
+    fonts = [pdf.current_font, pdf.fonts.get(_BASE_FAMILY)]
+    top = bottom = None
+    for char in set(text):
+        for font in fonts:
+            bounds = _glyph_bounds(font, char) if font is not None else None
+            if bounds is not None:
+                low, high = bounds
+                bottom = low if bottom is None else min(bottom, low)
+                top = high if top is None else max(top, high)
+                break
+    if top is None or bottom is None:
+        return 0.0
+    return top - bottom
+
+
+def _glyph_bounds(font: TTFFont, char: str) -> tuple[float, float] | None:
+    """``char``'s ink from bottom to top in ems, or None when ``font`` has no glyph for it.
+
+    An empty glyph, such as the space, has no ink and so no bounds either.
+    """
+    ttfont = font.ttfont
+    name = ttfont.getBestCmap().get(ord(char))
+    if name is None:
+        return None
+    glyph = ttfont["glyf"][name]
+    if not hasattr(glyph, "yMax"):
+        return None
+    units = ttfont["head"].unitsPerEm
+    return glyph.yMin / units, glyph.yMax / units
