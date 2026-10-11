@@ -177,8 +177,19 @@ sends nothing and logs instead, so this section is optional until real mail
 is wanted.
 
 1. In [resend.com](https://resend.com), verify the sending domain used in `EMAIL_FROM`.
-2. Create an API key and set it as `RESEND_API_KEY` in the `nomikos-api` project.
-3. Set `EMAIL_FROM` to the verified sender.
+2. Create an API key (`re_...`) and a Coolify API token (Coolify: Keys & Tokens).
+3. Edit the marked lines at the top of `scripts/platform/apply_email_env.sh`
+   (`RESEND_API_KEY`, `COOLIFY_TOKEN`, `COOLIFY_URL`) and run it from your own
+   terminal. `--dry-run` prints the plan with the key masked and contacts nothing.
+   Never commit the edited script.
+
+The script finds the API application in Coolify (name contains `api`, override
+with `APP_NAME=...`), sets the five variables below through the Coolify REST
+API, and redeploys, which is required because Coolify injects variables at
+deploy time. It never uses ssh. **Unverified against production:** it was
+written without inspecting the host, so confirm the application and the
+variables in Coolify after the first run. Manual fallback: Coolify, Projects,
+the API application, Environment Variables, then Redeploy.
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
