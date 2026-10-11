@@ -780,6 +780,33 @@ async def generate_transcription_pdf(
 
 
 @router.get(
+    "/{document_id}/parts/{part_id}/docx",
+    response_class=Response,
+    responses=DOCX_RESPONSE,
+)
+async def export_part_docx(
+    project_id: UUID,
+    document_id: UUID,
+    part_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """One page's transcription as a Word file, for the page editor."""
+    export = await _document_docx_export_service.export_part_docx(
+        db,
+        current_user,
+        project_id,
+        document_id,
+        part_id,
+    )
+    return Response(
+        content=export.content,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={"Content-Disposition": attachment_disposition(export.filename)},
+    )
+
+
+@router.get(
     "/{document_id}/parts/{part_id}/page-xml",
     response_class=Response,
     responses=XML_RESPONSE,

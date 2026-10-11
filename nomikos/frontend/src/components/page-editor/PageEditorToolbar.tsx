@@ -11,6 +11,7 @@ import { PageEditorModelSelect } from "./PageEditorModelSelect";
 import { PageEditorPager } from "./PageEditorPager";
 import { PageEditorSharingMenu } from "./PageEditorSharingMenu";
 import { PageEditorPageXmlButton } from "./PageEditorPageXmlButton";
+import { PageEditorDocxButton } from "./PageEditorDocxButton";
 import { exportFileStem } from "../../utils/exportFilename";
 import { SettingsIcon } from "./EditorIcons";
 import { PageEditorSettingsPanel } from "./PageEditorSettingsPanel";
@@ -485,6 +486,17 @@ export function PageEditorToolbar({
                   {transcriptionPdfOpen ? "open" : "preview"}
                 </span>
               </button>
+              {projectId && documentId && (
+                <PageEditorDocxButton
+                  projectId={projectId}
+                  documentId={documentId}
+                  partId={partId}
+                  className="pe-dd-item"
+                  role="menuitem"
+                  onActivate={() => onActionsOpenChange(false)}
+                  downloadFilename={`${exportFileStem(document.name, partIndex)}.docx`}
+                />
+              )}
               {projectId && documentId && (
                 <PageEditorPageXmlButton
                   projectId={projectId}
