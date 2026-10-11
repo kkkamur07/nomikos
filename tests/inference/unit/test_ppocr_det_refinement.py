@@ -385,3 +385,102 @@ def test_cut_that_would_remove_more_than_half_marks_unresolved() -> None:
     assert big.overlap_unresolved and small.overlap_unresolved
     assert big.poly.area == pytest.approx(10000.0)
     assert small.poly.area == pytest.approx(2000.0)
+
+
+def _refined_response(
+    quads: list[DetectedQuad],
+    width: int,
+    height: int,
+    direction: str = "ltr",
+):
+    from nomikos_inference.architectures.ppocr_det.refinement import refine_to_lines
+    from nomikos_inference.architectures.ppocr_det.response import (
+        build_refined_ppocr_det_response,
+    )
+
+    layout = layout_lines(quads, direction=direction)
+    items = refine_to_lines(quads, layout)
+    return build_refined_ppocr_det_response(
+        width, height, quads, items, layout, reading_direction=direction
+    )
+
+
+def test_refined_builder_emits_one_region_per_column_in_reading_order() -> None:
+    quads = [
+        _quad(600, 100, 900, 130),
+        _quad(100, 200, 400, 230),
+        _quad(600, 200, 900, 230),
+        _quad(100, 100, 400, 130),
+    ]
+    response = _refined_response(quads, 1000, 500, "ltr")
+
+    assert [block.external_id for block in response.blocks] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+    ]
+    assert [block.order for block in response.blocks] == [0, 1]
+    assert response.blocks[0].box == {
+        "points": [[100.0, 100.0], [400.0, 100.0], [400.0, 230.0], [100.0, 230.0]]
+    }
+    assert response.blocks[1].box == {
+        "points": [[600.0, 100.0], [900.0, 100.0], [900.0, 230.0], [600.0, 230.0]]
+    }
+    assert [line.block_external_id for line in response.lines] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+        "ppocr-det-region-2",
+    ]
+
+
+def test_refined_builder_rtl_reads_the_right_column_first() -> None:
+    quads = [
+        _quad(600, 100, 900, 130),
+        _quad(100, 200, 400, 230),
+        _quad(600, 200, 900, 230),
+        _quad(100, 100, 400, 130),
+    ]
+    response = _refined_response(quads, 1000, 500, "rtl")
+
+    assert response.blocks[0].box == {
+        "points": [[600.0, 100.0], [900.0, 100.0], [900.0, 230.0], [600.0, 230.0]]
+    }
+    assert response.blocks[1].box == {
+        "points": [[100.0, 100.0], [400.0, 100.0], [400.0, 230.0], [100.0, 230.0]]
+    }
+    assert [line.block_external_id for line in response.lines] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+        "ppocr-det-region-2",
+    ]
+
+
+def test_refined_builder_leaves_a_spanning_header_unblocked() -> None:
+    quads = [_quad(0, 50, 1900, 90)]
+    quads.extend(_quad(100, y, 800, y + 30) for y in (200, 300, 400))
+    quads.extend(_quad(1100, y, 1800, y + 30) for y in (200, 300, 400))
+    response = _refined_response(quads, 2000, 600, "ltr")
+
+    assert len(response.blocks) == 2
+    unblocked = [line for line in response.lines if line.block_external_id is None]
+    assert len(unblocked) == 1
+    assert max(point[0] for point in unblocked[0].points) == 1900.0
+    assert {line.block_external_id for line in response.lines} == {
+        None,
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+    }
+
+
+def test_refined_builder_single_column_yields_one_bounding_block() -> None:
+    quads = _column(0, 200, [0, 40, 80])
+    response = _refined_response(quads, 500, 300, "ltr")
+
+    assert [block.external_id for block in response.blocks] == ["ppocr-det-region-1"]
+    xs = [point[0] for line in response.lines for point in line.points]
+    ys = [point[1] for line in response.lines for point in line.points]
+    assert response.blocks[0].box == {
+        "points": [[min(xs), min(ys)], [max(xs), min(ys)], [max(xs), max(ys)], [min(xs), max(ys)]]
+    }
+    assert {line.block_external_id for line in response.lines} == {"ppocr-det-region-1"}
