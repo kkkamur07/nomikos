@@ -720,6 +720,26 @@ export interface paths {
     patch: operations["update_document_projects__project_id__documents__document_id__patch"];
     trace?: never;
   };
+  "/projects/{project_id}/documents/{document_id}/export/docx": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Export Document Docx
+     * @description The whole document's transcription as a Word file, one heading per page.
+     */
+    get: operations["export_document_docx_projects__project_id__documents__document_id__export_docx_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{project_id}/documents/{document_id}/export/page-xml": {
     parameters: {
       query?: never;
@@ -1639,6 +1659,26 @@ export interface paths {
     };
     /** Get Published Layout */
     get: operations["get_published_layout_public_projects__project_id__documents__document_id__layout_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/public/projects/{project_id}/documents/{document_id}/parts/{part_id}/docx": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Published Docx
+     * @description One published page's transcription as a Word file.
+     */
+    get: operations["get_published_docx_public_projects__project_id__documents__document_id__parts__part_id__docx_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -7208,6 +7248,95 @@ export interface operations {
       };
     };
   };
+  export_document_docx_projects__project_id__documents__document_id__export_docx_get: {
+    parameters: {
+      query?: {
+        /** @description Cover only pages marked reviewed. 404 when that leaves nothing to export. */
+        reviewed_only?: boolean;
+      };
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Word transcription, one heading per page, script fonts and direction set */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document": string;
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
   export_document_page_xml_projects__project_id__documents__document_id__export_page_xml_get: {
     parameters: {
       query?: {
@@ -12562,6 +12691,93 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PublicLayoutResponse"];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
+  get_published_docx_public_projects__project_id__documents__document_id__parts__part_id__docx_get: {
+    parameters: {
+      query?: {
+        t?: string | null;
+      };
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+        part_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Word transcription of one published page */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document": string;
         };
       };
       /** @description Not authenticated */

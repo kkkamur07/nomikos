@@ -237,7 +237,7 @@ def test_document_pdf_page_matches_what_the_per_part_pdf_draws(
 ) -> None:
     """One page of the chapter PDF is the page the per-part route already serves.
 
-    The document renderer drives its own reportlab canvas so that every page lands in one
+    The document renderer drives one fpdf2 document so that every page lands in one
     file; this pins it to the single-page renderer's output so the two cannot drift.
     """
     project_id = owner_project["id"]

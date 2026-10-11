@@ -730,6 +730,15 @@ export const api = {
       `/projects/${projectId}/documents/${documentId}/export/text${reviewedOnlyQuery(reviewedOnly)}`,
     ),
 
+  exportDocumentDocx: (
+    projectId: string,
+    documentId: string,
+    reviewedOnly = false,
+  ) =>
+    fetchBinaryApi(
+      `/projects/${projectId}/documents/${documentId}/export/docx${reviewedOnlyQuery(reviewedOnly)}`,
+    ),
+
   enqueueDocumentSegment: (
     projectId: string,
     documentId: string,
@@ -1177,6 +1186,20 @@ export const api = {
     fetchBinaryApi(
       withShareToken(
         `/public/projects/${projectId}/documents/${documentId}/parts/${partId}/page-xml-bundle`,
+        token,
+      ),
+      { skipAuth: true },
+    ),
+
+  getPublicDocx: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    token: string | null,
+  ) =>
+    fetchBinaryApi(
+      withShareToken(
+        `/public/projects/${projectId}/documents/${documentId}/parts/${partId}/docx`,
         token,
       ),
       { skipAuth: true },

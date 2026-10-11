@@ -61,6 +61,10 @@ from backend.document.api.schemas import (
     TranscriptionLayerResponse,
 )
 from backend.document.application.document_catalog import DocumentCatalog
+from backend.document.application.document_export_docx import (
+    DOCX_MEDIA_TYPE,
+    DocumentDocxExportService,
+)
 from backend.document.application.document_export_page_xml import DocumentPageXmlExportService
 from backend.document.application.document_export_pdf import DocumentTranscriptionPdfService
 from backend.document.application.document_export_text import DocumentTextExportService
@@ -90,6 +94,7 @@ _transcription_pdf_service = TranscriptionPdfService()
 _document_page_xml_export_service = DocumentPageXmlExportService()
 _document_pdf_export_service = DocumentTranscriptionPdfService()
 _document_text_export_service = DocumentTextExportService()
+_document_docx_export_service = DocumentDocxExportService()
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 PDF_RESPONSE: dict[int | str, dict[str, Any]] = {
     200: {
@@ -119,6 +124,12 @@ TEXT_RESPONSE: dict[int | str, dict[str, Any]] = {
     200: {
         "content": {"text/plain": {"schema": {"type": "string"}}},
         "description": "Plain-text transcription, one page after another",
+    }
+}
+DOCX_RESPONSE: dict[int | str, dict[str, Any]] = {
+    200: {
+        "content": {DOCX_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+        "description": "Word transcription, one heading per page, script fonts and direction set",
     }
 }
 REVIEWED_ONLY_DESCRIPTION = (
@@ -913,6 +924,33 @@ async def export_document_text(
     return Response(
         content=export.text.encode("utf-8"),
         media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": attachment_disposition(export.filename)},
+    )
+
+
+@router.get(
+    "/{document_id}/export/docx",
+    response_class=Response,
+    responses=DOCX_RESPONSE,
+)
+async def export_document_docx(
+    project_id: UUID,
+    document_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    reviewed_only: bool = Query(default=False, description=REVIEWED_ONLY_DESCRIPTION),
+) -> Response:
+    """The whole document's transcription as a Word file, one heading per page."""
+    export = await _document_docx_export_service.export_document_docx(
+        db,
+        current_user,
+        project_id,
+        document_id,
+        reviewed_only=reviewed_only,
+    )
+    return Response(
+        content=export.content,
+        media_type=DOCX_MEDIA_TYPE,
         headers={"Content-Disposition": attachment_disposition(export.filename)},
     )
 

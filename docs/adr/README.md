@@ -18,3 +18,4 @@ value of an ADR is that it says what was believed at the time, and why.
 | [0006](0006-onnx-runtime-is-the-inference-runtime.md)                | ONNX Runtime is the inference runtime; PyTorch builds the artifact | Accepted                                                 |
 | [0007](0007-serving-preprocessing-reproduces-the-training-loader.md) | Serving preprocessing reproduces the training loader, exactly  | Accepted                                                     |
 | [0008](0008-server-owned-reading-order-for-lines.md)               | Server-owned reading order for lines                           | Accepted                                                     |
+| [0009](0009-script-aware-document-exports.md)                         | Script-aware document exports (docx and shaped PDF)            | Accepted                                                     |

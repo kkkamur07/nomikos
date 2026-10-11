@@ -1,13 +1,17 @@
-"""Which text a transcription PDF draws for a line, and in which colour."""
+"""Which text a transcription PDF draws for a line, in which colour, and in which font."""
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime, timedelta
+
+from pypdf import PdfReader
 
 from backend.annotation.application.transcription_pdf_service import (
     _MODEL_TEXT_FILL,
     _TEXT_FILL,
     TranscriptionPdfService,
+    _PdfLine,
 )
 from backend.document.infrastructure.orm_models import (
     Line,
@@ -82,3 +86,38 @@ def test_blank_text_of_either_kind_is_not_a_line():
     )
     # An empty ground-truth row does not hide the model's text behind it.
     assert [(line.text, line.approved) for line in lines] == [("guess", False)]
+
+
+def _box(top: int) -> list[list[float]]:
+    return [[20, top], [580, top], [580, top + 50], [20, top + 50]]
+
+
+def _render(*texts: str):
+    lines = [_PdfLine(text=text, points=_box(20 + 70 * index)) for index, text in enumerate(texts)]
+    content = TranscriptionPdfService()._render_pdf(width=600, height=400, lines=lines)
+    return PdfReader(io.BytesIO(content)).pages[0]
+
+
+def _font_names(page) -> set[str]:
+    # Subset fonts are named ``ABCDEF+Family``; the family is what identifies the file.
+    return {str(font["/BaseFont"]).split("+")[-1] for font in page["/Resources"]["/Font"].values()}
+
+
+def test_greek_text_is_extractable_from_the_pdf():
+    page = _render("Ἐν ἀρχῇ ἦν ὁ λόγος")
+    assert "Ἐν ἀρχῇ ἦν ὁ λόγος" in page.extract_text()
+    assert page.mediabox.width == 600
+    assert page.mediabox.height == 400
+
+
+def test_each_script_is_drawn_in_its_own_bundled_font():
+    page = _render("Ἐν ἀρχῇ", "ܫܠܡܐ ܥܠܝܟܘܢ", "Բարեւ աշխարհ", "ⲡⲛⲟⲩⲧⲉ ⲡⲉ")
+    assert {"NotoSans", "NotoSansSyriac", "NotoSansArmenian", "NotoSansCoptic"} <= _font_names(page)
+    # Shaped glyphs still map back to the characters they draw.
+    text = page.extract_text()
+    for word in ("ܫܠܡܐ", "Բարեւ", "ⲡⲛⲟⲩⲧⲉ"):
+        assert word in text
+
+
+def test_a_page_without_syriac_does_not_embed_the_syriac_font():
+    assert "NotoSansSyriac" not in _font_names(_render("alpha", "Ἐν ἀρχῇ"))
