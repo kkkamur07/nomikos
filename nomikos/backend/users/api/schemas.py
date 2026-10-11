@@ -81,6 +81,9 @@ class UserResponse(BaseModel):
     # account already does not need a second round trip to render the setting;
     # written through ``PUT /account/execution-target``.
     prefer_local_inference: bool = False
+    # Whether the client should offer the admin dashboard. Display only: every
+    # ``/admin`` route checks the column itself through ``require_admin``.
+    is_admin: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

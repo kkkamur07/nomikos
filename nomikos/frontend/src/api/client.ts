@@ -23,6 +23,7 @@ import type { components } from "./schema";
 
 export type TokenResponse = components["schemas"]["TokenResponse"];
 export type UserResponse = components["schemas"]["UserResponse"];
+export type AdminOverview = components["schemas"]["AdminOverview"];
 export type LoginRequest = components["schemas"]["LoginRequest"];
 export type RegisterRequest = components["schemas"]["RegisterRequest"];
 export type ProjectResponse = components["schemas"]["ProjectResponse"];
@@ -557,6 +558,22 @@ export const api = {
   logout: () => postCsrfProtected<void>("/auth/logout"),
 
   me: () => apiRequest<UserResponse>("/me"),
+
+  /**
+   * `/me` signed with a given token and without auth recovery: a failure here
+   * must never refresh or clear the session, because the caller only uses it
+   * to decide whether to show a link.
+   */
+  meWithoutRecovery: (accessToken: string) =>
+    apiRequest<UserResponse>("/me", {
+      skipAuth: true,
+      skipDedup: true,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+
+  /** Everything the admin dashboard shows; 403 unless `users.is_admin`. */
+  adminOverview: (days: number) =>
+    apiRequest<AdminOverview>(`/admin/overview?days=${days}`),
 
   /**
    * The account-level **host preference** - "use my computer when it is

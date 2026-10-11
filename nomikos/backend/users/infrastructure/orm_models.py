@@ -35,6 +35,12 @@ class User(Base):
     prefer_local_inference: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # Opens ``/admin`` (aggregate usage and database load, nothing per-document).
+    # No route writes it: promotion is an UPDATE by whoever operates the database,
+    # so an account cannot grant itself the dashboard. See migration 007.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     owned_projects: Mapped[list[Project]] = relationship("Project", back_populates="owner")

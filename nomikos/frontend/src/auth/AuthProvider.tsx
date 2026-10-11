@@ -15,12 +15,18 @@ type AuthStatus = "restoring" | "authenticated" | "anonymous";
 
 type AuthContextValue = {
   status: AuthStatus;
+  /**
+   * Whether the signed-in account may open `/admin`; `null` until `/me` has
+   * answered. Display only: the API checks `users.is_admin` on every admin route.
+   */
+  isAdmin: boolean | null;
   establish: (accessToken: string) => void;
   logout: () => Promise<void>;
 };
 
 const fallbackContext: AuthContextValue = {
   status: getAccessToken() ? "authenticated" : "anonymous",
+  isAdmin: false,
   establish: (accessToken) => {
     setAccessToken(accessToken);
     clearLoginRedirectGuard();
@@ -56,9 +62,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (status !== "authenticated") {
+      setIsAdmin(status === "anonymous" ? false : null);
+      return;
+    }
+    const token = getAccessToken();
+    if (!token) {
+      setIsAdmin(false);
+      return;
+    }
+    let active = true;
+    // No auth recovery, and wrapped so a synchronous throw lands in the same
+    // catch: a failed lookup only hides the admin link, it never signs anyone out.
+    void Promise.resolve()
+      .then(() => api.meWithoutRecovery(token))
+      .then((user) => {
+        if (active) setIsAdmin(user?.is_admin === true);
+      })
+      .catch(() => {
+        if (active) setIsAdmin(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [status]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
+      isAdmin,
       establish: (accessToken) => {
         setAccessToken(accessToken);
         clearLoginRedirectGuard();
@@ -73,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
     }),
-    [status],
+    [status, isAdmin],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

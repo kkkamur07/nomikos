@@ -58,6 +58,21 @@ async def get_current_user(
     return user
 
 
+async def require_admin(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Let only accounts with ``users.is_admin`` through; everyone else gets 403.
+
+    Built on :func:`get_current_user`, so a missing or revoked session is still a
+    401 and only an authenticated non-admin sees the 403. The flag is read from
+    the row the session resolved to, never from the token, so demoting an account
+    takes effect on its next request.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
+
+
 async def get_current_device(
     db: Annotated[AsyncSession, Depends(get_db)],
     x_nomikos_device_token: Annotated[str | None, Header(alias=DEVICE_TOKEN_HEADER)] = None,

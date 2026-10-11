@@ -15,8 +15,10 @@ from fastapi.responses import JSONResponse
 import infrastructure.models  # noqa: F401 - register all ORM mappers before first query
 from backend.annotation.api.history import router as annotation_history_router
 from backend.annotation.api.segment_health import router as segment_health_router
+from backend.core.api.admin import router as admin_router
 from backend.core.api.client_failures import router as client_failures_router
 from backend.core.api.health import router as health_router
+from backend.core.api.request_metrics import RequestMetricsMiddleware
 from backend.core.api.root import router as root_router
 from backend.core.exceptions import (
     AccessDeniedError,
@@ -351,6 +353,11 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_enabled else None,
     )
 
+    # Innermost of the three, so CORS preflights answered by CORSMiddleware are not
+    # counted and the router has filled in ``scope["route"]`` by the time it reads it.
+    # In-process counters only (ADR "Admin dashboard and request metrics").
+    app.add_middleware(RequestMetricsMiddleware)
+
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
@@ -368,6 +375,7 @@ def create_app() -> FastAPI:
     app.include_router(root_router)
     app.include_router(health_router)
     app.include_router(client_failures_router)
+    app.include_router(admin_router)
     app.include_router(auth_router)
     app.include_router(projects_router)
     app.include_router(documents_router)
