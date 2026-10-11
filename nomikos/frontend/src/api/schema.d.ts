@@ -46,6 +46,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Admin Overview
+     * @description Everything the dashboard shows, for the last ``days`` days.
+     *
+     *     Per-route request counts and client failures are this API process's own,
+     *     since ``started_at``; the rest comes from Postgres.
+     */
+    get: operations["admin_overview_admin_overview_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/auth/login": {
     parameters: {
       query?: never;
@@ -1762,6 +1785,59 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** ActivityOverview */
+    ActivityOverview: {
+      /** Annotations */
+      annotations: components["schemas"]["AnnotationDayCount"][];
+      /** Jobs */
+      jobs: components["schemas"]["JobDayCount"][];
+      /** Lines */
+      lines: components["schemas"]["DayCount"][];
+      /** Pages */
+      pages: components["schemas"]["DayCount"][];
+    };
+    /** AdminOverview */
+    AdminOverview: {
+      activity: components["schemas"]["ActivityOverview"];
+      client_failures: components["schemas"]["ClientFailuresOverview"];
+      database: components["schemas"]["DatabaseOverview"];
+      /** Days */
+      days: number;
+      /**
+       * Generated At
+       * Format: date-time
+       */
+      generated_at: string;
+      /** Models */
+      models: components["schemas"]["ModelUsage"][];
+      requests: components["schemas"]["RequestsOverview"];
+      users: components["schemas"]["UsersOverview"];
+    };
+    /** AdminUserRow */
+    AdminUserRow: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Email */
+      email: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Is Admin */
+      is_admin: boolean;
+      /** Jobs */
+      jobs: number;
+      /** Last Seen */
+      last_seen?: string | null;
+      /** Lines Approved */
+      lines_approved: number;
+      /** Username */
+      username: string;
+    };
     /**
      * AgentVersionNotice
      * @description What the platform makes of a served agent's version.
@@ -1848,6 +1924,18 @@ export interface components {
      */
     AgentVersionRefusalResponse: {
       error: components["schemas"]["AgentVersionRefusal"];
+    };
+    /** AnnotationDayCount */
+    AnnotationDayCount: {
+      /** Approved */
+      approved: number;
+      /** Corrections */
+      corrections: number;
+      /**
+       * Day
+       * Format: date
+       */
+      day: string;
     };
     /** AnnotationHistorySnapshotResponse */
     AnnotationHistorySnapshotResponse: {
@@ -2061,6 +2149,22 @@ export interface components {
       /** Deleted */
       deleted: number;
     };
+    /** ClientFailureEntry */
+    ClientFailureEntry: {
+      /**
+       * At
+       * Format: date-time
+       */
+      at: string;
+      /** Message */
+      message: string;
+      /** Path */
+      path?: string | null;
+      /** Source */
+      source?: string | null;
+      /** Status */
+      status?: number | null;
+    };
     /** ClientFailureRequest */
     ClientFailureRequest: {
       /** Message */
@@ -2084,6 +2188,18 @@ export interface components {
       /** Ref */
       ref: string;
     };
+    /** ClientFailuresOverview */
+    ClientFailuresOverview: {
+      /** Per Day */
+      per_day: components["schemas"]["DayCount"][];
+      /** Recent */
+      recent: components["schemas"]["ClientFailureEntry"][];
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+    };
     /** CopyToGroundTruthRequest */
     CopyToGroundTruthRequest: {
       /** Line Ids */
@@ -2093,6 +2209,55 @@ export interface components {
     CopyToGroundTruthResponse: {
       /** Copied Line Ids */
       copied_line_ids: string[];
+    };
+    /** DatabaseOverview */
+    DatabaseOverview: {
+      /** Active Queries */
+      active_queries: number;
+      /** Blks Hit */
+      blks_hit: number;
+      /** Blks Read */
+      blks_read: number;
+      /** Busiest Tables */
+      busiest_tables: components["schemas"]["TableStats"][];
+      /** Largest Tables */
+      largest_tables: components["schemas"]["TableStats"][];
+      /** Name */
+      name: string;
+      /** Numbackends */
+      numbackends: number;
+      /** Pool Status */
+      pool_status?: string | null;
+      /** Seq Scan Tables */
+      seq_scan_tables: components["schemas"]["TableStats"][];
+      /** Size Bytes */
+      size_bytes: number;
+      /** Stats Reset */
+      stats_reset?: string | null;
+      /** Tup Deleted */
+      tup_deleted: number;
+      /** Tup Fetched */
+      tup_fetched: number;
+      /** Tup Inserted */
+      tup_inserted: number;
+      /** Tup Returned */
+      tup_returned: number;
+      /** Tup Updated */
+      tup_updated: number;
+      /** Xact Commit */
+      xact_commit: number;
+      /** Xact Rollback */
+      xact_rollback: number;
+    };
+    /** DayCount */
+    DayCount: {
+      /** Count */
+      count: number;
+      /**
+       * Day
+       * Format: date
+       */
+      day: string;
     };
     /** DeviceResponse */
     DeviceResponse: {
@@ -2554,6 +2719,20 @@ export interface components {
        */
       server_time: string;
     };
+    /** JobDayCount */
+    JobDayCount: {
+      /** Count */
+      count: number;
+      /**
+       * Day
+       * Format: date
+       */
+      day: string;
+      /** Kind */
+      kind: string;
+      /** Status */
+      status: string;
+    };
     /** JobPageResponse */
     JobPageResponse: {
       /** Items */
@@ -2850,6 +3029,25 @@ export interface components {
       overrides?: {
         [key: string]: unknown;
       } | null;
+    };
+    /** ModelUsage */
+    ModelUsage: {
+      /** Done */
+      done: number;
+      /** Failed */
+      failed: number;
+      /** Jobs */
+      jobs: number;
+      /** Median Seconds */
+      median_seconds?: number | null;
+      /** Name */
+      name: string;
+      /** Provider */
+      provider?: string | null;
+      /** Success Rate */
+      success_rate?: number | null;
+      /** Task */
+      task: string;
     };
     /** PagePairingResponse */
     PagePairingResponse: {
@@ -3278,6 +3476,18 @@ export interface components {
       /** Part Ids */
       part_ids: string[];
     };
+    /** RequestsOverview */
+    RequestsOverview: {
+      /** Routes */
+      routes: components["schemas"]["RouteMetric"][];
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+      /** Total Requests */
+      total_requests: number;
+    };
     /** ResolvedModelBindingResponse */
     ResolvedModelBindingResponse: {
       binding: components["schemas"]["ModelBindingResponse"];
@@ -3286,6 +3496,21 @@ export interface components {
         [key: string]: unknown;
       };
       model: components["schemas"]["InferenceModelResponse"];
+    };
+    /** RouteMetric */
+    RouteMetric: {
+      /** Avg Ms */
+      avg_ms: number;
+      /** Count */
+      count: number;
+      /** Max Ms */
+      max_ms: number;
+      /** Method */
+      method: string;
+      /** Route */
+      route: string;
+      /** Status Class */
+      status_class: string;
     };
     /** SegmentBlock */
     SegmentBlock: {
@@ -3535,6 +3760,25 @@ export interface components {
       /** Username */
       username?: string | null;
     };
+    /** TableStats */
+    TableStats: {
+      /** Deletes */
+      deletes: number;
+      /** Idx Scan */
+      idx_scan: number;
+      /** Inserts */
+      inserts: number;
+      /** Live Rows */
+      live_rows: number;
+      /** Name */
+      name: string;
+      /** Seq Scan */
+      seq_scan: number;
+      /** Total Bytes */
+      total_bytes: number;
+      /** Updates */
+      updates: number;
+    };
     /** TokenResponse */
     TokenResponse: {
       /** Access Token */
@@ -3651,12 +3895,46 @@ export interface components {
        */
       id: string;
       /**
+       * Is Admin
+       * @default false
+       */
+      is_admin: boolean;
+      /**
        * Prefer Local Inference
        * @default false
        */
       prefer_local_inference: boolean;
       /** Username */
       username: string;
+    };
+    /** UsersOverview */
+    UsersOverview: {
+      /** Active 30D */
+      active_30d: number;
+      /** Active 7D */
+      active_7d: number;
+      /** Active In Window */
+      active_in_window: number;
+      /** Admins */
+      admins: number;
+      /** New In Window */
+      new_in_window: number;
+      /** New Per Week */
+      new_per_week: components["schemas"]["WeekCount"][];
+      /** Top Users */
+      top_users: components["schemas"]["AdminUserRow"][];
+      /** Total */
+      total: number;
+    };
+    /** WeekCount */
+    WeekCount: {
+      /** Count */
+      count: number;
+      /**
+       * Week
+       * Format: date
+       */
+      week: string;
     };
     /** WelcomeResponse */
     WelcomeResponse: {
@@ -3866,6 +4144,91 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ExecutionPreferenceResponse"];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
+  admin_overview_admin_overview_get: {
+    parameters: {
+      query?: {
+        days?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AdminOverview"];
         };
       };
       /** @description Not authenticated */

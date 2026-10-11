@@ -24,7 +24,7 @@ export function TopNav({
   onLogout,
 }: TopNavProps) {
   const router = useRouter();
-  const { logout } = useAuthSession();
+  const { logout, isAdmin } = useAuthSession();
 
   const handleLogout = () => {
     if (onLogout) {
@@ -76,6 +76,11 @@ export function TopNav({
       <div className="topnav-actions">
         {actions}
         {username && <span className="topnav-user">{username}</span>}
+        {isAdmin === true && (
+          <Link href="/admin" className="btn btn-ghost btn-sm">
+            Admin
+          </Link>
+        )}
         <Link href="/settings" className="btn btn-ghost btn-sm">
           Settings
         </Link>
