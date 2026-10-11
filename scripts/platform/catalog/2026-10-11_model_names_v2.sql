@@ -10,7 +10,10 @@
 -- armenian-calamari-v1->armenian-v1, coptic-calamari-v1->coptic-v1,
 -- syriac-ppocr-v1->syriac-v2. Bindings on the retired syriac-calamari-v2 row
 -- move to syriac-v2 first (`model_bindings` has no unique constraint, so a
--- plain UPDATE cannot collide), then the Calamari row is deleted. Jobs keep
+-- plain UPDATE cannot collide), then the Calamari row is deleted.
+-- `jobs.model_id` is ON DELETE SET NULL, so every job that ran on
+-- syriac-calamari-v2 ends up with `model_id = NULL`; the count SELECT below
+-- prints that number before the DELETE. Jobs on the six renamed rows keep
 -- their UUID references and are unaffected.
 BEGIN;
 
@@ -46,6 +49,9 @@ UPDATE inference_models SET name = 'coptic-v1' WHERE name = 'coptic-calamari-v1'
 UPDATE inference_models SET name = 'syriac-v2' WHERE name = 'syriac-ppocr-v1';
 
 UPDATE model_bindings SET model_id = (SELECT id FROM inference_models WHERE name = 'syriac-v2')
+WHERE model_id = (SELECT id FROM inference_models WHERE name = 'syriac-calamari-v2');
+
+SELECT count(*) AS jobs_losing_model_reference FROM jobs
 WHERE model_id = (SELECT id FROM inference_models WHERE name = 'syriac-calamari-v2');
 
 DELETE FROM inference_models WHERE name = 'syriac-calamari-v2';

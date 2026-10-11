@@ -17,5 +17,8 @@ transcribers.
 Production: apply `scripts/platform/catalog/2026-10-11_model_names_v2.sql`
 once with psql; the guard raises if the 7 pre-rename rows are absent, so a
 second run fails instead of renaming twice. Bindings on the retired
-`syriac-calamari-v2` row move to `syriac-v2` before it is deleted. Old jobs
-keep their UUID references and are unaffected.
+`syriac-calamari-v2` row move to `syriac-v2` before it is deleted.
+`jobs.model_id` is ON DELETE SET NULL, so every job that ran on
+`syriac-calamari-v2` ends up with `model_id = NULL` (the script prints the
+count first); jobs on the six renamed rows keep their UUID references and
+are unaffected.
