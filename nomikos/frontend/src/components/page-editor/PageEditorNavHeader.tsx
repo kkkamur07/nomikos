@@ -1,4 +1,8 @@
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+import { FeedbackDialog } from "../layout/FeedbackDialog";
+import { useFeedbackButton } from "../layout/useFeedbackButton";
 
 type PageEditorBackLinkProps = {
   to: string;
@@ -24,6 +28,10 @@ type PageEditorNavHeaderProps = {
 };
 
 export function PageEditorNavHeader({ backHref }: PageEditorNavHeaderProps) {
+  const pathname = usePathname();
+  const { dialogOpen, thanks, openDialog, closeDialog, handleSent } =
+    useFeedbackButton();
+
   return (
     <header className="pe-toolbar pe-toolbar--minimal" role="banner">
       <Link
@@ -35,6 +43,21 @@ export function PageEditorNavHeader({ backHref }: PageEditorNavHeaderProps) {
         <span>nomikos</span>
       </Link>
       <PageEditorBackLink to={backHref} />
+      {/* This header is otherwise empty, so a text button costs no space. */}
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        style={{ marginLeft: "auto" }}
+        onClick={openDialog}
+      >
+        {thanks ? "Thanks" : "Feedback"}
+      </button>
+      <FeedbackDialog
+        open={dialogOpen}
+        pagePath={pathname ?? "/"}
+        onClose={closeDialog}
+        onSent={handleSent}
+      />
     </header>
   );
 }

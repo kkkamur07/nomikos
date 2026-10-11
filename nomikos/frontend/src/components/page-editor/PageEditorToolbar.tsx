@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type {
   DocumentWithPartsResponse,
   InferenceModelResponse,
@@ -7,6 +8,8 @@ import type {
   SegmentHealthResponse,
 } from "../../api/client";
 import { PageEditorBackLink } from "./PageEditorNavHeader";
+import { FeedbackDialog } from "../layout/FeedbackDialog";
+import { useFeedbackButton } from "../layout/useFeedbackButton";
 import { PageEditorModelSelect } from "./PageEditorModelSelect";
 import { PageEditorPager } from "./PageEditorPager";
 import { PageEditorSharingMenu } from "./PageEditorSharingMenu";
@@ -136,6 +139,9 @@ export function PageEditorToolbar({
   hasLocalCapacity,
   hostPreferenceLoading,
 }: PageEditorToolbarProps) {
+  const pathname = usePathname();
+  const { dialogOpen, thanks, openDialog, closeDialog, handleSent } =
+    useFeedbackButton();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const segmentHealthRef = useRef<HTMLDivElement>(null);
@@ -586,6 +592,16 @@ export function PageEditorToolbar({
               />
             )}
           </div>
+          {/* Text button: the cluster is wide enough at 1440px that the label
+              costs no wrap, and the label says what an icon would not. */}
+          <button
+            type="button"
+            className="pe-tb-btn"
+            title="Send feedback about this page"
+            onClick={openDialog}
+          >
+            {thanks ? "Thanks" : "Feedback"}
+          </button>
           <div className="pe-dropdown-wrap" ref={settingsRef}>
             <button
               type="button"
@@ -611,6 +627,12 @@ export function PageEditorToolbar({
           </div>
         </div>
       </div>
+      <FeedbackDialog
+        open={dialogOpen}
+        pagePath={pathname ?? "/"}
+        onClose={closeDialog}
+        onSent={handleSent}
+      />
     </header>
   );
 }
