@@ -160,4 +160,5 @@ async def test_register_passes_configured_reply_to(auth_routes, monkeypatch) -> 
 
     sender = _RecordingSender()
     await _run(tasks, sender, monkeypatch)
-    assert "Reply to this email if you need help getting started." in sender.sent[0].html
+    assert "Just reply to this email or write to" in sender.sent[0].html
+    assert "hello@nomikos.app" in sender.sent[0].html
