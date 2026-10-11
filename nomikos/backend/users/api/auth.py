@@ -1,11 +1,15 @@
 """Auth routes: register, login, refresh, logout, and me."""
 
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.settings.auth import get_auth_settings
+from backend.core.settings.email import get_email_settings
+from backend.notifications.sender import send_in_background
+from backend.notifications.templates import signin_notice_email, welcome_email
 from backend.users.api.dependencies import get_current_user
 from backend.users.api.rate_limit import throttle_auth_attempts
 from backend.users.api.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
@@ -78,6 +82,7 @@ async def register(
     _rate_limit: Annotated[None, Depends(throttle_auth_attempts)],
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
+    background_tasks: BackgroundTasks,
 ) -> TokenResponse:
     user, _token = await _auth.register(
         db,
@@ -86,6 +91,9 @@ async def register(
         password=body.password,
     )
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
+    message = welcome_email(user.username, get_email_settings().app_public_url)
+    message.to = user.email
+    send_in_background(background_tasks, message)
     return _issue_session(response, tokens)
 
 
@@ -95,9 +103,16 @@ async def login(
     _rate_limit: Annotated[None, Depends(throttle_auth_attempts)],
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
+    background_tasks: BackgroundTasks,
 ) -> TokenResponse:
     user, _token = await _auth.login(db, email=body.email, password=body.password)
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
+    if get_email_settings().signin_notices:
+        message = signin_notice_email(
+            user.username, datetime.now(UTC), get_email_settings().app_public_url
+        )
+        message.to = user.email
+        send_in_background(background_tasks, message)
     return _issue_session(response, tokens)
 
 

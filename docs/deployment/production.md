@@ -169,6 +169,26 @@ removing `regions` from [`infrastructure/platform/vercel.json`](../../infrastruc
 Vercel-specific Python runtime, bundle-size, and dependency notes:
 [`vercel-platform-api.md`](vercel-platform-api.md).
 
+### Transactional email (Resend)
+
+Registration sends a welcome mail and each login sends a sign-in notice, both
+after the response via FastAPI `BackgroundTasks`. Without a key the platform
+sends nothing and logs instead, so this section is optional until real mail
+is wanted.
+
+1. In [resend.com](https://resend.com), verify the sending domain used in `EMAIL_FROM`.
+2. Create an API key and set it as `RESEND_API_KEY` in the `nomikos-api` project.
+3. Set `EMAIL_FROM` to the verified sender.
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `RESEND_API_KEY` | *(unset)* | Enables sending; when unset, mail is logged, not sent |
+| `EMAIL_FROM` | `Nomikos <no-reply@nomikos.app>` | Sender identity, must use a verified domain |
+| `APP_PUBLIC_URL` | `https://nomikos.app` | Link target of the "Open Nomikos" button |
+| `EMAIL_SIGNIN_NOTICES` | `true` | Set `false` to stop sign-in notices (welcome mail still sends) |
+
+Preview the templates without a key: `python scripts/platform/preview_emails.py <out_dir>`
+renders `welcome.html`, `welcome.txt`, `signin.html`, `signin.txt`.
 ---
 
 ## 3. Optional cloud inference + platform worker (persistent host)
