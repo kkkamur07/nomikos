@@ -13,7 +13,7 @@ import {
 import { toast } from "../ui/toast";
 import { pageCountLabel } from "./documentActionCopy";
 
-type ExportKind = "page-xml" | "transcription-pdf" | "text";
+type ExportKind = "page-xml" | "transcription-pdf" | "text" | "docx";
 
 type DocumentDownloadMenuProps = {
   projectId: string;
@@ -27,13 +27,24 @@ const EXTENSION: Record<ExportKind, string> = {
   "page-xml": "zip",
   "transcription-pdf": "pdf",
   text: "txt",
+  docx: "docx",
 };
 
 const FAILURE_MESSAGE: Record<ExportKind, string> = {
   "page-xml": "Could not build the PAGE XML archive",
   "transcription-pdf": "Could not build the transcription PDF",
   text: "Could not build the plain text export",
+  docx: "Could not build the Word document",
 };
+
+// Method names rather than functions, so the client is looked up when the
+// download starts, not when this module loads.
+const EXPORT_METHOD = {
+  "page-xml": "exportDocumentPageXml",
+  "transcription-pdf": "exportDocumentTranscriptionPdf",
+  text: "exportDocumentText",
+  docx: "exportDocumentDocx",
+} as const satisfies Record<ExportKind, keyof typeof api>;
 
 /**
  * Whole-document exports.
@@ -65,16 +76,11 @@ export function DocumentDownloadMenu({
     const ticket = `${kind}:${reviewedOnly}`;
     setDownloading(ticket);
     try {
-      const blob =
-        kind === "page-xml"
-          ? await api.exportDocumentPageXml(projectId, documentId, reviewedOnly)
-          : kind === "transcription-pdf"
-            ? await api.exportDocumentTranscriptionPdf(
-                projectId,
-                documentId,
-                reviewedOnly,
-              )
-            : await api.exportDocumentText(projectId, documentId, reviewedOnly);
+      const blob = await api[EXPORT_METHOD[kind]](
+        projectId,
+        documentId,
+        reviewedOnly,
+      );
       saveBlobAsFile(
         blob,
         `${documentExportFileStem(documentName, reviewedOnly)}.${EXTENSION[kind]}`,
@@ -120,6 +126,13 @@ export function DocumentDownloadMenu({
             disabled={busy || total === 0}
             onSelect={() => void download("text", false, close)}
           />
+          <ActionMenuItem
+            label="Word (.docx)"
+            ariaLabel="Word (.docx), whole chapter"
+            meta={downloading === "docx:false" ? "preparing…" : undefined}
+            disabled={busy || total === 0}
+            onSelect={() => void download("docx", false, close)}
+          />
           <ActionMenuDivider />
           <ActionMenuSection>Reviewed only</ActionMenuSection>
           <ActionMenuCaption>
@@ -139,6 +152,13 @@ export function DocumentDownloadMenu({
             meta={meta("transcription-pdf", reviewed, "transcription-pdf:true")}
             disabled={busy || reviewed === 0}
             onSelect={() => void download("transcription-pdf", true, close)}
+          />
+          <ActionMenuItem
+            label="Word (.docx)"
+            ariaLabel="Word (.docx), reviewed pages only"
+            meta={downloading === "docx:true" ? "preparing…" : undefined}
+            disabled={busy || reviewed === 0}
+            onSelect={() => void download("docx", true, close)}
           />
         </>
       )}

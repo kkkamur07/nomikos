@@ -50,6 +50,7 @@ vi.mock("../api/client", async (importOriginal) => {
       exportDocumentPageXml: vi.fn(),
       exportDocumentTranscriptionPdf: vi.fn(),
       exportDocumentText: vi.fn(),
+      exportDocumentDocx: vi.fn(),
       rotateDocumentShareToken: vi.fn(),
     },
   };
@@ -159,6 +160,11 @@ describe("DocumentDetailPage action toolbar", () => {
     );
     vi.mocked(api.exportDocumentText).mockResolvedValue(
       new Blob(["text"], { type: "text/plain" }),
+    );
+    vi.mocked(api.exportDocumentDocx).mockResolvedValue(
+      new Blob(["PK"], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
     );
   });
 
@@ -359,6 +365,45 @@ describe("DocumentDetailPage action toolbar", () => {
     });
     await waitFor(() => {
       expect(lastDownload?.download).toBe("Chapter_4.txt");
+    });
+  });
+
+  it("downloads the Word export for either scope through the authenticated client", async () => {
+    renderDocumentPage();
+    await screen.findByRole("heading", { name: "Chapter 4" });
+
+    let menu = await openMenu("Download", "Download this document");
+    fireEvent.click(
+      within(menu).getByRole("menuitem", {
+        name: "Word (.docx), whole chapter",
+      }),
+    );
+    await waitFor(() => {
+      expect(api.exportDocumentDocx).toHaveBeenCalledWith(
+        "project-1",
+        "doc-1",
+        false,
+      );
+    });
+    await waitFor(() => {
+      expect(lastDownload?.download).toBe("Chapter_4.docx");
+    });
+
+    menu = await openMenu("Download", "Download this document");
+    fireEvent.click(
+      within(menu).getByRole("menuitem", {
+        name: "Word (.docx), reviewed pages only",
+      }),
+    );
+    await waitFor(() => {
+      expect(api.exportDocumentDocx).toHaveBeenCalledWith(
+        "project-1",
+        "doc-1",
+        true,
+      );
+    });
+    await waitFor(() => {
+      expect(lastDownload?.download).toBe("Chapter_4_reviewed.docx");
     });
   });
 
