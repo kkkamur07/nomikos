@@ -17,6 +17,7 @@ from backend.annotation.api.history import router as annotation_history_router
 from backend.annotation.api.segment_health import router as segment_health_router
 from backend.core.api.admin import router as admin_router
 from backend.core.api.client_failures import router as client_failures_router
+from backend.core.api.feedback import router as feedback_router
 from backend.core.api.health import router as health_router
 from backend.core.api.request_metrics import RequestMetricsMiddleware
 from backend.core.api.root import router as root_router
@@ -375,6 +376,7 @@ def create_app() -> FastAPI:
     app.include_router(root_router)
     app.include_router(health_router)
     app.include_router(client_failures_router)
+    app.include_router(feedback_router)
     app.include_router(admin_router)
     app.include_router(auth_router)
     app.include_router(projects_router)

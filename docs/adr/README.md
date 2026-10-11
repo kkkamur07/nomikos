@@ -21,3 +21,4 @@ value of an ADR is that it says what was believed at the time, and why.
 | [0009](0009-script-aware-document-exports.md)                         | Script-aware document exports (docx and shaped PDF)            | Accepted                                                     |
 | [0010](0010-admin-dashboard-and-request-metrics.md)                 | Admin dashboard and request metrics                            | Accepted                                                     |
 | [0011](0011-regions-above-lines.md)                                  | Regions are the unit of layout above lines                     | Accepted                                                     |
+| [0012](0012-user-feedback.md)                                        | User feedback                                                  | Accepted                                                     |

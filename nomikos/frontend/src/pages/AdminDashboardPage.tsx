@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { notFound, useRouter } from "next/navigation";
 import { Segmented, Table } from "antd";
-import { api, type AdminOverview } from "../api/client";
+import { api, type AdminOverview, type FeedbackRow } from "../api/client";
 import { ApiError } from "../api/errors";
 import { userFacingMessage } from "../api/userFacingError";
 import { useAuthSession } from "../auth/AuthProvider";
@@ -281,11 +281,48 @@ function tableColumns(): {
   ];
 }
 
-export function AdminOverviewView({ overview }: { overview: AdminOverview }) {
+export function AdminFeedbackTable({ rows }: { rows: FeedbackRow[] }) {
+  return (
+    <Table<FeedbackRow>
+      size="small"
+      rowKey="id"
+      pagination={false}
+      dataSource={rows}
+      locale={{ emptyText: "No feedback yet." }}
+      columns={[
+        {
+          title: "When (UTC)",
+          dataIndex: "created_at",
+          render: (value: string) => formatDateTime(value),
+        },
+        {
+          title: "Who",
+          dataIndex: "username",
+          render: (value: string, row) => (
+            <span title={row.email}>{value}</span>
+          ),
+        },
+        {
+          title: "Page",
+          dataIndex: "page_path",
+          render: (value: string | null) => value ?? "—",
+        },
+        { title: "Message", dataIndex: "message" },
+      ]}
+    />
+  );
+}
+
+export function AdminOverviewView({
+  overview,
+  feedback = [],
+}: {
+  overview: AdminOverview;
+  feedback?: FeedbackRow[];
+}) {
   const days = windowDays(overview.days);
   const { users, activity, models, database, requests } = overview;
   const failures = overview.client_failures;
-
   const jobsByStatus = byDay(activity.jobs, (row) => ({
     [row.status]: row.count,
   }));
@@ -591,6 +628,13 @@ export function AdminOverviewView({ overview }: { overview: AdminOverview }) {
       </Card>
 
       <Card
+        id="feedback"
+        title="Feedback"
+        note="Newest notes sent by signed-in users, up to 50."
+      >
+        <AdminFeedbackTable rows={feedback} />
+      </Card>
+      <Card
         id="failures"
         title="Client failures"
         note="Failure beacons sent by browsers to this API process since it started."
@@ -659,6 +703,23 @@ export function AdminDashboardPage() {
       return userFacingMessage(err, "Failed to load the admin overview");
     },
   });
+  const canRead = signedIn && isAdmin === true;
+  const { data: feedback } = useServerQuery<FeedbackRow[]>({
+    key: canRead ? ["admin-feedback"] : null,
+    tags: [],
+    read: () => api.listFeedback(50),
+    onError: (err) => {
+      if (isUnauthorized(err)) {
+        navigateToLogin(router);
+        return null;
+      }
+      if (err instanceof ApiError && err.status === 403) {
+        setForbidden(true);
+        return null;
+      }
+      return userFacingMessage(err, "Failed to load feedback");
+    },
+  });
 
   if (isAdmin === false || forbidden) {
     notFound();
@@ -689,7 +750,7 @@ export function AdminDashboardPage() {
         </div>
       )}
       {data ? (
-        <AdminOverviewView overview={data} />
+        <AdminOverviewView overview={data} feedback={feedback ?? []} />
       ) : (
         loading &&
         !error && <ContentRegionLoading label="Loading the overview" />
