@@ -196,11 +196,19 @@ describe("PageEditorTranscriptEditor", () => {
     expect(document.activeElement).toBe(first);
   });
 
-  it("renders the empty state when there are no lines", () => {
-    render(<PageEditorTranscriptEditor {...editorProps({ lines: [] })} />);
-    const empty = screen.getByText("No segments on this page yet.");
-    expect(empty.className).toContain("pe-transcript-empty");
+  it("renders an empty pane with no placeholder when there are no lines", () => {
+    const { container } = render(
+      <PageEditorTranscriptEditor {...editorProps({ lines: [] })} />,
+    );
+    const list = screen.getByRole("list");
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(list.querySelector("p")).toBeNull();
+    expect(list.textContent).toBe("");
+    // The header stays: title and the close button.
+    expect(container.querySelector(".pe-transcript-header")).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Hide transcript pane" }),
+    ).toBeTruthy();
   });
 
   it("marks a row dirty while edited and saved after the commit", async () => {
