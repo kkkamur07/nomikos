@@ -1515,14 +1515,16 @@
 .pe-job-panel {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  bottom: calc(16px + var(--nk-bottom-inset, 0px));
   z-index: 40;
   width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px - var(--nk-bottom-inset, 0px));
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-md);
   box-shadow: 0 12px 40px rgba(13, 31, 60, 0.18);
-  overflow: hidden;
+  overflow-x: hidden;
 }
 .pe-job-panel--collapsed {
   width: auto;
