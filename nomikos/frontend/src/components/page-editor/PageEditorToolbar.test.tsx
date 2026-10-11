@@ -286,6 +286,11 @@ describe("PageEditorToolbar fold", () => {
       name: /^transcript(?!ion)/i,
     });
     expect(transcript.getAttribute("aria-checked")).toBe("true");
+    expect(transcript.className).toContain("pe-dd-item--checked");
+    const pdf = screen.getByRole("menuitemcheckbox", {
+      name: /transcription pdf/i,
+    });
+    expect(pdf.className).not.toContain("pe-dd-item--checked");
     expect(
       screen.getByRole("menuitem", { name: "Check page · 3" }),
     ).toBeTruthy();

@@ -172,6 +172,7 @@ export function PageEditorPlaceholderPage() {
     documentId,
     partId,
     open: segmentHealthOpen,
+    lines,
     setLines,
   });
 

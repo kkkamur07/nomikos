@@ -105,6 +105,11 @@ type PageEditorToolbarProps = {
   hostPreferenceLoading: boolean;
 };
 
+/** A menu checkbox draws its tick through the class, not only aria-checked. */
+function checkableItem(checked: boolean): string {
+  return checked ? "pe-dd-item pe-dd-item--checked" : "pe-dd-item";
+}
+
 function toolbarButton(iconOnly: boolean): string {
   return iconOnly ? "pe-tb-btn pe-tb-btn--icon" : "pe-tb-btn";
 }
@@ -350,7 +355,7 @@ export function PageEditorToolbar({
       <button
         type="button"
         role="menuitemcheckbox"
-        className="pe-dd-item"
+        className={checkableItem(transcriptionPdfOpen)}
         aria-checked={transcriptionPdfOpen}
         onClick={() => {
           onActionsOpenChange(false);
@@ -666,7 +671,7 @@ export function PageEditorToolbar({
                   <button
                     type="button"
                     role="menuitemcheckbox"
-                    className="pe-dd-item"
+                    className={checkableItem(transcriptOpen)}
                     aria-checked={transcriptOpen}
                     aria-keyshortcuts={transcriptKey}
                     title={transcriptTitle}
