@@ -1,4 +1,4 @@
-# 0008. Admin dashboard and request metrics
+# 0010. Admin dashboard and request metrics
 
 - Status: Accepted
 - Date: 2026-10-11

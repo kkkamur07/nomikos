@@ -3,7 +3,7 @@
 `/admin` shows how the platform is used and how hard the database is working. Only accounts
 with `users.is_admin = true` can open it: the API answers `GET /admin/overview` with 401 when
 signed out and 403 for any other account, and the frontend shows its not-found page. The design
-is recorded in [ADR 0008](../adr/0008-admin-dashboard-and-request-metrics.md).
+is recorded in [ADR 0010](../adr/0010-admin-dashboard-and-request-metrics.md).
 
 ## Promote an admin
 
