@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { LineResponse } from "../../api/client";
 import {
-  baselinePath,
   baselinePoints,
   displayText,
-  lineFontSize,
+  maskStripHeight,
   polygonArea,
   polygonBounds,
   polylineLength,
@@ -104,16 +103,6 @@ describe("textPanelGeometry", () => {
     expect(polylineLength(baselinePoints(fromCoordinates))).toBe(5);
   });
 
-  it("formats a baseline path with integers", () => {
-    expect(
-      baselinePath([
-        [10.4, 25.6],
-        [50, 25],
-      ]),
-    ).toBe("M 10 26 L 50 25");
-    expect(baselinePath([])).toBe("");
-  });
-
   it("measures polyline length, area and bounds", () => {
     const rect = [
       [10, 10],
@@ -138,7 +127,7 @@ describe("textPanelGeometry", () => {
     expect(polygonBounds([])).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   });
 
-  it("sizes the font from the mask strip height", () => {
+  it("measures the mask strip height as area over baseline length", () => {
     const line = makeLine({
       baseline: [
         [10, 25],
@@ -151,38 +140,11 @@ describe("textPanelGeometry", () => {
         [10, 30],
       ],
     });
-    expect(lineFontSize(line, 1)).toBe(13);
-    expect(lineFontSize(line, 2)).toBe(26);
+    expect(maskStripHeight(line)).toBe(20);
   });
 
-  it("clamps the font size and defaults without a polygon", () => {
-    const tall = makeLine({
-      baseline: [
-        [0, 0],
-        [10, 0],
-      ],
-      mask: [
-        [0, 0],
-        [10, 0],
-        [10, 10000],
-        [0, 10000],
-      ],
-    });
-    expect(lineFontSize(tall, 1)).toBe(400);
-    const thin = makeLine({
-      baseline: [
-        [0, 0],
-        [100, 0],
-      ],
-      mask: [
-        [0, 0],
-        [100, 0],
-        [100, 1],
-        [0, 1],
-      ],
-    });
-    expect(lineFontSize(thin, 1)).toBe(8);
-    expect(lineFontSize(makeLine(), 1)).toBe(20);
+  it("has no strip height without a polygon", () => {
+    expect(maskStripHeight(makeLine())).toBeNull();
   });
 
   it("prefers ground truth over model text", () => {
@@ -279,7 +241,7 @@ describe("textPanelGeometry", () => {
     expect(baselinePoints(makeLine({ baseline: stored }))).toEqual(stored);
   });
 
-  it("caps the font size by polygon height", () => {
+  it("caps the strip height by polygon height", () => {
     const line = makeLine({
       baseline: [
         [0, 15],
@@ -296,7 +258,7 @@ describe("textPanelGeometry", () => {
       [0, 15],
       [50, 15],
     ]);
-    expect(lineFontSize(line, 1)).toBe(18);
+    expect(maskStripHeight(line)).toBe(20);
   });
 
   it("ignores blank ground truth in favour of model text", () => {

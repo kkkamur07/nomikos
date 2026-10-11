@@ -3,11 +3,6 @@ import type { LinePoint, LineResponse } from "../../api/client";
 import { normalizeGeometryPoints } from "./canvasGeometry";
 import { approvedText, modelTranscriptionForLine } from "./hooks/utils";
 
-export const FONT_SIZE_RATIO = 0.65;
-export const MIN_FONT_SIZE = 8;
-export const MAX_FONT_SIZE = 400;
-export const DEFAULT_STRIP_HEIGHT = 30;
-
 export type TextSource = "ground_truth" | "model" | "none";
 
 /**
@@ -47,17 +42,6 @@ export function baselinePoints(line: LineResponse): LinePoint[] {
     [leftmost[0], lowerQuarterY],
     [rightmost[0], lowerQuarterY],
   ];
-}
-
-/** Baseline points as an SVG path (`M x y L x y ...`, integers). */
-export function baselinePath(points: LinePoint[]): string {
-  return points
-    .map(([x, y], index) =>
-      index === 0
-        ? `M ${Math.round(x)} ${Math.round(y)}`
-        : `L ${Math.round(x)} ${Math.round(y)}`,
-    )
-    .join(" ");
 }
 
 /** Length of a polyline in image px. */
@@ -104,30 +88,17 @@ export function polygonBounds(points: LinePoint[]): {
 }
 
 /**
- * Font size for a line's transcription: the mask strip height (polygon area
- * over baseline length) scaled to about two thirds of a line height,
- * clamped, then multiplied by the user's font scale.
+ * Height of a line's mask strip in image pixels: polygon area over baseline
+ * length (the measure eScriptorium sizes its text by), capped at the polygon's
+ * height. Null when the line has no polygon or no usable baseline.
  */
-export function lineFontSize(line: LineResponse, fontScale = 1): number {
+export function maskStripHeight(line: LineResponse): number | null {
   const maskPoints = normalizeGeometryPoints(line.mask);
   const polygon =
     maskPoints.length > 0 ? maskPoints : normalizeGeometryPoints(line.points);
-  const baseline = baselinePoints(line);
-  const length = polylineLength(baseline);
-  const stripHeight =
-    polygon.length > 0 && length > 0
-      ? polygonArea(polygon) / length
-      : DEFAULT_STRIP_HEIGHT;
-  const raw = Math.round(FONT_SIZE_RATIO * stripHeight);
-  const heightCapped =
-    polygon.length > 0
-      ? Math.min(raw, 0.9 * polygonBounds(polygon).height)
-      : raw;
-  const clamped = Math.min(
-    MAX_FONT_SIZE,
-    Math.max(MIN_FONT_SIZE, heightCapped),
-  );
-  return clamped * fontScale;
+  const length = polylineLength(baselinePoints(line));
+  if (polygon.length === 0 || length === 0) return null;
+  return Math.min(polygonArea(polygon) / length, polygonBounds(polygon).height);
 }
 
 /**
