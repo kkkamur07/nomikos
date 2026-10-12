@@ -493,6 +493,26 @@
   justify-content: space-between;
   gap: 10px;
 }
+/* A checkable item that is on: a 12px tick in the left gutter. Drawn as a
+   mask so it takes the item's text colour in both themes. */
+.pe-dd-item--checked {
+  position: relative;
+  padding-left: 26px;
+}
+.pe-dd-item--checked::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.4l2.5 2.4 5.1-5.6' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.4l2.5 2.4 5.1-5.6' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
 .pe-dd-meta {
   font-size: 0.6875rem;
   color: var(--text-4);
@@ -558,6 +578,11 @@
   width: 260px;
   right: 0;
   left: auto;
+  /* Taller than a laptop screen once every control is shown: it scrolls
+     inside the space below the 52px bar instead of running off the bottom. */
+  max-height: calc(100vh - 52px - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .pe-dd-field--stack {
@@ -865,13 +890,6 @@
 }
 .pe-island__btn--active:hover:not(:disabled) {
   background: var(--navy);
-}
-/* A pressed view toggle: quieter than the armed tool, so the two never
-   compete for "this is what the mouse does now". */
-.pe-island__btn--on {
-  background: var(--surface-2);
-  border-color: var(--border-2);
-  color: var(--navy);
 }
 .pe-island__btn:disabled {
   opacity: 0.35;
@@ -1514,6 +1532,7 @@
     animation: none;
   }
   .pe-seg,
+  .pe-job-panel,
   .pe-strip__resizer::after,
   .pe-model-preview [data-conf] {
     transition: none;
@@ -1527,6 +1546,11 @@
   z-index: 40;
   width: min(360px, calc(100vw - 32px));
   max-height: calc(100vh - 32px - var(--nk-bottom-inset, 0px));
+  /* Rides up and down with the strip. Only changes animate, never the
+     first paint. */
+  transition:
+    bottom 120ms ease-out,
+    max-height 120ms ease-out;
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border-2);
@@ -1690,13 +1714,6 @@
   padding: 1px 4px;
   border-radius: 3px;
   background: var(--surface-2);
-}
-/* Check page folded to an icon keeps its finding count beside the icon. */
-.pe-tb-btn__count {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--amber);
 }
 .pe-tb-btn:disabled .pe-tb-btn__scope {
   background: transparent;

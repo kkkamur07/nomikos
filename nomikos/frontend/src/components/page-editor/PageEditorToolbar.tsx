@@ -18,12 +18,12 @@ import { PageEditorDocxButton } from "./PageEditorDocxButton";
 import { exportFileStem } from "../../utils/exportFilename";
 import {
   CheckIcon,
-  CheckPageIcon,
   FeedbackIcon,
   MoreIcon,
   SegmentIcon,
   SettingsIcon,
   TranscribeIcon,
+  TranscriptIcon,
   WorkflowIcon,
 } from "./EditorIcons";
 import { useToolbarCollapse } from "./useToolbarCollapse";
@@ -34,6 +34,7 @@ import {
 } from "./PageEditorSegmentHealthPanel";
 import { PageEditorInferenceStatus } from "./PageEditorInferenceStatus";
 import type { PageEditorCanvasSettings } from "./pageEditorSettings";
+import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
 
 type PageEditorToolbarProps = {
   projectId: string | undefined;
@@ -76,6 +77,10 @@ type PageEditorToolbarProps = {
   transcriptionPdfOpen: boolean;
   onOpenTranscriptionPdf: () => void;
   onCloseTranscriptionPdf: () => void;
+  /** The side-by-side transcript pane is open. */
+  transcriptOpen: boolean;
+  /** Opens or closes the transcript pane, the same toggle as the T key. */
+  onToggleTranscript: () => void;
   settingsOpen: boolean;
   onSettingsOpenChange: (open: boolean) => void;
   segmentHealthOpen: boolean;
@@ -99,6 +104,11 @@ type PageEditorToolbarProps = {
   hasLocalCapacity: boolean;
   hostPreferenceLoading: boolean;
 };
+
+/** A menu checkbox draws its tick through the class, not only aria-checked. */
+function checkableItem(checked: boolean): string {
+  return checked ? "pe-dd-item pe-dd-item--checked" : "pe-dd-item";
+}
 
 function toolbarButton(iconOnly: boolean): string {
   return iconOnly ? "pe-tb-btn pe-tb-btn--icon" : "pe-tb-btn";
@@ -138,6 +148,8 @@ export function PageEditorToolbar({
   transcriptionPdfOpen,
   onOpenTranscriptionPdf,
   onCloseTranscriptionPdf,
+  transcriptOpen,
+  onToggleTranscript,
   settingsOpen,
   onSettingsOpenChange,
   segmentHealthOpen,
@@ -158,7 +170,9 @@ export function PageEditorToolbar({
   const settingsRef = useRef<HTMLDivElement>(null);
   const segmentHealthRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
-  const moreRef = useCallback((element: HTMLDivElement | null) => {
+  // One anchor for both popovers: the Workflow (or folded More) menu and, once
+  // Check page is picked from it, the health panel.
+  const menuRef = useCallback((element: HTMLDivElement | null) => {
     dropdownRef.current = element;
     segmentHealthRef.current = element;
   }, []);
@@ -251,6 +265,23 @@ export function PageEditorToolbar({
       : null;
   const checkPageText =
     findingCount !== null ? `Check page · ${findingCount}` : "Check page";
+  const transcriptKey = PAGE_EDITOR_SHORTCUTS.TRANSCRIPT;
+  const transcriptTitle = `${transcriptOpen ? "Hide" : "Show"} transcript pane (${transcriptKey})`;
+  const checkPageItem = (
+    <button
+      type="button"
+      role="menuitem"
+      className="pe-dd-item"
+      disabled={lines.length === 0}
+      title="Look for segmentation mistakes on this page"
+      onClick={() => {
+        onActionsOpenChange(false);
+        onSegmentHealthOpenChange(true);
+      }}
+    >
+      {checkPageText}
+    </button>
+  );
   const healthPanel = segmentHealthOpen && (
     <PageEditorSegmentHealthPanel
       report={segmentHealth.report}
@@ -324,7 +355,7 @@ export function PageEditorToolbar({
       <button
         type="button"
         role="menuitemcheckbox"
-        className="pe-dd-item"
+        className={checkableItem(transcriptionPdfOpen)}
         aria-checked={transcriptionPdfOpen}
         onClick={() => {
           onActionsOpenChange(false);
@@ -575,67 +606,59 @@ export function PageEditorToolbar({
         </div>
 
         {!folded && (
-          <div
-            className="pe-toolbar__cluster pe-dropdown-wrap"
-            ref={dropdownRef}
-          >
+          <div className="pe-toolbar__cluster pe-dropdown-wrap" ref={menuRef}>
             <button
               type="button"
               aria-haspopup="menu"
               aria-expanded={actionsOpen}
               aria-label={iconOnly ? "Workflow" : undefined}
               title={iconOnly ? "Workflow" : undefined}
-              onClick={() => onActionsOpenChange(!actionsOpen)}
+              onClick={() => {
+                onSegmentHealthOpenChange(false);
+                onActionsOpenChange(!actionsOpen);
+              }}
               className={`${toolbarButton(iconOnly)}${actionsOpen ? " pe-tb-btn--on" : ""}`}
             >
               {iconOnly ? <WorkflowIcon /> : "Workflow ▾"}
             </button>
             {actionsOpen && (
               <div className="pe-dropdown" role="menu" aria-label="Workflow">
+                {checkPageItem}
+                <div className="pe-dd-divider" />
                 {workflowItems}
               </div>
             )}
+            {healthPanel}
           </div>
         )}
 
         <div className="pe-toolbar__cluster">
+          {/* A view toggle, not an action: it stays pressed while the pane is
+              open, and it lives in the bar so a closed pane is one click
+              (or T) from coming back. */}
           {!folded && (
-            <div className="pe-dropdown-wrap" ref={segmentHealthRef}>
-              <button
-                type="button"
-                className={`${toolbarButton(iconOnly)}${segmentHealthOpen ? " pe-tb-btn--on" : ""}`}
-                aria-haspopup="dialog"
-                aria-expanded={segmentHealthOpen}
-                aria-label={iconOnly ? checkPageText : undefined}
-                title="Look for segmentation mistakes on this page"
-                disabled={lines.length === 0}
-                onClick={() => onSegmentHealthOpenChange(!segmentHealthOpen)}
-              >
-                {iconOnly ? (
-                  <>
-                    <CheckPageIcon />
-                    {findingCount !== null && (
-                      <span className="pe-tb-btn__count">{findingCount}</span>
-                    )}
-                  </>
-                ) : (
-                  checkPageText
-                )}
-              </button>
-              {healthPanel}
-            </div>
+            <button
+              type="button"
+              className={`${toolbarButton(iconOnly)}${transcriptOpen ? " pe-tb-btn--on" : ""}`}
+              aria-pressed={transcriptOpen}
+              aria-keyshortcuts={transcriptKey}
+              aria-label={iconOnly ? "Transcript" : undefined}
+              title={transcriptTitle}
+              onClick={onToggleTranscript}
+            >
+              <TranscriptIcon />
+              {!iconOnly && "Transcript"}
+            </button>
           )}
           {folded && (
-            // One anchor for both popovers: the menu and, once Check page is
-            // picked from it, the health panel.
-            <div className="pe-dropdown-wrap" ref={moreRef}>
+            <div className="pe-dropdown-wrap" ref={menuRef}>
               <button
                 type="button"
                 className={`pe-tb-btn pe-tb-btn--icon${actionsOpen ? " pe-tb-btn--on" : ""}`}
                 aria-haspopup="menu"
                 aria-expanded={actionsOpen}
                 aria-label="More"
-                title="More: Segment, Transcribe, Workflow, Check page"
+                title="More: Segment, Transcribe, Transcript, Workflow, Check page"
                 onClick={() => {
                   onSegmentHealthOpenChange(false);
                   onActionsOpenChange(!actionsOpen);
@@ -647,16 +670,20 @@ export function PageEditorToolbar({
                 <div className="pe-dropdown" role="menu" aria-label="More">
                   <button
                     type="button"
-                    role="menuitem"
-                    className="pe-dd-item"
-                    disabled={lines.length === 0}
+                    role="menuitemcheckbox"
+                    className={checkableItem(transcriptOpen)}
+                    aria-checked={transcriptOpen}
+                    aria-keyshortcuts={transcriptKey}
+                    title={transcriptTitle}
                     onClick={() => {
                       onActionsOpenChange(false);
-                      onSegmentHealthOpenChange(true);
+                      onToggleTranscript();
                     }}
                   >
-                    {checkPageText}
+                    Transcript
+                    <span className="pe-dd-meta">{transcriptKey}</span>
                   </button>
+                  {checkPageItem}
                   <div className="pe-dd-divider" />
                   {workflowItems}
                 </div>

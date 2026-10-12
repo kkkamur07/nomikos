@@ -13,6 +13,9 @@ type UseSegmentHealthArgs = {
   partId: string | undefined;
   /** True while the panel is on screen. Nothing is fetched until it is. */
   open: boolean;
+  /** The page's lines. A new list means new geometry, so a kept report is
+   *  stale from then on. */
+  lines: readonly LineResponse[];
   setLines: (lines: LineResponse[]) => void;
 };
 
@@ -39,14 +42,18 @@ function pendingIdFor(action: SegmentHealthAction): string {
  * and a panel showing findings derived from geometry that has since changed
  * would offer fixes the server is about to refuse.
  *
- * Closing the panel clears the report for the same reason. Reopening it a
- * minute later must not show what the page looked like a minute ago.
+ * Closing the panel keeps the report, so the Workflow menu can still say how
+ * many findings the page had. It is dropped once it stops describing the page:
+ * on a page turn, and on any change to the lines while the panel is closed
+ * (while it is open, every fix already triggers a fresh read). Reopening the
+ * panel always reads the page again.
  */
 export function useSegmentHealth({
   projectId,
   documentId,
   partId,
   open,
+  lines,
   setLines,
 }: UseSegmentHealthArgs) {
   const [report, setReport] = useState<SegmentHealthResponse | null>(null);
@@ -94,9 +101,20 @@ export function useSegmentHealth({
     };
   }, [open, projectId, documentId, partId, refreshKey]);
 
+  // Kept in refs, not effect dependencies: the report is only dropped when
+  // the page or its lines move, never because the panel merely opened.
+  const seenPartId = useRef(partId);
+  const seenLines = useRef(lines);
+  useEffect(() => {
+    const partChanged = seenPartId.current !== partId;
+    const linesChanged = seenLines.current !== lines;
+    seenPartId.current = partId;
+    seenLines.current = lines;
+    if (partChanged || (linesChanged && !open)) setReport(null);
+  }, [partId, lines, open]);
+
   useEffect(() => {
     if (open) return;
-    setReport(null);
     setReadError(null);
     setApplyError(null);
     setPending(null);

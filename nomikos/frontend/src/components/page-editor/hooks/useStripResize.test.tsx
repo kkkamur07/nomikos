@@ -28,4 +28,23 @@ describe("useStripResize bottom inset", () => {
     unmount();
     expect(document.documentElement.style.getPropertyValue(INSET)).toBe("");
   });
+
+  it("publishes 0 while the strip is hidden and the height once shown", () => {
+    const { rerender, unmount } = renderHook(
+      ({ visible }: { visible: boolean }) => useStripResize(240, visible),
+      { initialProps: { visible: false } },
+    );
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("0px");
+
+    rerender({ visible: true });
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe(
+      "240px",
+    );
+
+    rerender({ visible: false });
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("0px");
+
+    unmount();
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("");
+  });
 });

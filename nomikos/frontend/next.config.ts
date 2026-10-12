@@ -40,6 +40,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: frontendRoot,
   },
+  // The dev badge covered the editor's bottom corners (island, strip Save).
+  devIndicators: false,
   async headers() {
     // On Vercel these come from vercel.json; returning them here too would set
     // each header twice (two CSPs, both enforced). Apply only off-Vercel.

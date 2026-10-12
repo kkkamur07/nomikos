@@ -172,6 +172,7 @@ export function PageEditorPlaceholderPage() {
     documentId,
     partId,
     open: segmentHealthOpen,
+    lines,
     setLines,
   });
 
@@ -286,25 +287,6 @@ export function PageEditorPlaceholderPage() {
   const pairedIds = useMemo(() => segmentIdsWithGroundTruth(lines), [lines]);
   const stripVisible =
     Boolean(selectedSegment) && !stripDismissed && !canvasSettings.sideBySide;
-
-  // The jobs panel floats above the strip (see --nk-bottom-inset). The strip
-  // owns the nonzero value via useStripResize; when it is closed there is no
-  // strip to clear, so publish 0. This runs after the strip's own effect, so
-  // it wins while hidden and does nothing while visible.
-  useEffect(() => {
-    if (stripVisible) return;
-    // globalThis: the editor's loaded `document` state shadows the DOM global
-    // in this file.
-    globalThis.document.documentElement.style.setProperty(
-      "--nk-bottom-inset",
-      "0px",
-    );
-    return () => {
-      globalThis.document.documentElement.style.removeProperty(
-        "--nk-bottom-inset",
-      );
-    };
-  }, [stripVisible]);
 
   function handleSelectSegment(lineId: string) {
     setSelectedRegionId(null);
@@ -546,8 +528,6 @@ export function PageEditorPlaceholderPage() {
         segmentVertexEditEnabled={
           drawMode === "none" && Boolean(selectedSegmentId)
         }
-        transcriptOpen={canvasSettings.sideBySide}
-        onToggleTranscript={() => toggleSideBySideRef.current()}
         onSelectTool={handlePanSelect}
         onPickDrawMode={pickDrawMode}
         canDelete={Boolean(selectedSegmentId || selectedLineId)}
@@ -662,6 +642,8 @@ export function PageEditorPlaceholderPage() {
             transcriptionPdfOpen={transcriptionPdfOpen}
             onOpenTranscriptionPdf={openTranscriptionPdf}
             onCloseTranscriptionPdf={() => setTranscriptionPdfOpen(false)}
+            transcriptOpen={canvasSettings.sideBySide}
+            onToggleTranscript={() => toggleSideBySideRef.current()}
             segmentHealthOpen={segmentHealthOpen}
             onSegmentHealthOpenChange={setSegmentHealthOpen}
             segmentHealth={segmentHealth}
