@@ -46,26 +46,38 @@ class CalamariTorchConfig:
 
 
 def default_model_config(
-    *, classes: int, temperature: float = -1.0, lstm_layers: int = 2
+    *,
+    classes: int,
+    temperature: float = -1.0,
+    lstm_layers: int = 2,
+    dropout_rate: float = 0.3,
+    conv0_filters: int = 40,
+    conv1_filters: int = 60,
 ) -> CalamariTorchConfig:
-    """Return the established Calamari CNN–BiLSTM topology."""
-    if lstm_layers not in {1, 2}:
-        raise ValueError("Calamari supports one or two bidirectional LSTM layers.")
-    recurrent_layers = (
-        CalamariTorchLayerConfig("bilstm", "lstm_0", hidden_nodes=200, merge_mode="concat"),
-        CalamariTorchLayerConfig("dropout", "dropout_0", rate=0.3),
-    )
-    if lstm_layers == 2:
-        recurrent_layers += (
-            CalamariTorchLayerConfig("bilstm", "lstm_1", hidden_nodes=200, merge_mode="concat"),
+    """Return CNN blocks followed by ``lstm_layers`` BiLSTM–dropout stacks."""
+    lstm_layers = require_lstm_layers(lstm_layers)
+    dropout_rate = require_dropout_rate(dropout_rate)
+    conv0_filters = require_int(conv0_filters, "conv2d_0", "filters")
+    conv1_filters = require_int(conv1_filters, "conv2d_1", "filters")
+    if conv0_filters < 1 or conv1_filters < 1:
+        raise ValueError("Calamari conv filters must be at least one.")
+    recurrent_layers = tuple(
+        layer
+        for index in range(lstm_layers)
+        for layer in (
+            CalamariTorchLayerConfig(
+                "bilstm", f"lstm_{index}", hidden_nodes=200, merge_mode="concat"
+            ),
+            CalamariTorchLayerConfig("dropout", f"dropout_{index}", rate=dropout_rate),
         )
+    )
     return CalamariTorchConfig(
         layers=(
-            CalamariTorchLayerConfig("conv2d", "conv2d_0", 40, (3, 3), (1, 1), "same", "relu"),
+            CalamariTorchLayerConfig("conv2d", "conv2d_0", conv0_filters, (3, 3), (1, 1), "same", "relu"),
             CalamariTorchLayerConfig(
                 "maxpool2d", "maxpool2d_0", pool_size=(2, 2), strides=(-1, -1), padding="same"
             ),
-            CalamariTorchLayerConfig("conv2d", "conv2d_1", 60, (3, 3), (1, 1), "same", "relu"),
+            CalamariTorchLayerConfig("conv2d", "conv2d_1", conv1_filters, (3, 3), (1, 1), "same", "relu"),
             CalamariTorchLayerConfig(
                 "maxpool2d", "maxpool2d_1", pool_size=(2, 2), strides=(-1, -1), padding="same"
             ),
@@ -82,6 +94,21 @@ def maxpool_strides(config: CalamariTorchLayerConfig) -> tuple[int, int]:
     return tuple(
         pool if stride < 0 else stride for stride, pool in zip(raw_strides, pool_size, strict=True)
     )
+
+
+def require_lstm_layers(lstm_layers: int) -> int:
+    if isinstance(lstm_layers, bool) or not isinstance(lstm_layers, int) or lstm_layers < 1:
+        raise ValueError("Calamari requires at least one bidirectional LSTM layer.")
+    return lstm_layers
+
+
+def require_dropout_rate(dropout_rate: float) -> float:
+    if isinstance(dropout_rate, bool) or not isinstance(dropout_rate, (int, float)):
+        raise ValueError("Calamari dropout_rate must be a number.")
+    rate = float(dropout_rate)
+    if not 0.0 <= rate < 1.0:
+        raise ValueError("Calamari dropout_rate must be in [0, 1).")
+    return rate
 
 
 def require_int(value: int | None, layer_name: str, field_name: str) -> int:

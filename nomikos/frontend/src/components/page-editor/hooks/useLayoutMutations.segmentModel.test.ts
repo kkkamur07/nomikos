@@ -54,7 +54,7 @@ describe("useLayoutMutations runAutoSegment model", () => {
     });
   });
 
-  it("sends an empty body when no segment model is chosen", async () => {
+  it("sends an empty body when the catalog is empty and no segment model is chosen", async () => {
     const view = setup(null);
 
     await act(async () => {

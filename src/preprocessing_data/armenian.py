@@ -12,6 +12,7 @@ import os
 import random
 import re
 import shutil
+import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
@@ -19,7 +20,10 @@ from pathlib import Path
 
 import cv2
 
-from .syriac.xml_to_data import PAGE_NS, crop_polygon, iter_page_lines, save_crop
+try:  # python -m src.preprocessing_data.<module>
+    from .syriac import PAGE_NS, crop_polygon, iter_page_lines, save_crop
+except ImportError:  # python src/preprocessing_data/<module>.py
+    from syriac import PAGE_NS, crop_polygon, iter_page_lines, save_crop
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +57,42 @@ ARMENIAN_VERJAKET = "\u0589"  # ։
 ARMENIAN_ABBREVIATION_MARK = "\u055f"  # ՟ pativ / titlo
 _BRACKET_EXPANSION = re.compile(r"\[[^\[\]]*\]")
 _ARMENIAN_LETTER = re.compile(r"[\u0531-\u0587և]")
+
+
+def normalize_text(text: str) -> str:
+    """NFC-normalize transcription text, matching replace_armenian_ms.py."""
+    return unicodedata.normalize("NFC", text)
+
+
+ARMENIAN_HYPHEN = "\u058a"  # ֊
+ARMENIAN_ECH_YIWN = "\u0587"  # և
+MULTIPLE_SPACES = re.compile(r" {2,}")
+TRAILING_SPACES = re.compile(r" +$")
+# Manifest rules applied on read after NFC, in order: (report name, pattern,
+# replacement). Parentheses and quotes are drawn in the ink and stay.
+INK_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    # The dash is drawn; the manuscripts already use ֊ for the same stroke.
+    ("- (U+002D) -> ֊ (U+058A)", re.compile("-"), ARMENIAN_HYPHEN),
+    # Same ligature in the ink. Capital Եւ has no single codepoint and stays.
+    ("եւ -> և (U+0587)", re.compile("\u0565\u0582"), ARMENIAN_ECH_YIWN),
+    ("double space -> single", MULTIPLE_SPACES, " "),
+    ("trailing spaces -> removed", TRAILING_SPACES, ""),
+)
+
+
+def apply_ink_rules(text: str) -> tuple[str, dict[str, int]]:
+    """Apply ``INK_RULES``; return the text and the per-rule substitution counts."""
+    counts: dict[str, int] = {}
+    for name, pattern, replacement in INK_RULES:
+        text, count = pattern.subn(replacement, text)
+        if count:
+            counts[name] = count
+    return text, counts
+
+
+def normalize_manifest_text(text: str) -> str:
+    """NFC, then ``INK_RULES``: the form resplit writes to the gt_*.txt manifests."""
+    return apply_ink_rules(normalize_text(text))[0]
 
 
 def normalize_print_punctuation(text: str) -> str:
@@ -286,7 +326,9 @@ def build_armenian_dataset(raw_sources: dict[str, Path], staging_root: Path) -> 
                                 image_name,
                                 to_diplomatic_gt(
                                     normalize_latin_typos(
-                                        normalize_print_punctuation(annotation.text)
+                                        normalize_print_punctuation(
+                                            normalize_text(annotation.text)
+                                        )
                                     )
                                 ),
                             )

@@ -1,4 +1,0 @@
-# @package preparation
-#! do we need this
-raw_root: data/raw/syriacData
-output_dir: ${data.dir}

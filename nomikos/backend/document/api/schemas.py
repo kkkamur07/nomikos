@@ -18,6 +18,7 @@ from backend.document.infrastructure.orm_models import (
     LineSource,
     TranscriptionKind,
 )
+from nomikos_inference.contracts.transcribe import CharacterConfidence
 
 MAX_PAGE_TRANSCRIPTION_CHARS = 1_000_000
 MAX_PAGE_TRANSCRIPTION_LINES = 10_000
@@ -228,6 +229,11 @@ class LineTranscriptionResponse(BaseModel):
     transcription_kind: TranscriptionKind
     text: str
     confidence: float | None
+    # Per-character model scores in the one shape the editor already reads
+    # ([{char, confidence}], aligned with the code points of ``text``). Null
+    # for human-written rows and for rows written before the column existed.
+    # Additive and optional, so readers built before this field keep working.
+    character_confidences: list[CharacterConfidence] | None = None
 
 
 class LineResponse(BaseModel):

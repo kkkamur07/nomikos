@@ -1,4 +1,4 @@
-"""Dev inference seed display names — pair parsing and defaults, no database."""
+"""Dev inference seed display names: pair parsing and defaults, no database."""
 
 import sys
 from pathlib import Path

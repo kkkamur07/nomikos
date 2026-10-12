@@ -13,7 +13,8 @@ const listInferenceModels = vi.fn();
 const enqueueDocumentSegment = vi.fn();
 const enqueueDocumentTranscribe = vi.fn();
 const listProjectModelBindings = vi.fn();
-const listDocumentModelBindings = vi.fn();
+const createProjectModelBinding = vi.fn();
+const updateProjectModelBinding = vi.fn();
 
 vi.mock("../../api/client", () => ({
   api: {
@@ -24,28 +25,41 @@ vi.mock("../../api/client", () => ({
       enqueueDocumentTranscribe(...args),
     listProjectModelBindings: (...args: unknown[]) =>
       listProjectModelBindings(...args),
-    listDocumentModelBindings: (...args: unknown[]) =>
-      listDocumentModelBindings(...args),
+    createProjectModelBinding: (...args: unknown[]) =>
+      createProjectModelBinding(...args),
+    updateProjectModelBinding: (...args: unknown[]) =>
+      updateProjectModelBinding(...args),
   },
 }));
 
 vi.mock("../ui/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
 const COUNTS = { total: 3, reviewed: 0, unsegmented: 1, unpaired: 0 };
 const SEGMENT_MODELS = [
-  { id: "seg-a", task: "segment", name: "blla-segment" },
-  { id: "seg-b", task: "segment", name: "pp-ocr" },
+  {
+    id: "seg-a",
+    task: "segment",
+    name: "kraken",
+    artifact_ref: "registry://blla-segment?tag=stable",
+  },
+  {
+    id: "seg-b",
+    task: "segment",
+    name: "pp-ocr",
+    artifact_ref: "registry://ppocr-segment?tag=stable",
+  },
   { id: "htr-1", task: "transcribe", name: "htr" },
+  { id: "htr-2", task: "transcribe", name: "syriac" },
 ];
 
-function openMenu() {
+function openMenu(counts = COUNTS) {
   render(
     <DocumentWorkflowMenu
       projectId="project-1"
       documentId="document-1"
-      counts={COUNTS}
+      counts={counts}
       onJobsQueued={() => {}}
     />,
   );
@@ -56,32 +70,51 @@ describe("DocumentWorkflowMenu segment picker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listInferenceModels.mockResolvedValue(SEGMENT_MODELS);
+    listProjectModelBindings.mockResolvedValue([]);
+    // Picking a model now saves it as the project default, so every test in
+    // here needs the write to answer.
+    createProjectModelBinding.mockImplementation(async (_projectId, body) => ({
+      id: `binding-${body.task}`,
+      ...body,
+    }));
+    updateProjectModelBinding.mockImplementation(
+      async (_projectId, bindingId, body) => ({
+        id: bindingId,
+        task: "segment",
+        ...body,
+      }),
+    );
     enqueueDocumentSegment.mockResolvedValue({
+      queued: 1,
+      skipped: 0,
+      jobs: [],
+    });
+    enqueueDocumentTranscribe.mockResolvedValue({
       queued: 1,
       skipped: 0,
       jobs: [],
     });
   });
 
-  it("sends model_id null for Default and the id for a chosen model", async () => {
+  it("renders no Default option and preselects the canonical row", async () => {
     openMenu();
 
-    await screen.findByRole("combobox", {
+    const select = await screen.findByRole("combobox", {
       name: "Segmentation model",
     });
-    const options = within(
-      screen.getByRole("combobox", { name: "Segmentation model" }),
-    )
+    const options = within(select)
       .getAllByRole("option")
       .map((option) => ({
         value: (option as HTMLOptionElement).value,
         text: option.textContent,
       }));
     expect(options).toEqual([
-      { value: "", text: "Default" },
-      { value: "seg-a", text: "blla-segment" },
+      { value: "seg-a", text: "kraken" },
       { value: "seg-b", text: "pp-ocr" },
     ]);
+    expect(
+      screen.getByRole("combobox", { name: "Segmentation model" }),
+    ).toHaveValue("seg-a");
 
     fireEvent.click(
       screen.getByRole("menuitem", { name: /segment unsegmented pages/i }),
@@ -90,15 +123,43 @@ describe("DocumentWorkflowMenu segment picker", () => {
       expect(enqueueDocumentSegment).toHaveBeenCalledWith(
         "project-1",
         "document-1",
-        { scope: "unsegmented", model_id: null },
+        { scope: "unsegmented", model_id: "seg-a" },
       ),
     );
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: /workflow/i }));
-    const reopenedSelect = screen.getByRole("combobox", {
+  it("labels each picker Model and counts the pages on each item", async () => {
+    openMenu({ ...COUNTS, unsegmented: 1, total: 3, unpaired: 0 });
+    await screen.findByRole("combobox", { name: "Segmentation model" });
+
+    expect(screen.getAllByText("Model")).toHaveLength(2);
+    expect(screen.queryByText("Seg")).toBeNull();
+    expect(screen.queryByText("HTR")).toBeNull();
+    expect(
+      screen.getByRole("menuitem", {
+        name: /segment unsegmented pages\s*1 page$/i,
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: /re-segment every page.*3 pages/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Discards unapproved machine text on untouched lines."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Only the top item is safe/)).toBeNull();
+    expect(screen.queryByText(/project default/i)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /set as project default/i }),
+    ).toBeNull();
+  });
+
+  it("sends the id for a chosen model", async () => {
+    openMenu();
+
+    const select = await screen.findByRole("combobox", {
       name: "Segmentation model",
     });
-    fireEvent.change(reopenedSelect, { target: { value: "seg-b" } });
+    fireEvent.change(select, { target: { value: "seg-b" } });
     fireEvent.click(
       screen.getByRole("menuitem", { name: /segment unsegmented pages/i }),
     );
@@ -111,14 +172,14 @@ describe("DocumentWorkflowMenu segment picker", () => {
     );
   });
 
-  it("names the chosen model in the re-segment confirm, and the default when none is chosen", async () => {
+  it("names the chosen model in the re-segment confirm", async () => {
     openMenu();
     await screen.findByRole("combobox", { name: "Segmentation model" });
 
     fireEvent.click(
       screen.getByRole("menuitem", { name: /re-segment every page/i }),
     );
-    expect(screen.getByText(/runs with the default model/i)).toBeTruthy();
+    expect(screen.getByText(/runs with kraken/i)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Cancel" }));
     fireEvent.change(
@@ -140,18 +201,17 @@ describe("DocumentWorkflowMenu segment picker", () => {
     );
   });
 
-  it("leaves only Default and still segments when the catalog request fails", async () => {
+  it("shows No models and still segments when the catalog request fails", async () => {
     listInferenceModels.mockRejectedValue(new Error("offline"));
     openMenu();
 
-    await screen.findByRole("combobox", {
+    const select = await screen.findByRole("combobox", {
       name: "Segmentation model",
     });
+    expect(within(select).getAllByRole("option")).toHaveLength(1);
     expect(
-      within(
-        screen.getByRole("combobox", { name: "Segmentation model" }),
-      ).getAllByRole("option"),
-    ).toHaveLength(1);
+      within(select).getByRole("option", { name: "No models" }),
+    ).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("menuitem", { name: /segment unsegmented pages/i }),
@@ -166,77 +226,43 @@ describe("DocumentWorkflowMenu segment picker", () => {
   });
 });
 
-describe("DocumentWorkflowMenu transcribe model", () => {
-  const CATALOG = [
-    ...SEGMENT_MODELS,
-    { id: "htr-greek", task: "transcribe", name: "greek-v1" },
-    { id: "htr-syriac", task: "transcribe", name: "syriac-v2" },
-  ];
-
+describe("DocumentWorkflowMenu transcribe picker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    listInferenceModels.mockResolvedValue(CATALOG);
+    listInferenceModels.mockResolvedValue(SEGMENT_MODELS);
     listProjectModelBindings.mockResolvedValue([]);
-    listDocumentModelBindings.mockResolvedValue([]);
-    window.localStorage.clear();
-  });
-
-  it("names the model bound to the project", async () => {
-    listProjectModelBindings.mockResolvedValue([
-      { id: "b-1", task: "transcribe", model_id: "htr-syriac" },
-      { id: "b-2", task: "segment", model_id: "seg-a" },
-    ]);
-    openMenu();
-
-    expect(await screen.findByText("syriac-v2")).toBeTruthy();
-    expect(screen.queryByText("blla-greek-v2")).toBeNull();
-  });
-
-  it("prefers the document binding over the project one", async () => {
-    listProjectModelBindings.mockResolvedValue([
-      { id: "b-1", task: "transcribe", model_id: "htr-syriac" },
-    ]);
-    listDocumentModelBindings.mockResolvedValue([
-      { id: "b-3", task: "transcribe", model_id: "htr-greek" },
-    ]);
-    openMenu();
-
-    expect(await screen.findByText("greek-v1")).toBeTruthy();
-    expect(screen.queryByText("syriac-v2")).toBeNull();
-  });
-
-  it("offers the catalog's transcription models when nothing is bound and sends the choice", async () => {
+    // Picking a model now saves it as the project default, so every test in
+    // here needs the write to answer.
+    createProjectModelBinding.mockImplementation(async (_projectId, body) => ({
+      id: `binding-${body.task}`,
+      ...body,
+    }));
+    updateProjectModelBinding.mockImplementation(
+      async (_projectId, bindingId, body) => ({
+        id: bindingId,
+        task: "segment",
+        ...body,
+      }),
+    );
+    enqueueDocumentSegment.mockResolvedValue({
+      queued: 1,
+      skipped: 0,
+      jobs: [],
+    });
     enqueueDocumentTranscribe.mockResolvedValue({
       queued: 1,
       skipped: 0,
       jobs: [],
     });
-    render(
-      <DocumentWorkflowMenu
-        projectId="project-1"
-        documentId="document-1"
-        counts={{ ...COUNTS, unpaired: 2 }}
-        onJobsQueued={() => {}}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /workflow/i }));
+  });
 
+  it("offers a transcribe picker and sends the chosen model id", async () => {
+    openMenu({ ...COUNTS, unpaired: 2 });
     const select = await screen.findByRole("combobox", {
-      name: "Transcription model",
+      name: "HTR transcription model",
     });
-    await waitFor(() =>
-      expect(
-        Array.from((select as HTMLSelectElement).options).map(
-          (option) => option.text,
-        ),
-      ).toEqual(["htr", "greek-v1", "syriac-v2"]),
-    );
-    fireEvent.change(select, { target: { value: "htr-syriac" } });
-    expect(screen.queryByText("Project default")).toBeNull();
-    expect(
-      window.localStorage.getItem("nomikos.transcribeModel.project-1"),
-    ).toBe("htr-syriac");
-
+    await waitFor(() => expect(select).toHaveValue("htr-1"));
+    fireEvent.change(select, { target: { value: "htr-2" } });
     fireEvent.click(
       screen.getByRole("menuitem", { name: /transcribe unpaired pages/i }),
     );
@@ -244,58 +270,30 @@ describe("DocumentWorkflowMenu transcribe model", () => {
       expect(enqueueDocumentTranscribe).toHaveBeenCalledWith(
         "project-1",
         "document-1",
-        { scope: "unpaired", model_id: "htr-syriac" },
+        { scope: "unpaired", model_id: "htr-2" },
       ),
     );
   });
 
-  it("remembers the last choice for the project", async () => {
-    window.localStorage.setItem(
-      "nomikos.transcribeModel.project-1",
-      "htr-syriac",
-    );
-    openMenu();
-
-    const select = await screen.findByRole("combobox", {
-      name: "Transcription model",
-    });
-    await waitFor(() =>
-      expect((select as HTMLSelectElement).value).toBe("htr-syriac"),
-    );
-  });
-
-  it("shows no picker and sends no model when a binding exists", async () => {
+  it("starts the transcribe picker from the project binding", async () => {
     listProjectModelBindings.mockResolvedValue([
-      { id: "b-1", task: "transcribe", model_id: "htr-greek" },
+      { id: "binding-1", task: "transcribe", model_id: "htr-2" },
     ]);
-    enqueueDocumentTranscribe.mockResolvedValue({
-      queued: 1,
-      skipped: 0,
-      jobs: [],
+    openMenu();
+    const select = await screen.findByRole("combobox", {
+      name: "HTR transcription model",
     });
-    render(
-      <DocumentWorkflowMenu
-        projectId="project-1"
-        documentId="document-1"
-        counts={{ ...COUNTS, unpaired: 2 }}
-        onJobsQueued={() => {}}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /workflow/i }));
+    await waitFor(() => expect(select).toHaveValue("htr-2"));
+  });
 
-    expect(await screen.findByText("greek-v1")).toBeTruthy();
-    expect(
-      screen.queryByRole("combobox", { name: "Transcription model" }),
-    ).toBeNull();
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: /transcribe unpaired pages/i }),
-    );
-    await waitFor(() =>
-      expect(enqueueDocumentTranscribe).toHaveBeenCalledWith(
-        "project-1",
-        "document-1",
-        { scope: "unpaired", model_id: null },
-      ),
-    );
+  it("starts the segment picker from the project binding, not the canonical row", async () => {
+    listProjectModelBindings.mockResolvedValue([
+      { id: "binding-2", task: "segment", model_id: "seg-b" },
+    ]);
+    openMenu();
+    const select = await screen.findByRole("combobox", {
+      name: "Segmentation model",
+    });
+    await waitFor(() => expect(select).toHaveValue("seg-b"));
   });
 });

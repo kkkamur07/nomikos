@@ -41,7 +41,7 @@ because PyTorch ships no wheel for it.
 | Console entry point (`nomikos_inference/cli/`) | `nomikos pair`, `nomikos run`, `nomikos version`, `nomikos upgrade` |
 | Hub integration (`nomikos_inference/hub/`) | `hf://` resolution, cache manifest, artifact SHA-256 |
 | Request/response contracts (`nomikos_inference/contracts/`) | Defined for segment, transcribe, jobs, and callbacks |
-| Model registry (`nomikos_inference/registry.yaml`) | Calamari transcribe + BLLA segmentation entries |
+| Model registry (`nomikos_inference/registry.yaml`) | Transcribe (Calamari, PP-OCR) + segmentation (BLLA, PP-OCR) entries |
 | Model runner (`nomikos_inference/jobs/runner.py`) | Registry lookup, weight resolution, and model execution |
 
 ## Pairing a machine
@@ -153,9 +153,11 @@ No local weight checkout is required for the default Hub models; they download f
 
 ### Runtime
 
-Both architectures run on ONNX Runtime, CPU only (ADR 0006).
-Transcribe loads `best.onnx` through `nomikos_inference/architectures/calamari/` and
-segment loads `blla.onnx` through `nomikos_inference/architectures/blla/`. The graph
+All four architectures run on ONNX Runtime, CPU only (ADR 0006).
+Transcribe loads `best.onnx` through `nomikos_inference/architectures/calamari/` or
+`model.onnx` through `nomikos_inference/architectures/ppocr_rec/`, and
+segment loads `blla.onnx` through `nomikos_inference/architectures/blla/` or
+`ppocrv6-det.onnx` through `nomikos_inference/architectures/ppocr_det/`. The graph
 carries its own codec, line height and blank index in `metadata_props`, which is
 why one file is the whole model - there is no sidecar and no `.pt` to pair it
 with.
@@ -231,6 +233,10 @@ Job callbacks use a tagged output union: `output.kind` is either `segment` or `t
   Coptic and Syriac checkpoints, which agree on every structural field), one codec
   per script, so the entries differ only in codec, `weights_source`, and the pins.
 - `blla-segment` - segment, BLLA `blla.onnx` weights
+- `ppocr-segment` - segment, PP-OCRv6 detection `ppocrv6-det.onnx` weights from [segmentation-ppocrv6-det](https://huggingface.co/nomikos-project/segmentation-ppocrv6-det)
+- `syriac-ppocr-v1` - transcribe, Syriac PP-OCR recognition `model.onnx` weights from [syriac-htr-ppocr_rec](https://huggingface.co/nomikos-project/syriac-htr-ppocr_rec)
+
+In the platform pickers the segmenters appear as kraken (blla-segment) and ppocr (ppocr-segment); kraken is preselected and there is no Default entry.
 
 Weights are resolved at runtime from the Hub cache (`~/.nomikos/hf/cache/`) or, in a source
 checkout only, local bundled paths (`nomikos_inference/publish/artifacts/local/`, which an

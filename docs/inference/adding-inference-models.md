@@ -273,6 +273,22 @@ Insert the row (migration, admin script, or one-off SQL). `name` is the picker d
 
 Optional: create a **ModelBinding** at project, document, or part scope so the new model is the default for a workspace.
 
+### Registering the catalog row in production
+
+Production Postgres is a Coolify-managed container, so catalog rows go
+through `scripts/platform/apply_catalog_sql.sh` with a dated SQL file in
+`scripts/platform/catalog/` (see the catalog README for the file rules).
+Look first, then apply:
+
+```bash
+bash scripts/platform/apply_catalog_sql.sh scripts/platform/catalog/<date>-<what>.sql
+bash scripts/platform/apply_catalog_sql.sh scripts/platform/catalog/<date>-<what>.sql --apply
+```
+
+The script finds the production database itself (it must already hold the
+known models), shows the current `inference_models` rows, and sends the
+file over stdin, so nothing is written on the server.
+
 ---
 
 ## 5. Tests and CI

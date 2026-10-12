@@ -476,6 +476,46 @@ async def test_the_nearest_binding_supplies_the_model_and_its_effective_params(
     assert inference.resolutions == [task]
 
 
+@pytest.mark.parametrize(
+    ("method", "task"),
+    [
+        ("enqueue_segment_part", InferenceTask.segment),
+        ("enqueue_transcribe_part", InferenceTask.transcribe),
+    ],
+)
+async def test_a_project_scoped_binding_is_used_for_both_tasks_when_no_model_is_given(
+    method: str, task: InferenceTask
+) -> None:
+    """The scope walk itself lives in backend/ml; this pins that a project-scoped
+    row the resolver returns is honored by both enqueue paths, so a default a
+    member saved on the project actually selects the model for new jobs."""
+    owner_id = uuid.uuid4()
+    model = _model(task, {"beam": 4})
+    service, project, document, part, _lines, inference = _fixture(
+        owner_id=owner_id, line_count=1, model=model
+    )
+    # The fixture mints the project id internally, so the project scope can only
+    # be attached after it exists; the fake holds whatever binding it is given.
+    binding = ModelBinding(id=uuid.uuid4(), task=task, model_id=model.id, project_id=project.id)
+    inference._resolved = ResolvedModelBinding(
+        binding=binding, model=model, effective_params={"beam": 4}
+    )
+
+    job = await getattr(service, method)(
+        _Session(),
+        _user(owner_id),
+        project.id,
+        document.id,
+        part.id,
+        execution=CLOUD_AVAILABLE,
+    )
+
+    assert job.model_id == model.id
+    assert job.binding_id == binding.id
+    assert job.payload["ml_params"] == {"beam": 4}
+    assert inference.resolutions == [task]
+
+
 async def test_segment_with_no_binding_anywhere_still_enqueues_with_a_null_model() -> None:
     """Not an error for segmentation: one segmenter serves every script, and the resolver's
     404 says only that nobody pinned a model."""

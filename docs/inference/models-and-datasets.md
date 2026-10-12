@@ -12,6 +12,18 @@ catalog in [`nomikos_inference/registry.yaml`](../../nomikos_inference/registry.
 line candidates on a page. Nomikos converts those candidates into editable
 geometry, preserves the legacy `kraken_ceiling` field, and simplifies polygons.
 
+### PP-OCRv6 segmentation
+
+`ppocr-segment` runs PP-OCRv6 medium text detection on ONNX Runtime, followed
+by a refinement stage (merges same-row fragments, cuts overlapping stacked
+lines, flags suspect detections and reads them last). See
+[ppocrv6-segmenter.md](ppocrv6-segmenter.md) for the detector, the refinement
+rules, and the validation.
+
+In the platform pickers the segmenters appear as seg-v1 (blla-segment) and
+seg-v2 (ppocr-segment); each picker starts on the project's default model,
+else seg-v1, and there is no Default entry.
+
 ### Calamari HTR
 
 `greek-calamari-v1`, `armenian-calamari-v1`, `syriac-calamari-v2` and `coptic-calamari-v1` run the
@@ -88,9 +100,18 @@ functions against the training functions and is what keeps the two in step. The
 `preprocessing` string in a published graph's ONNX metadata is a stale label on
 the existing artifacts, not a description of what the runtime does.
 
-Calamari and BLLA are capable enough for the current manuscript workflow while
+Calamari, PP-OCR, and BLLA are capable enough for the current manuscript workflow while
 remaining practical for CPU-first local execution. The helper does not require
 CUDA, a GPU, or a training environment.
+
+### Syriac PP-OCR recognition
+
+`syriac-ppocr-v1` runs PP-OCRv6 recognition for Syriac on ONNX Runtime for line
+transcription. It takes the kraken line polygon without a margin at line height
+96, with 16 px white horizontal padding applied inside the adapter. See the
+[release note](syriac-ppocr-v1-release-2026-09-20.md) and the
+[adapter note](ppocr-rec-adapter-2026-09-20.md) for the publication, the serving
+recipe, and the verification.
 
 TrOCR appears in research experiments only. It has no runtime adapter, registry
 entry, packaged checkpoint, or platform catalog path and is not supported by
@@ -101,9 +122,11 @@ the product.
 | ID                   | Task       | Architecture     | Artifact                                                                                         |
 | -------------------- | ---------- | ---------------- | ------------------------------------------------------------------------------------------------ |
 | `blla-segment`     | Segment    | BLLA (ONNX Runtime) | `blla.onnx` from [segmentation repo](https://huggingface.co/nomikos-project/segmentation-blla) |
+| `ppocr-segment` | Segment | PP-OCRv6 detection (ONNX Runtime) | `ppocrv6-det.onnx` from [segmentation repo](https://huggingface.co/nomikos-project/segmentation-ppocrv6-det) |
 | `greek-calamari-v1` | Transcribe | Calamari (ONNX Runtime) | `best.onnx` from the [Hugging Face checkpoint](https://huggingface.co/nomikos-project/greek-htr-calamari), pinned revision |
 | `armenian-calamari-v1` | Transcribe | Calamari (ONNX Runtime) | `best.onnx` from the [Hugging Face checkpoint](https://huggingface.co/nomikos-project/armenian-htr-calamari), pinned revision |
 | `syriac-calamari-v2` | Transcribe | Calamari (ONNX Runtime) | `best.onnx` from the [Hugging Face checkpoint](https://huggingface.co/nomikos-project/syriac-htr-calamari), pinned revision |
+| `syriac-ppocr-v1` | Transcribe | PP-OCR recognition (ONNX Runtime) | `model.onnx` from the [Hugging Face checkpoint](https://huggingface.co/nomikos-project/syriac-htr-ppocr_rec), pinned revision |
 | `coptic-calamari-v1` | Transcribe | Calamari (ONNX Runtime) | `best.onnx` from the [Hugging Face checkpoint](https://huggingface.co/nomikos-project/coptic-htr-calamari), pinned revision |
 
 Coptic is registered at a measured crop padding of 12 px: CER 0.0177 at 12 against 0.1890
@@ -138,7 +161,7 @@ Syriac crops used whenever they were not Greek's 0.
 | 16 | 0.0219 | 2434 |
 | 20 | 0.0407 | 2039 |
 
-Four runtime models are registered. A fifth needs a compatible adapter, immutable Hub revision, SHA-256
+Seven runtime models are registered. An eighth needs a compatible adapter, immutable Hub revision, SHA-256
 digest, registry entry, platform catalog metadata, tests, and a declared host
 eligibility.
 

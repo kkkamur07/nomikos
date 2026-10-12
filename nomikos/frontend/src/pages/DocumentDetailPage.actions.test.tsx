@@ -46,7 +46,8 @@ vi.mock("../api/client", async (importOriginal) => {
       getDocumentWorkflowCounts: vi.fn(),
       listInferenceModels: vi.fn(),
       listProjectModelBindings: vi.fn().mockResolvedValue([]),
-      listDocumentModelBindings: vi.fn().mockResolvedValue([]),
+      createProjectModelBinding: vi.fn(),
+      updateProjectModelBinding: vi.fn(),
       listProjectJobsPage: vi
         .fn()
         .mockResolvedValue({ items: [], next_cursor: null }),
@@ -146,17 +147,8 @@ describe("DocumentDetailPage action toolbar", () => {
     seedProject("user-1");
     vi.mocked(api.getDocument).mockResolvedValue(DOCUMENT);
     vi.mocked(api.getDocumentWorkflowCounts).mockResolvedValue(COUNTS);
-    vi.mocked(api.listInferenceModels).mockResolvedValue([
-      {
-        id: "htr-greek",
-        task: "transcribe",
-        name: "greek-v1",
-        provider: "ppocr",
-        artifact_ref: "registry://greek-v1",
-        default_params: {},
-        created_at: "2026-10-01T10:00:00Z",
-      },
-    ]);
+    vi.mocked(api.listInferenceModels).mockResolvedValue([]);
+    vi.mocked(api.listProjectModelBindings).mockResolvedValue([]);
     vi.mocked(api.enqueueDocumentSegment).mockResolvedValue({
       jobs: [queuedJob("job-1")],
       queued: 3,
@@ -220,7 +212,7 @@ describe("DocumentDetailPage action toolbar", () => {
     expect(screen.getByText(/3 pages · 1 reviewed · updated/)).toBeTruthy();
   });
 
-  it("opens the Workflow menu with both segment scopes, the model captions and the warning", async () => {
+  it("opens the Workflow menu with both segment scopes, the model pickers and the re-segment note", async () => {
     renderDocumentPage();
     await screen.findByRole("heading", { name: "Chapter 4" });
 
@@ -234,32 +226,36 @@ describe("DocumentDetailPage action toolbar", () => {
     );
     expect(
       within(menu).getByRole("menuitem", {
-        name: /Segment unsegmented pages\s*2/,
+        name: /Segment unsegmented pages\s*2 pages/,
       }),
     ).toBeTruthy();
     expect(
-      within(menu).getByRole("menuitem", { name: /Re-segment every page\s*3/ }),
+      within(menu).getByRole("menuitem", {
+        name: /Re-segment every page.*3 pages/,
+      }),
     ).toBeTruthy();
     expect(
       within(menu).getByRole("menuitem", {
-        name: /Transcribe unpaired pages\s*3/,
+        name: /Transcribe unpaired pages\s*3 pages/,
       }),
     ).toBeTruthy();
     expect(within(menu).getByText("Segment")).toBeTruthy();
     expect(within(menu).getByText("Transcribe")).toBeTruthy();
-    // The segment engine caption became a picker: Default plus the catalog.
+    // Both engine captions became pickers: the catalog rows, or
+    // No models while the catalog mock is empty.
     expect(
       within(menu).getByRole("combobox", { name: "Segmentation model" }),
     ).toBeTruthy();
-    expect(within(menu).getByRole("option", { name: "Default" })).toBeTruthy();
-    // Nothing is bound, so the menu asks for a model rather than guessing one.
     expect(
-      await within(menu).findByRole("combobox", {
-        name: "Transcription model",
-      }),
-    ).toHaveValue("htr-greek");
+      within(menu).getByRole("combobox", { name: "HTR transcription model" }),
+    ).toBeTruthy();
     expect(
-      within(menu).getByText(/Re-segmenting discards unapproved machine text/),
+      within(menu).getAllByRole("option", { name: "No models" }),
+    ).toHaveLength(2);
+    expect(
+      within(menu).getByText(
+        "Discards unapproved machine text on untouched lines.",
+      ),
     ).toBeTruthy();
   });
 
@@ -501,6 +497,60 @@ describe("DocumentDetailPage action toolbar", () => {
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     expect(screen.getByRole("button", { name: "Workflow" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
+  });
+
+  it("lets a member who does not own the project set the project default", async () => {
+    seedProject("someone-else");
+    vi.mocked(api.listInferenceModels).mockResolvedValue([
+      {
+        id: "seg-a",
+        name: "kraken",
+        provider: "kraken",
+        task: "segment",
+        artifact_ref: "registry://blla-segment?tag=stable",
+        default_params: {},
+        created_at: "2026-09-01T00:00:00Z",
+      },
+      {
+        id: "seg-b",
+        name: "pp-ocr",
+        provider: "ppocr",
+        task: "segment",
+        artifact_ref: "registry://ppocr-segment?tag=stable",
+        default_params: {},
+        created_at: "2026-09-01T00:00:00Z",
+      },
+    ]);
+    vi.mocked(api.createProjectModelBinding).mockResolvedValue({
+      id: "binding-1",
+      project_id: "project-1",
+      document_id: null,
+      task: "segment",
+      model_id: "seg-b",
+      created_at: "2026-09-21T00:00:00Z",
+      updated_at: "2026-09-21T00:00:00Z",
+    });
+
+    renderDocumentPage();
+    await screen.findByRole("heading", { name: "Chapter 4" });
+    await openMenu("Workflow", "Document workflow");
+    await screen.findByRole("option", { name: "pp-ocr" });
+
+    // The card that also sets this lives in the owner-only settings popover,
+    // so the menu is the whole of a member's way to the project default.
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Segmentation model" }),
+      { target: { value: "seg-b" } },
+    );
+
+    await waitFor(() =>
+      expect(api.createProjectModelBinding).toHaveBeenCalledWith("project-1", {
+        task: "segment",
+        model_id: "seg-b",
+      }),
+    );
+    expect(await screen.findByText("Saved as project default.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
   });
 
   it("opens, walks, activates and closes a menu with the keyboard alone", async () => {

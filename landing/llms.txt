@@ -14,12 +14,14 @@ Nomikos is open research tooling for manuscript HTR workflows: page annotation, 
 
 - [greek-htr-calamari](https://huggingface.co/nomikos-project/greek-htr-calamari): Byzantine Greek line HTR (Calamari), published. Model card reports CER 0.156 on validation (19 lines) and 0.226 on test (21 lines)
 - [armenian-htr-calamari](https://huggingface.co/nomikos-project/armenian-htr-calamari): Armenian line HTR (Calamari), published. Model card reports CER 0.092 on validation (119 lines) and 0.072 on test (120 lines)
-- [syriac-htr-calamari](https://huggingface.co/nomikos-project/syriac-htr-calamari): Syriac line HTR (Calamari), published. Model card reports CER 0.181 on validation (331 lines) and 0.210 on test (335 lines)
+- [syriac-htr-ppocr_rec](https://huggingface.co/nomikos-project/syriac-htr-ppocr_rec): Syriac line HTR (PP-OCR recognition), published. Authors report test CER about 0.07
 - [coptic-htr-calamari](https://huggingface.co/nomikos-project/coptic-htr-calamari): Coptic line HTR (Calamari), published. Model card reports CER 0.082 on test (283 lines)
-- Datasets: training and evaluation sets on Hugging Face, coming soon
+- [greek-manuscript-htr](https://huggingface.co/datasets/nomikos-project/greek-manuscript-htr): Byzantine Greek HTR dataset, BnF Grec 1360. 5 pages, 204 lines
+- [armenian-manuscript-htr](https://huggingface.co/datasets/nomikos-project/armenian-manuscript-htr): Armenian HTR dataset, BnF Arménien 172 and UCLA Armenian MS 72. 34 pages, 1,704 lines
+- [syriac-manuscript-htr](https://huggingface.co/datasets/nomikos-project/syriac-manuscript-htr): East Syriac HTR dataset, Alqosh 65. 7 pages, 143 lines
 - [Author models on Hugging Face](https://huggingface.co/nomikos-project): Published checkpoints
 
-Reported CER figures come from held-out packs on specific manuscripts. The Syriac and Armenian packs run to a few hundred lines each; the Greek test pack holds 21 lines, so its figure is much noisier. None of it is a platform-wide accuracy guarantee: CER moves with the script, the hand, image quality, layout, and the training data behind the checkpoint.
+Reported CER figures come from held-out packs on specific manuscripts. The Armenian and Coptic packs run to a few hundred lines each; the Greek test pack holds 21 lines, so its figure is much noisier. None of it is a platform-wide accuracy guarantee: CER moves with the script, the hand, image quality, layout, and the training data behind the checkpoint.
 
 ## Project
 

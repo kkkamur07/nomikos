@@ -2479,6 +2479,20 @@
       },
       "LineTranscriptionResponse": {
         "properties": {
+          "character_confidences": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CharacterConfidence"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Character Confidences"
+          },
           "confidence": {
             "anyOf": [
               {

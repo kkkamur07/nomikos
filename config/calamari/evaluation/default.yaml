@@ -4,3 +4,5 @@ evaluation:
   checkpoint: ${output.root}/best.pt
   split: ${data.test_split}
   batch_size: ${training.batch_size}
+  # Evaluate best checkpoint on the test split when training ends and log it under test/ on W&B.
+  run_test_after_training: true

@@ -15,7 +15,7 @@ There is no API or UI for this, on purpose. Run SQL against the database.
    psql "$DATABASE_URL" -f scripts/platform/sql/2026-10-11_user_is_admin.sql
    ```
 
-   Locally, `alembic upgrade head` does the same (revision `007_user_is_admin`).
+   Locally, `alembic upgrade head` does the same (revision `008_user_is_admin`).
 
 2. Promote the account:
 

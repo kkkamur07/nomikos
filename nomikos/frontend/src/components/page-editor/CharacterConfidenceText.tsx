@@ -1,8 +1,10 @@
 import type { CharacterConfidence } from "./characterConfidence";
 import {
+  confidenceRunTitle,
   confidenceTierClass,
   confidenceTierLabel,
-  formatConfidencePercent,
+  containsJoiningScript,
+  groupConfidenceRuns,
 } from "./characterConfidence";
 
 type CharacterConfidenceTextProps = {
@@ -14,23 +16,28 @@ export function CharacterConfidenceText({
   characterConfidences,
   ariaLabel,
 }: CharacterConfidenceTextProps) {
+  const runs = groupConfidenceRuns(characterConfidences);
+  // Syriac and Arabic are cursive: the horizontal padding the tint carries
+  // would put a gap at every span boundary and the letters would fall back to
+  // their isolated forms. The modifier drops that padding for such a line.
+  const joining = runs.some((run) => containsJoiningScript(run.text));
+  const className = joining
+    ? "pe-confidence-text pe-confidence-text--joining"
+    : "pe-confidence-text";
+
   return (
-    <span className="pe-confidence-text" aria-label={ariaLabel}>
-      {characterConfidences.map((entry, index) => {
-        const tier = confidenceTierLabel(entry.confidence);
-        const pct = formatConfidencePercent(entry.confidence);
-        return (
-          <span
-            key={`${index}-${entry.char}`}
-            className={confidenceTierClass(entry.confidence)}
-            data-conf={Math.round(entry.confidence * 100)}
-            data-tier={tier}
-            title={`${pct} confidence (${tier})`}
-          >
-            {entry.char}
-          </span>
-        );
-      })}
+    <span className={className} aria-label={ariaLabel}>
+      {runs.map((run, index) => (
+        <span
+          key={`${index}-${run.text}`}
+          className={confidenceTierClass(run.confidence)}
+          data-conf={Math.round(run.confidence * 100)}
+          data-tier={confidenceTierLabel(run.confidence)}
+          title={confidenceRunTitle(run)}
+        >
+          {run.text}
+        </span>
+      ))}
     </span>
   );
 }

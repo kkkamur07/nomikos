@@ -19,7 +19,14 @@ import numpy as np
 
 from nomikos_inference.admission import open_image_bytes
 from nomikos_inference.architectures.artifact import ArtifactHandle, resolve_artifact
-from nomikos_inference.architectures.ppocr_det.postprocessing import detect_lines
+from nomikos_inference.architectures.ppocr_det.polygons import (
+    DEFAULT_OUTLINE_TOLERANCE_PX,
+    DEFAULT_VERTICAL_GROWTH,
+)
+from nomikos_inference.architectures.ppocr_det.postprocessing import (
+    DEFAULT_CONTOUR_TOLERANCE_PX,
+    detect_lines,
+)
 from nomikos_inference.architectures.ppocr_det.preprocessing import preprocess_ppocr_det_image
 from nomikos_inference.architectures.ppocr_det.reading_order import layout_lines
 from nomikos_inference.architectures.ppocr_det.refinement import (
@@ -206,6 +213,19 @@ def _reading_direction(params: Mapping[str, Any]) -> str:
     return direction
 
 
+#: Served geometry when the caller names none: line polygons. The library
+#: helpers (``detect_lines``, ``refine_to_lines``, both response builders)
+#: all default to ``"quad"``; this is the served default only.
+DEFAULT_BOX_TYPE = "poly"
+
+
+def _box_type(params: Mapping[str, Any], default: str = "quad") -> str:
+    box_type = params.get("box_type", default)
+    if box_type not in ("poly", "quad"):
+        raise ValueError('box_type must be "poly" or "quad"')
+    return box_type
+
+
 def _bool_param(params: Mapping[str, Any], key: str, default: bool) -> bool:
     value = params.get(key, default)
     if isinstance(value, bool):
@@ -241,6 +261,7 @@ def run_ppocr_det_segment(
     max_candidates = _max_candidates(resolved)
     fraction = _baseline_fraction(resolved)
     direction = _reading_direction(resolved)
+    box_type = _box_type(resolved, DEFAULT_BOX_TYPE)
     merge_fragments = _bool_param(resolved, "merge_fragments", True)
     resolve_overlaps = _bool_param(resolved, "resolve_overlaps", True)
     noise_policy = _noise_policy(resolved)
@@ -255,6 +276,15 @@ def run_ppocr_det_segment(
     )
     overlap_cut_threshold = _bounded_float_param(
         resolved, "overlap_cut_threshold", DEFAULT_OVERLAP_CUT_THRESHOLD, 0.05, 1
+    )
+    contour_tolerance_px = _bounded_float_param(
+        resolved, "contour_tolerance_px", DEFAULT_CONTOUR_TOLERANCE_PX, 0, 10
+    )
+    outline_tolerance_px = _bounded_float_param(
+        resolved, "outline_tolerance_px", DEFAULT_OUTLINE_TOLERANCE_PX, 0, 10
+    )
+    vertical_growth = _bounded_float_param(
+        resolved, "vertical_growth", DEFAULT_VERTICAL_GROWTH, 1.0, 2.0
     )
 
     with open_image_bytes(image_bytes) as image:
@@ -281,6 +311,8 @@ def run_ppocr_det_segment(
             box_thresh=box_thresh,
             unclip_ratio=unclip_ratio,
             max_candidates=max_candidates,
+            box_type=box_type,
+            contour_tolerance_px=contour_tolerance_px,
         )
         if not merge_fragments and not resolve_overlaps and noise_policy == "off":
             return build_ppocr_det_response(
@@ -289,6 +321,9 @@ def run_ppocr_det_segment(
                 quads,
                 baseline_fraction=fraction,
                 reading_direction=direction,
+                box_type=box_type,
+                outline_tolerance_px=outline_tolerance_px,
+                vertical_growth=vertical_growth,
             )
         layout = layout_lines(quads, direction=direction)
         items = refine_to_lines(
@@ -302,6 +337,11 @@ def run_ppocr_det_segment(
             merge_max_overlap_ratio=merge_max_overlap_ratio,
             merge_max_height_ratio=merge_max_height_ratio,
             overlap_cut_threshold=overlap_cut_threshold,
+            box_type=box_type,
+            page_width=width,
+            page_height=height,
+            outline_tolerance_px=outline_tolerance_px,
+            vertical_growth=vertical_growth,
         )
         return build_refined_ppocr_det_response(
             width,
@@ -312,6 +352,7 @@ def run_ppocr_det_segment(
             baseline_fraction=fraction,
             reading_direction=direction,
             noise_policy=noise_policy,
+            box_type=box_type,
         )
 
 

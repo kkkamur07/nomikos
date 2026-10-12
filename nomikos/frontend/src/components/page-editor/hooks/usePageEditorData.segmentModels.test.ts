@@ -50,8 +50,18 @@ const EMPTY_PAIRING = {
 };
 
 const TRANSCRIBE_MODEL = { id: "htr-1", task: "transcribe", name: "htr" };
-const SEGMENT_A = { id: "seg-a", task: "segment", name: "seg-v1" };
-const SEGMENT_B = { id: "seg-b", task: "segment", name: "seg-v2" };
+const SEGMENT_A = {
+  id: "seg-a",
+  task: "segment",
+  name: "seg-v1",
+  artifact_ref: "registry://blla-segment?tag=stable",
+};
+const SEGMENT_B = {
+  id: "seg-b",
+  task: "segment",
+  name: "seg-v2",
+  artifact_ref: "registry://ppocr-segment?tag=stable",
+};
 
 describe("usePageEditorData segment models", () => {
   beforeEach(() => {
@@ -108,16 +118,55 @@ describe("usePageEditorData segment models", () => {
     );
   });
 
-  it("leaves Default selected when the segment binding rejects, without an error", async () => {
+  it("preselects the canonical row when the segment binding rejects, without an error", async () => {
     const { result } = renderHook(() =>
       usePageEditorData("project-1", "document-1", "part-1"),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.selectedSegmentModelId).toBeNull();
+    expect(result.current.selectedSegmentModelId).toBe("seg-a");
     expect(result.current.error).toBeNull();
     // The HTR picker still falls back to the first catalog row.
     expect(result.current.selectedTranscribeModelId).toBe("htr-1");
+  });
+
+  it("preselects by artifact_ref when the canonical row is not first", async () => {
+    listInferenceModels.mockResolvedValue([
+      TRANSCRIBE_MODEL,
+      SEGMENT_B,
+      SEGMENT_A,
+    ]);
+    const { result } = renderHook(() =>
+      usePageEditorData("project-1", "document-1", "part-1"),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.segmentModels.map((model) => model.id)).toEqual([
+      "seg-b",
+      "seg-a",
+    ]);
+    expect(result.current.selectedSegmentModelId).toBe("seg-a");
+  });
+
+  it("falls back to the first model when no row carries the canonical registry id", async () => {
+    listInferenceModels.mockResolvedValue([TRANSCRIBE_MODEL, SEGMENT_B]);
+    const { result } = renderHook(() =>
+      usePageEditorData("project-1", "document-1", "part-1"),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.selectedSegmentModelId).toBe("seg-b");
+  });
+
+  it("leaves no model selected when the segment catalog is empty", async () => {
+    listInferenceModels.mockResolvedValue([TRANSCRIBE_MODEL]);
+    const { result } = renderHook(() =>
+      usePageEditorData("project-1", "document-1", "part-1"),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.segmentModels).toEqual([]);
+    expect(result.current.selectedSegmentModelId).toBeNull();
   });
 
   it("preselects the resolved segment binding", async () => {
@@ -148,17 +197,17 @@ describe("usePageEditorData segment models", () => {
       { initialProps: { partId: "part-1" } },
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.selectedSegmentModelId).toBeNull();
+    expect(result.current.selectedSegmentModelId).toBe("seg-a");
 
     act(() => {
-      result.current.setSelectedSegmentModelId("seg-a");
+      result.current.setSelectedSegmentModelId("seg-b");
     });
-    expect(result.current.selectedSegmentModelId).toBe("seg-a");
+    expect(result.current.selectedSegmentModelId).toBe("seg-b");
 
     rerender({ partId: "part-2" });
     await waitFor(() => expect(result.current.partLoading).toBe(false));
 
-    expect(result.current.selectedSegmentModelId).toBe("seg-a");
+    expect(result.current.selectedSegmentModelId).toBe("seg-b");
     expect(listInferenceModels).toHaveBeenCalledTimes(1);
     expect(result.current.segmentModels.map((model) => model.id)).toEqual([
       "seg-a",
@@ -188,7 +237,7 @@ describe("usePageEditorData segment models", () => {
       { initialProps: { partId: "part-1" } },
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.selectedSegmentModelId).toBeNull();
+    expect(result.current.selectedSegmentModelId).toBe("seg-a");
 
     act(() => {
       result.current.setSelectedSegmentModelId("seg-a");
@@ -223,7 +272,7 @@ describe("usePageEditorData segment models", () => {
       { initialProps: { partId: "part-1" } },
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.selectedSegmentModelId).toBeNull();
+    expect(result.current.selectedSegmentModelId).toBe("seg-a");
 
     rerender({ partId: "part-2" });
     await waitFor(() => expect(result.current.partLoading).toBe(false));
@@ -268,7 +317,7 @@ describe("usePageEditorData segment models", () => {
     expect(result.current.selectedSegmentModelId).toBe("seg-b");
   });
 
-  it("resets an explicit choice on a document-level load to Default when unbound", async () => {
+  it("resets an explicit choice on a document-level load to the canonical row when unbound", async () => {
     getDocument.mockImplementation((projectId: unknown, documentId: unknown) =>
       Promise.resolve(documentId === "document-2" ? DOCUMENT_TWO : DOCUMENT),
     );
@@ -293,13 +342,13 @@ describe("usePageEditorData segment models", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => {
-      result.current.setSelectedSegmentModelId("seg-a");
+      result.current.setSelectedSegmentModelId("seg-b");
     });
-    expect(result.current.selectedSegmentModelId).toBe("seg-a");
+    expect(result.current.selectedSegmentModelId).toBe("seg-b");
 
     rerender({ documentId: "document-2", partId: "part-3" });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.selectedSegmentModelId).toBeNull();
+    expect(result.current.selectedSegmentModelId).toBe("seg-a");
   });
 });

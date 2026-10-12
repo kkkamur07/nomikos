@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,9 +17,24 @@ from backend.document.infrastructure.orm_models import (
 )
 from nomikos_inference.contracts.transcribe import TranscribeRunResponse
 
+logger = logging.getLogger(__name__)
+
 
 class TranscribeJobHandlerError(Exception):
     """Raised for user-actionable transcribe job failures."""
+
+
+def character_confidences_for_storage(output: TranscribeRunResponse) -> list[float] | None:
+    """Per-code-point scores for ``output.text``, rounded for storage.
+
+    Returns null when the scores do not describe the text (length mismatch):
+    a row must never carry scores aligned to some other string. The caller logs
+    that case; it is the worker's data, not the job's failure.
+    """
+    scores = [round(entry.confidence, 3) for entry in output.character_confidences]
+    if len(scores) != len(output.text):
+        return None
+    return scores
 
 
 class TranscribeMergeService:
@@ -94,12 +110,21 @@ class TranscribeMergeService:
 
         result_lines: list[dict] = []
         for line, output in lines_with_output:
+            scores = character_confidences_for_storage(output)
+            if scores is None:
+                logger.warning(
+                    "transcribe_merge_character_confidences_dropped line_id=%s text_chars=%d scores=%d",
+                    line.id,
+                    len(output.text),
+                    len(output.character_confidences),
+                )
             session.add(
                 LineTranscription(
                     line_id=line.id,
                     transcription_id=layer.id,
                     text=output.text,
                     confidence=output.confidence,
+                    character_confidences=scores,
                 )
             )
             result_lines.append(

@@ -18,6 +18,7 @@ import { AppPageShell } from "../components/layout/AppPageShell";
 import { ContentRegionLoading } from "../components/layout/ContentRegionLoading";
 import { DocumentsTable } from "../components/projects/DocumentsTable";
 import { ProjectJobsPanel } from "../components/projects/ProjectJobsPanel";
+import { ProjectDefaultModelsPanel } from "../components/sharing/ProjectDefaultModelsPanel";
 import { ProjectSettingsPanel } from "../components/sharing/ProjectSettingsPanel";
 import { ProjectSharingPanel } from "../components/sharing/ProjectSharingPanel";
 import { FormModal } from "../components/ui/FormModal";
@@ -206,6 +207,9 @@ export function ProjectDashboardPage() {
                 invalidateAfter.projectUpdated(projectId);
               }}
             />
+            {/* Every member may set the project defaults, so this one is not
+                gated on ownership the way the collaborator list below is. */}
+            <ProjectDefaultModelsPanel projectId={projectId} />
             {/* The panel only opens for the owner (titleEditable), and the
                 collaborator list is owner-only on the API too. */}
             {isOwner && (

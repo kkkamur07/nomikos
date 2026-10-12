@@ -16,7 +16,7 @@ from backend.annotation.application.transcription_pdf_service import Transcripti
 from backend.core.api.content_disposition import attachment_disposition
 from backend.core.api.pagination import MAX_CURSOR_LENGTH, decode_cursor, paginate_rows
 from backend.core.exceptions import ValidationError
-from backend.document.api.line_responses import line_response
+from backend.document.api.line_responses import line_response, line_transcription_response
 from backend.document.api.responses import (
     document_response,
     document_with_parts_response,
@@ -73,7 +73,7 @@ from backend.document.application.layout_service import LayoutService
 from backend.document.application.part_service import DocumentPartService
 from backend.document.application.transcription_service import TranscriptionService
 from backend.document.infrastructure.document_repository import DocumentRepository
-from backend.document.infrastructure.orm_models import Block, TranscriptionKind
+from backend.document.infrastructure.orm_models import Block
 from backend.jobs.api.schemas import EnqueueJobResponse, enqueue_job_response_from_orm
 from backend.ml.application.capacity_service import InferenceCapacityService
 from backend.users.api.dependencies import get_current_user
@@ -1091,13 +1091,7 @@ async def patch_ground_truth_line_text(
         text=body.text,
         previous_text=body.previous_text,
     )
-    return LineTranscriptionResponse(
-        id=line_transcription.id,
-        transcription_id=line_transcription.transcription_id,
-        transcription_kind=TranscriptionKind.ground_truth,
-        text=line_transcription.text,
-        confidence=line_transcription.confidence,
-    )
+    return line_transcription_response(line_transcription)
 
 
 @router.delete("/{document_id}/parts/{part_id}", status_code=status.HTTP_204_NO_CONTENT)

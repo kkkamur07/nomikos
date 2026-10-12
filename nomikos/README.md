@@ -134,6 +134,8 @@ references and project-level bindings. It seeds two segment rows (`blla-segment`
 `ppocr-segment`) and four transcribe rows (`greek-calamari-v1`, `armenian-calamari-v1`,
 `coptic-calamari-v1`, `syriac-ppocr-v1`); the pickers show short display names
 (`seg-v1`, `seg-v2`, `greek-v1`, …) per [`docs/inference/model-catalog-names.md`](../docs/inference/model-catalog-names.md).
+The segmenter pickers have no Default entry: they start on the project's default
+model (set on the project page) or, without one, on `seg-v1` (kraken `blla-segment`).
 
 ```bash
 uv run --group platform python scripts/platform/seed_dev_inference.py

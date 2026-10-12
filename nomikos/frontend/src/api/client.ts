@@ -92,6 +92,10 @@ export type ResolvedModelBindingResponse =
   components["schemas"]["ResolvedModelBindingResponse"];
 export type ModelBindingResponse =
   components["schemas"]["ModelBindingResponse"];
+export type ModelBindingCreateRequest =
+  components["schemas"]["ModelBindingCreateRequest"];
+export type ModelBindingUpdateRequest =
+  components["schemas"]["ModelBindingUpdateRequest"];
 export type EnqueueTestJobRequest =
   components["schemas"]["EnqueueTestJobRequest"];
 export type EnqueueTestJobResponse =
@@ -268,7 +272,7 @@ export type DocumentTranscribeScope = "unpaired" | "all";
 
 export type DocumentSegmentJobRequest = {
   scope: DocumentSegmentScope;
-  /** Null means "whatever the document resolves to", which is all the UI offers. */
+  /** Null means the backend resolves the project binding itself. */
   model_id: string | null;
 };
 
@@ -1131,14 +1135,6 @@ export const api = {
   listInferenceModels: () =>
     apiRequest<InferenceModelResponse[]>("/inference/models"),
 
-  listProjectModelBindings: (projectId: string) =>
-    apiRequest<ModelBindingResponse[]>(`/projects/${projectId}/model-bindings`),
-
-  listDocumentModelBindings: (projectId: string, documentId: string) =>
-    apiRequest<ModelBindingResponse[]>(
-      `/projects/${projectId}/documents/${documentId}/model-bindings`,
-    ),
-
   resolvePartModelBinding: (
     projectId: string,
     documentId: string,
@@ -1148,6 +1144,33 @@ export const api = {
     apiRequest<ResolvedModelBindingResponse>(
       `/projects/${projectId}/documents/${documentId}/parts/${partId}/model-bindings/resolve?task=${task}`,
     ),
+
+  listProjectModelBindings: (projectId: string) =>
+    apiRequest<ModelBindingResponse[]>(`/projects/${projectId}/model-bindings`),
+
+  createProjectModelBinding: (
+    projectId: string,
+    body: ModelBindingCreateRequest,
+  ) =>
+    apiRequest<ModelBindingResponse>(`/projects/${projectId}/model-bindings`, {
+      method: "POST",
+      body,
+    }),
+
+  updateProjectModelBinding: (
+    projectId: string,
+    bindingId: string,
+    body: ModelBindingUpdateRequest,
+  ) =>
+    apiRequest<ModelBindingResponse>(
+      `/projects/${projectId}/model-bindings/${bindingId}`,
+      { method: "PATCH", body },
+    ),
+
+  deleteProjectModelBinding: (projectId: string, bindingId: string) =>
+    apiRequest<void>(`/projects/${projectId}/model-bindings/${bindingId}`, {
+      method: "DELETE",
+    }),
 
   updateGroundTruthLineText: (
     projectId: string,

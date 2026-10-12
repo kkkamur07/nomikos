@@ -1,7 +1,13 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "../components/ui/toast";
-import { api, type ProjectResponse, type UserResponse } from "../api/client";
+import {
+  api,
+  type InferenceModelResponse,
+  type InferenceTask,
+  type ProjectResponse,
+  type UserResponse,
+} from "../api/client";
 import { ApiError } from "../api/errors";
 import { resourceTags, invalidateAfter } from "../api/resources";
 import {
@@ -10,8 +16,13 @@ import {
   navigateToLogin,
 } from "../auth/session";
 import { AppPageShell } from "../components/layout/AppPageShell";
+import {
+  apiBindingStore,
+  saveProjectDefault,
+} from "../components/page-editor/projectModelDefaults";
 import { ProjectsTable } from "../components/projects/ProjectsTable";
 import { FormModal } from "../components/ui/FormModal";
+import { ModelSelectRow } from "../components/ui/ModelSelectRow";
 import { useServerQuery } from "../hooks/useServerQuery";
 import { slugify } from "../utils/slugify";
 
@@ -28,6 +39,12 @@ export function ProjectsPage() {
     null,
   );
   const [newName, setNewName] = useState("");
+  // Both start on "No default": a new project binds a model only if the
+  // researcher picks one here.
+  const [newSegmentModelId, setNewSegmentModelId] = useState("");
+  const [newTranscribeModelId, setNewTranscribeModelId] = useState("");
+  const [catalog, setCatalog] = useState<InferenceModelResponse[]>([]);
+  const bindingStore = useMemo(() => apiBindingStore(), []);
 
   // Redirecting before any request goes out leaves the page in its loading
   // state rather than flashing an empty list on the way to login.
@@ -35,6 +52,33 @@ export function ProjectsPage() {
   useEffect(() => {
     if (!signedIn) navigateToLogin(router);
   }, [signedIn, router]);
+
+  // Read once the dialog is open, so the projects list never waits on it. A
+  // failed read leaves the selects empty and disabled; the name still works.
+  useEffect(() => {
+    if (!createModalOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const models = await api.listInferenceModels();
+        if (!cancelled) setCatalog(models);
+      } catch {
+        if (!cancelled) setCatalog([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [createModalOpen]);
+
+  const segmentModels = useMemo(
+    () => catalog.filter((model) => model.task === "segment"),
+    [catalog],
+  );
+  const transcribeModels = useMemo(
+    () => catalog.filter((model) => model.task === "transcribe"),
+    [catalog],
+  );
 
   const {
     data,
@@ -71,10 +115,36 @@ export function ProjectsPage() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      await api.createProject({ name: newName.trim(), slug: slugify(newName) });
-      toast.success("Project created");
+      const project = await api.createProject({
+        name: newName.trim(),
+        slug: slugify(newName),
+      });
+      // The project exists from here on. A default that will not save is worth
+      // a different toast, never a failed creation.
+      const chosen: [InferenceTask, string][] = [
+        ["segment", newSegmentModelId],
+        ["transcribe", newTranscribeModelId],
+      ];
+      let defaultsFailed = false;
+      for (const [task, modelId] of chosen) {
+        if (!modelId) continue;
+        try {
+          await saveProjectDefault(bindingStore, project.id, task, modelId);
+        } catch {
+          defaultsFailed = true;
+        }
+      }
+      if (defaultsFailed) {
+        toast.error(
+          "Project created, but its default models could not be saved. You can set them on the project page.",
+        );
+      } else {
+        toast.success("Project created");
+      }
       setCreateModalOpen(false);
       setNewName("");
+      setNewSegmentModelId("");
+      setNewTranscribeModelId("");
       invalidateAfter.projectCreated();
       await reloadProjects();
     } catch (err) {
@@ -177,6 +247,30 @@ export function ProjectsPage() {
             required
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
+          />
+        </div>
+        <p className="model-row-hint">
+          Optional. New jobs in this project start with these models. You can
+          change them later.
+        </p>
+        <div className="model-row-group">
+          <ModelSelectRow
+            id="new-project-segment-model"
+            label="Segmentation model"
+            value={newSegmentModelId}
+            options={segmentModels}
+            emptyLabel="No default"
+            disabled={creating}
+            onChange={setNewSegmentModelId}
+          />
+          <ModelSelectRow
+            id="new-project-transcribe-model"
+            label="Transcription model"
+            value={newTranscribeModelId}
+            options={transcribeModels}
+            emptyLabel="No default"
+            disabled={creating}
+            onChange={setNewTranscribeModelId}
           />
         </div>
       </FormModal>

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
-LANGUAGES = ("greek", "armenian", "syriac")
+LANGUAGES = ("greek", "armenian", "syriac", "coptic")
 
 
 def language_labels(data_root: Path, split: str, image_names: Sequence[str]) -> list[str]:

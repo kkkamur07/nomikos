@@ -20,7 +20,7 @@ draw or assign one, and reading order (ADR 0008) and the exports ignored `block_
 A block is a **region**: the layout unit above lines, typically one folio or one column.
 It is used, not replaced.
 
-- **Label.** `blocks.label` (nullable, up to 64 characters, migration `008_block_label`)
+- **Label.** `blocks.label` (nullable, up to 64 characters, migration `009_block_label`)
   holds the researcher's name for the region, typically a folio ("4v"). Create and patch
   accept it; an explicit `null` or empty string clears it.
 - **Drawing assigns.** `POST .../blocks` takes `assign_contained` (default true): every

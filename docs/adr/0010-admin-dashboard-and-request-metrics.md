@@ -16,7 +16,7 @@ beyond the security-header and CORS middleware, and the frontend failure beacon
 
 ## Decision
 
-1. **One boolean, `users.is_admin`** (migration `007_user_is_admin`, default `false`). No roles
+1. **One boolean, `users.is_admin`** (migration `008_user_is_admin`, default `false`). No roles
    table: there is exactly one privilege, read-only and all-or-nothing. No route writes the
    column; promotion is an `UPDATE` by whoever operates the database, so an account cannot grant
    itself the dashboard. `GET /me` exposes the flag so the client can show the link, and
