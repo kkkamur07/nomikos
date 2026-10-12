@@ -65,8 +65,10 @@ export function PageEditorTranscriptionStrip({
   ocrScope = null,
   backgroundJobsActive = false,
 }: PageEditorTranscriptionStripProps) {
-  const { height, onPointerDown, onPointerMove, onPointerUp } =
-    useStripResize(240);
+  const { height, onPointerDown, onPointerMove, onPointerUp } = useStripResize(
+    240,
+    visible,
+  );
 
   const activeGroundTruthLayer =
     groundTruthLayer(transcriptionLayers) ?? selectedTranscriptionLayer;

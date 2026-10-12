@@ -40,9 +40,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: frontendRoot,
   },
-  // `next dev` only: its "N" badge defaults to bottom left, which is where the
-  // editor's tool island sits on a narrow canvas.
-  devIndicators: { position: "bottom-right" },
+  // The dev badge covered the editor's bottom corners (island, strip Save).
+  devIndicators: false,
   async headers() {
     // On Vercel these come from vercel.json; returning them here too would set
     // each header twice (two CSPs, both enforced). Apply only off-Vercel.

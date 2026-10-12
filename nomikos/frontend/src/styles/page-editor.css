@@ -1532,6 +1532,7 @@
     animation: none;
   }
   .pe-seg,
+  .pe-job-panel,
   .pe-strip__resizer::after,
   .pe-model-preview [data-conf] {
     transition: none;
@@ -1545,6 +1546,11 @@
   z-index: 40;
   width: min(360px, calc(100vw - 32px));
   max-height: calc(100vh - 32px - var(--nk-bottom-inset, 0px));
+  /* Rides up and down with the strip. Only changes animate, never the
+     first paint. */
+  transition:
+    bottom 120ms ease-out,
+    max-height 120ms ease-out;
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border-2);

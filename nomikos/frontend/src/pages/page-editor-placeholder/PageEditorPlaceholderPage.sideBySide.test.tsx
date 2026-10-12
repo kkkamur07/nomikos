@@ -318,6 +318,27 @@ describe("PageEditorPlaceholderPage side by side", () => {
     ).toBeTruthy();
   });
 
+  it("lifts the jobs panel by the strip height only while the strip is open", async () => {
+    // .pe-job-panel sits at bottom: 16px + --nk-bottom-inset, so the strip's
+    // Save button is never under it.
+    const inset = () =>
+      document.documentElement.style.getPropertyValue("--nk-bottom-inset");
+    seedSideBySide(false);
+    seedEditor();
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    expect(inset()).toBe("0px");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Segment 1/ }));
+    await screen.findByLabelText(/ground truth text for selected segment/i);
+    expect(inset()).toBe("240px");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Hide transcription panel" }),
+    );
+    await waitFor(() => expect(inset()).toBe("0px"));
+  });
+
   it("renders no split pane when the setting is off", async () => {
     seedSideBySide(false);
     seedEditor();
