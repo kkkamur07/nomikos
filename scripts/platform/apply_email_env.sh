@@ -90,7 +90,7 @@ EMAIL_SIGNIN_NOTICES="true"
 APP_NAME="api"   # substring of the Coolify application name
 
 [ -f "$SECRETS_FILE" ] || die "secrets file not found: $SECRETS_FILE (see the header of this script)"
-PERM=$(stat -f %Lp "$SECRETS_FILE" 2>/dev/null || stat -c %a "$SECRETS_FILE")
+PERM=$(stat -c %a "$SECRETS_FILE" 2>/dev/null || stat -f %Lp "$SECRETS_FILE")
 case "$PERM" in
   ?00) ;;
   *) die "$SECRETS_FILE is mode $PERM; run: chmod 600 $SECRETS_FILE" ;;
