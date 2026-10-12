@@ -16,7 +16,8 @@ class EmailSettings(BaseSettings):
     email_from: str = Field(default="Nomikos <no-reply@nomikos.app>", alias="EMAIL_FROM")
     #: Where replies to the welcome mail go. None means the mail invites no reply.
     reply_to: str | None = Field(default=None, alias="EMAIL_REPLY_TO")
-    app_public_url: str = Field(default="https://nomikos.app", alias="APP_PUBLIC_URL")
+    #: The app origin (not the landing site): mail links and the hosted logo live here.
+    app_public_url: str = Field(default="https://app.nomikos.app", alias="APP_PUBLIC_URL")
     signin_notices: bool = Field(default=True, alias="EMAIL_SIGNIN_NOTICES")
 
     @property

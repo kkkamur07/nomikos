@@ -20,12 +20,14 @@ RESEND_TIMEOUT_SECONDS = 10.0
 
 @dataclass
 class EmailMessage:
-    """One outgoing mail. Templates leave ``to`` empty; the caller sets it from the account."""
+    """One outgoing mail. Templates leave ``to`` and ``user_id`` empty; the caller sets
+    both from the account. Logs name the user id, never the address."""
 
     subject: str
     html: str
     text: str
     to: str = ""
+    user_id: str = ""
 
 
 class EmailSendError(RuntimeError):
@@ -69,19 +71,26 @@ class ResendEmailSender:
                 timeout=RESEND_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as exc:
-            raise EmailSendError(f"Resend request failed: {exc}") from exc
+            raise EmailSendError(f"Resend request failed: {type(exc).__name__}: {exc}") from exc
         if not 200 <= response.status_code < 300:
             raise EmailSendError(
                 f"Resend rejected the message: HTTP {response.status_code}: {response.text}"
             )
+        try:
+            resend_id = response.json().get("id")
+        except ValueError:
+            resend_id = None
+        logger.info(
+            "email_sent id=%s subject=%r user_id=%s", resend_id, message.subject, message.user_id
+        )
 
 
 class LoggingEmailSender:
     """The no-key sender. Visible in logs and in the dev stack, sends nothing."""
 
     async def send(self, message: EmailMessage) -> None:
-        logger.info("email subject=%r to=%r", message.subject, message.to)
-        logger.debug("email body to=%r: %s", message.to, message.text)
+        logger.info("email subject=%r user_id=%s", message.subject, message.user_id)
+        logger.debug("email body user_id=%s: %s", message.user_id, message.text)
 
 
 @settings_cache
@@ -102,8 +111,13 @@ async def _deliver(message: EmailMessage) -> None:
     """Send one message, turning any failure into a log line. Never raises."""
     try:
         await get_email_sender().send(message)
-    except Exception:
-        logger.exception("email_send_failed subject=%r to=%r", message.subject, message.to)
+    except Exception as exc:
+        logger.exception(
+            "email_send_failed subject=%r user_id=%s error=%s",
+            message.subject,
+            message.user_id,
+            type(exc).__name__,
+        )
 
 
 def send_in_background(background_tasks: BackgroundTasks, message: EmailMessage) -> None:

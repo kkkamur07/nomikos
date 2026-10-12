@@ -9,6 +9,7 @@ sender patched in after the route returns, which is exactly the seam
 from __future__ import annotations
 
 import os
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -27,8 +28,9 @@ STRONG_SECRET = "xQ7v2Kd9RmZ4pB6wLt1yHs3nCf8jUa5eG0oV"
 @pytest.fixture(autouse=True)
 def platform_settings(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
-    monkeypatch.setenv("APP_PUBLIC_URL", "https://app.nomikos.app")
-    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    # APP_PUBLIC_URL and EMAIL_REPLY_TO stay unset: these tests see the defaults.
+    for name in ("APP_PUBLIC_URL", "EMAIL_REPLY_TO", "RESEND_API_KEY", "EMAIL_SIGNIN_NOTICES"):
+        monkeypatch.delenv(name, raising=False)
     reset_settings_caches()
     yield
     reset_settings_caches()
@@ -41,8 +43,11 @@ def auth_routes():
     return auth
 
 
-def _user() -> SimpleNamespace:
-    return SimpleNamespace(email="ada@example.com", username="ada")
+USER_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+
+
+def _user(username: str = "ada") -> SimpleNamespace:
+    return SimpleNamespace(id=USER_ID, email="ada@example.com", username=username)
 
 
 def _tokens() -> BrowserSessionTokens:
@@ -101,9 +106,31 @@ async def test_register_schedules_the_welcome_email(auth_routes, monkeypatch) ->
     assert len(sender.sent) == 1
     message = sender.sent[0]
     assert message.to == "ada@example.com"
+    assert message.user_id == str(USER_ID)
     assert message.subject == "Welcome to Nomikos"
-    assert "ada" in message.html
-    assert "https://app.nomikos.app" in message.html
+    assert 'href="https://app.nomikos.app"' in message.html
+    assert 'src="https://app.nomikos.app/email/nomikos-logo.png"' in message.html
+
+
+async def test_welcome_email_carries_no_username(auth_routes, monkeypatch) -> None:
+    username = "friendX URGENT re-confirm at https://x.example"
+    _install_fakes(auth_routes, monkeypatch, register_user=_user(username))
+    tasks = BackgroundTasks()
+
+    await auth_routes.register(
+        RegisterRequest(email="ada@example.com", username="ada", password="long-enough-pass"),
+        None,
+        object(),
+        Response(),
+        tasks,
+    )
+
+    sender = _RecordingSender()
+    await _run(tasks, sender, monkeypatch)
+    message = sender.sent[0]
+    for body in (message.html, message.text):
+        assert "friendX" not in body
+        assert "x.example" not in body
 
 
 async def test_login_schedules_the_signin_notice(auth_routes, monkeypatch) -> None:
@@ -124,7 +151,28 @@ async def test_login_schedules_the_signin_notice(auth_routes, monkeypatch) -> No
     assert len(sender.sent) == 1
     message = sender.sent[0]
     assert message.to == "ada@example.com"
+    assert message.user_id == str(USER_ID)
     assert message.subject == "New sign-in to your Nomikos account"
+    assert "If this was not you, contact the project owner." in message.text
+
+
+async def test_login_notice_names_the_configured_reply_to(auth_routes, monkeypatch) -> None:
+    monkeypatch.setenv("EMAIL_REPLY_TO", "hello@nomikos.app")
+    reset_settings_caches()
+    _install_fakes(auth_routes, monkeypatch, login_user=_user())
+    tasks = BackgroundTasks()
+
+    await auth_routes.login(
+        LoginRequest(email="ada@example.com", password="whatever"),
+        None,
+        object(),
+        Response(),
+        tasks,
+    )
+
+    sender = _RecordingSender()
+    await _run(tasks, sender, monkeypatch)
+    assert "If this was not you, write to hello@nomikos.app." in sender.sent[0].text
 
 
 async def test_login_schedules_nothing_when_notices_are_off(auth_routes, monkeypatch) -> None:

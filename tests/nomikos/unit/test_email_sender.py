@@ -20,9 +20,13 @@ from backend.notifications.sender import (
     send_in_background,
 )
 
+USER_ID = "00000000-0000-0000-0000-0000000000a1"
+
 
 def _message() -> EmailMessage:
-    return EmailMessage(to="ada@example.com", subject="Hello", html="<p>Hello</p>", text="Hello")
+    return EmailMessage(
+        to="ada@example.com", subject="Hello", html="<p>Hello</p>", text="Hello", user_id=USER_ID
+    )
 
 
 def _transport(handler) -> httpx.MockTransport:
@@ -76,14 +80,36 @@ async def test_resend_raises_on_transport_failure() -> None:
         await sender.send(_message())
 
 
-async def test_logging_sender_logs_subject_recipient_and_body(caplog) -> None:
+async def test_logging_sender_logs_subject_and_user_id_never_the_address(caplog) -> None:
     sender = LoggingEmailSender()
 
     with caplog.at_level(logging.DEBUG, logger="backend.notifications.sender"):
         await sender.send(_message())
 
     assert "Hello" in caplog.text
-    assert "ada@example.com" in caplog.text
+    assert USER_ID in caplog.text
+    assert "ada@example.com" not in caplog.text
+
+
+async def test_resend_logs_one_info_line_with_id_and_user_on_success(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "mail_123"})
+
+    sender = ResendEmailSender(
+        httpx.AsyncClient(transport=_transport(handler)),
+        api_key="re_test_key",
+        from_address="Nomikos <x@y.z>",
+    )
+    with caplog.at_level(logging.INFO, logger="backend.notifications.sender"):
+        await sender.send(_message())
+
+    infos = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert len(infos) == 1
+    line = infos[0].getMessage()
+    assert "email_sent" in line
+    assert "mail_123" in line
+    assert USER_ID in line
+    assert "ada@example.com" not in caplog.text
 
 
 def test_factory_is_log_only_without_a_key(monkeypatch) -> None:
@@ -116,6 +142,37 @@ async def test_background_helper_swallows_failure_and_logs(caplog, monkeypatch) 
         await tasks()
 
     assert "email_send_failed" in caplog.text
+    assert USER_ID in caplog.text
+    assert "ada@example.com" not in caplog.text
+
+
+async def test_background_failure_log_names_the_exception_class(caplog, monkeypatch) -> None:
+    class Hanging:
+        async def send(self, message: EmailMessage) -> None:
+            raise httpx.ReadTimeout("")
+
+    tasks = BackgroundTasks()
+    monkeypatch.setattr(sender_module, "get_email_sender", lambda: Hanging())
+    send_in_background(tasks, _message())
+    with caplog.at_level(logging.ERROR, logger="backend.notifications.sender"):
+        await tasks()
+
+    [record] = caplog.records
+    assert "ReadTimeout" in record.getMessage()
+    assert "ada@example.com" not in caplog.text
+
+
+async def test_resend_transport_error_message_names_the_exception_class() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("")
+
+    sender = ResendEmailSender(
+        httpx.AsyncClient(transport=_transport(handler)),
+        api_key="re_test_key",
+        from_address="Nomikos <x@y.z>",
+    )
+    with pytest.raises(EmailSendError, match="ReadTimeout"):
+        await sender.send(_message())
 
 
 async def test_background_helper_delivers_on_success(monkeypatch) -> None:

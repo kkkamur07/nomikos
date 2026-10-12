@@ -2,7 +2,9 @@
 
 Each builder returns an :class:`EmailMessage` with an HTML body and a plain-text
 twin. The caller fills in ``to`` from the account address; the builders only
-ever interpolate the display name. User-provided strings are HTML-escaped.
+interpolate the username into the sign-in notice, never into the welcome mail
+(registration is unverified, so the welcome mail must carry no caller text).
+User-provided strings are HTML-escaped.
 """
 
 from __future__ import annotations
@@ -51,7 +53,8 @@ def _shell(title: str, body_html: str, preheader: str = "") -> str:
         "@media (prefers-color-scheme: dark){"
         ".email-bg{background-color:#1c1917 !important;}"
         ".email-card{background-color:#292524 !important;}"
-        ".email-logo{background-color:#292524 !important;}"
+        ".email-logo{background-color:#ffffff !important;padding:6px !important;"
+        "border-radius:8px !important;}"
         ".email-pad{background-color:#292524 !important;}"
         ".email-title{color:#fafaf9 !important;}"
         ".email-body{color:#e7e5e4 !important;}"
@@ -161,13 +164,12 @@ def _footer(lines_html: list[str]) -> str:
     )
 
 
-def welcome_email(username: str, app_url: str, *, reply_to: str | None = None) -> EmailMessage:
+def welcome_email(app_url: str, *, reply_to: str | None = None) -> EmailMessage:
     """First mail after registration. The caller sets ``to`` from the account address.
 
     The reply invitation appears only when ``reply_to`` names a mailbox that
     reads replies; otherwise the mail invites none.
     """
-    name = html.escape(username)
     footer_lines = ["You received this because an account was created with this address."]
     if reply_to is not None:
         safe_reply = html.escape(reply_to, quote=True)
@@ -184,7 +186,7 @@ def welcome_email(username: str, app_url: str, *, reply_to: str | None = None) -
     body_html = (
         _logo(app_url)
         + _wordmark()
-        + _title(f"Welcome to Nomikos, {name}")
+        + _title("Welcome to Nomikos")
         + _paragraph(
             "Nomikos transcribes historical manuscripts in Greek, Armenian, Coptic and Syriac."
         )
@@ -196,7 +198,7 @@ def welcome_email(username: str, app_url: str, *, reply_to: str | None = None) -
         + _footer(footer_lines)
     )
     text = (
-        f"Welcome to Nomikos, {username}\n\n"
+        "Welcome to Nomikos\n\n"
         "Nomikos transcribes historical manuscripts in Greek, Armenian, "
         "Coptic and Syriac.\n\n"
         "Create a project, upload page images, then run segmentation "
@@ -214,27 +216,41 @@ def welcome_email(username: str, app_url: str, *, reply_to: str | None = None) -
     )
 
 
-def signin_notice_email(username: str, when_utc: datetime, app_url: str) -> EmailMessage:
-    """Notice after a login. The caller sets ``to`` from the account address."""
+def signin_notice_email(
+    username: str, when_utc: datetime, app_url: str, *, reply_to: str | None = None
+) -> EmailMessage:
+    """Notice after a login. Information only: there is no password change or
+    session list to point at yet. The caller sets ``to`` from the account address.
+
+    ``username`` is safe here: registration rejects control characters and
+    line breaks, so it renders as one line.
+    """
     if when_utc.tzinfo is None:
         when_utc = when_utc.replace(tzinfo=UTC)
     when = when_utc.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
     name = html.escape(username)
+    if reply_to is not None:
+        safe_reply = html.escape(reply_to, quote=True)
+        not_you_html = (
+            "If this was not you, write to "
+            f'<a class="email-link" href="mailto:{safe_reply}" '
+            f'style="color:{ACCENT};text-decoration:underline;">'
+            f"{html.escape(reply_to)}</a>."
+        )
+        not_you_text = f"If this was not you, write to {reply_to}."
+    else:
+        not_you_html = not_you_text = "If this was not you, contact the project owner."
     body_html = (
         _logo(app_url)
         + _wordmark()
         + _title("New sign-in to your Nomikos account")
         + _paragraph(f"Hi {name}, your account was signed in on {when}.")
-        + _paragraph("If this was you, nothing to do. If not, change your password now.")
-        + _button("Review activity", app_url)
-        + _footer(["You received this because sign-in notices are on for your account."])
+        + _paragraph("If this was you, there is nothing to do. " + not_you_html)
     )
     text = (
         "New sign-in to your Nomikos account\n\n"
         f"Hi {username}, your account was signed in on {when}.\n\n"
-        "If this was you, nothing to do. If not, change your password now.\n\n"
-        f"Review activity: {app_url}\n\n"
-        "You received this because sign-in notices are on for your account."
+        f"If this was you, there is nothing to do. {not_you_text}"
     )
     return EmailMessage(
         subject="New sign-in to your Nomikos account",
