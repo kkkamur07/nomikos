@@ -376,6 +376,7 @@ main {
   display: grid;
   gap: 2rem;
   width: 88%;
+  max-width: 640px;
   margin: 0.5rem auto 0;
   align-items: start;
 }
@@ -408,12 +409,6 @@ main {
 .video figcaption strong {
   font-weight: 600;
   color: var(--text-2);
-}
-
-@media (min-width: 48rem) {
-  .video-grid {
-    grid-template-columns: 1fr 1fr;
-  }
 }
 
 .section--wide {
