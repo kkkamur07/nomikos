@@ -16,15 +16,17 @@ does not draw the cursor. The webm is converted to mp4 with ffmpeg and a
 ``captions*.md`` file with timestamps is written beside it.
 
 Everything that depends on the stack comes from environment variables, see
-README.md. The script is re-runnable and only ever removes what it made: regions
-labelled ``video-...``, Eleni's project by its name, and the jobs and the
-Segment started during the run. Without ``--yes`` it only prints what it would
-remove and stops before recording.
+README.md. The script is re-runnable and only ever removes what it made: every
+region, Segment, project and job it creates is recorded by id in a run file
+next to the videos (``.run-state-<video>.json``), and cleanup deletes or
+cancels only those ids. Without ``--yes`` it only prints what it would remove
+and stops before recording.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -36,7 +38,6 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -73,10 +74,7 @@ IMAGES = os.environ.get(
 OUT_DIR = Path(os.environ.get("NOMIKOS_VIDEO_OUT", str(HERE / "out")))
 FFMPEG = os.environ.get("FFMPEG") or shutil.which("ffmpeg")
 SLOW_MO = int(os.environ.get("NOMIKOS_SLOW_MO", "250"))
-# Every region the recorder draws carries this label prefix; cleanup deletes
-# only regions with it.
-MARK = "video-"
-REGION_LABEL = MARK + "4v"
+REGION_LABEL = "4v"
 OPEN_JOB = ("pending", "running", "waiting")
 VIEWPORT = {"width": 1440, "height": 900}
 MIN_HOLD = 2.5
@@ -223,12 +221,6 @@ def part_base(seed: Seed) -> str:
     return f"/projects/{seed.project_id}/documents/{seed.document_id}/parts/{seed.part_id}"
 
 
-def marked_regions(token: str, seed: Seed) -> list[dict]:
-    """The regions an earlier run drew on the seed page: label starts with ``video-``."""
-    blocks = api("GET", part_base(seed) + "/layout", token)["blocks"]
-    return [b for b in blocks if (b.get("label") or "").startswith(MARK)]
-
-
 def line_ids(token: str, seed: Seed) -> set[str]:
     return {line["id"] for line in api("GET", part_base(seed) + "/layout", token)["lines"]}
 
@@ -308,18 +300,91 @@ def open_jobs(token: str, project_id: str) -> list[dict]:
     return [j for j in jobs if j["status"] in OPEN_JOB]
 
 
-def created_at(job: dict) -> datetime:
-    stamp = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00"))
-    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+PASSWORDS = {DEV_EMAIL: DEV_PASSWORD, USER_EMAIL: USER_PASSWORD}
 
 
-def cancel_run_jobs(token: str, since: datetime) -> None:
-    """Cancel the open jobs this run started (created after ``since``); jobs
-    anyone queued before the run are left alone, and so is the job history."""
-    for project in items(api("GET", "/projects", token)):
-        for job in open_jobs(token, project["id"]):
-            if created_at(job) >= since:
-                api("POST", f"/jobs/{job['id']}/cancel", token)
+@dataclass
+class RunState:
+    """Everything a run creates, by id, in a small JSON file next to the videos.
+
+    Regions and Segments are kept as their API paths, projects and jobs as ids,
+    each with the account that made them. A ``--yes`` run first removes what the
+    previous run of the same video recorded, then starts a fresh file and adds
+    to it as it goes, so a run that stops half way is still on record."""
+
+    path: Path
+    data: dict = field(default_factory=dict)
+
+    KINDS = ("regions", "lines", "jobs", "projects")
+
+    @classmethod
+    def load(cls, path: Path) -> RunState:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = {}
+        return cls(path, {kind: data.get(kind, []) for kind in cls.KINDS})
+
+    def reset(self) -> None:
+        self.data = {kind: [] for kind in self.KINDS}
+        self.save()
+
+    def add(self, kind: str, email: str, **entry: str) -> None:
+        self.data[kind].append({"email": email, **entry})
+        self.save()
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.data, indent=2) + "\n")
+
+
+def token_for(email: str) -> str | None:
+    return login(email, PASSWORDS[email]) if email in PASSWORDS else None
+
+
+def block_ids(token: str, part_path: str) -> set[str]:
+    return {b["id"] for b in api("GET", part_path + "/layout", token)["blocks"]}
+
+
+def job_ids(token: str, project_id: str) -> set[str]:
+    return {j["id"] for j in items(api("GET", f"/projects/{project_id}/jobs", token))}
+
+
+def record_new(state: RunState, kind: str, email: str, ids, before: set[str], **extra) -> None:
+    """Record the ids that appeared since ``before``; waits a little for the
+    app's own request to land."""
+    for _ in range(20):
+        new = ids() - before
+        if new:
+            for new_id in sorted(new):
+                state.add(
+                    kind,
+                    email,
+                    **extra,
+                    **{"path" if kind in ("regions", "lines") else "id": new_id},
+                )
+            return
+        time.sleep(0.25)
+    raise StepFailed(f"no new {kind} showed up in the API")
+
+
+def job_open(token: str, job_id: str) -> bool:
+    try:
+        return api("GET", f"/jobs/{job_id}", token)["status"] in OPEN_JOB
+    except urllib.error.HTTPError:
+        return False
+
+
+def finish_run(state: RunState, kinds: tuple[str, ...]) -> None:
+    """After recording: remove the given kinds of what this run made."""
+    for kind in kinds:
+        for entry in state.data[kind]:
+            token = token_for(entry["email"])
+            with contextlib.suppress(urllib.error.HTTPError):
+                if kind == "jobs" and job_open(token, entry["id"]):
+                    api("POST", f"/jobs/{entry['id']}/cancel", token)
+                elif kind in ("regions", "lines"):
+                    api("DELETE", entry["path"], token)
 
 
 @dataclass
@@ -332,28 +397,51 @@ class Cleanup:
         self.steps.append((text, action))
 
 
-def plan_cleanup(video: str) -> Cleanup:
+def plan_cleanup(video: str, state: RunState) -> Cleanup:
+    """What the previous run recorded and still exists, plus (explainer only)
+    Eleni's projects named Athos Letters as a fallback for a lost run file."""
     plan = Cleanup()
-    token = login(DEV_EMAIL, DEV_PASSWORD)
-    need(token, "dev login failed")
-    seed = find_seed(token)
-    for block in marked_regions(token, seed):
-        path = f"{part_base(seed)}/blocks/{block['id']}"
-        plan.add(
-            f"region {block['label']!r} on {SEED_DOCUMENT} page 1 ({block['id']})",
-            lambda path=path: api("DELETE", path, token),
-        )
-    user_token = login(USER_EMAIL, USER_PASSWORD) if video == "explainer" else None
-    for project in user_projects(user_token) if user_token else []:
-        for job in open_jobs(user_token, project["id"]):
+    for kind in ("regions", "lines"):
+        for entry in state.data[kind]:
+            token = token_for(entry["email"])
+            key = "blocks" if kind == "regions" else "lines"
+            part_path, _, item_id = entry["path"].rpartition(f"/{key}/")
+            try:
+                layout = api("GET", part_path + "/layout", token)
+            except urllib.error.HTTPError:
+                continue
+            if any(b["id"] == item_id for b in layout[key]):
+                what = "region" if kind == "regions" else "Segment"
+                plan.add(
+                    f"{what} {item_id} the last run made ({entry['email']})",
+                    lambda path=entry["path"], token=token: api("DELETE", path, token),
+                )
+    for entry in state.data["jobs"]:
+        token = token_for(entry["email"])
+        if token and job_open(token, entry["id"]):
             plan.add(
-                f"cancel {job.get('type', 'a')} job {job['id']} in {USER_EMAIL}'s {PROJECT_NAME!r}",
-                lambda j=job["id"]: api("POST", f"/jobs/{j}/cancel", user_token),
+                f"cancel job {entry['id']} the last run started ({entry['email']})",
+                lambda j=entry["id"], token=token: api("POST", f"/jobs/{j}/cancel", token),
             )
+    for entry in state.data["projects"]:
+        token = token_for(entry["email"])
+        try:
+            project = api("GET", f"/projects/{entry['id']}", token)
+        except urllib.error.HTTPError:
+            continue
         plan.add(
-            f"project {PROJECT_NAME!r} of {USER_EMAIL} ({project['id']})",
-            lambda pid=project["id"]: api("DELETE", f"/projects/{pid}", user_token),
+            f"project {project['name']!r} {entry['id']} the last run made ({entry['email']})",
+            lambda pid=entry["id"], token=token: api("DELETE", f"/projects/{pid}", token),
         )
+    # Fallback for a lost run file: Eleni's projects with the name the explainer gives.
+    user_token = login(USER_EMAIL, USER_PASSWORD) if video == "explainer" else None
+    recorded = {e["id"] for e in state.data["projects"]}
+    for project in user_projects(user_token) if user_token else []:
+        if project["id"] not in recorded:
+            plan.add(
+                f"project {PROJECT_NAME!r} {project['id']} found by name ({USER_EMAIL})",
+                lambda pid=project["id"]: api("DELETE", f"/projects/{pid}", user_token),
+            )
     return plan
 
 
@@ -463,8 +551,13 @@ def warm_up(browser, seed: Seed) -> None:
     page.goto(BASE_URL + "/login")
     page.locator("input[type=email]").fill(DEV_EMAIL)
     page.locator("input[type=password]").fill(DEV_PASSWORD)
-    page.locator("button[type=submit]").click()
-    page.wait_for_url("**/projects", timeout=60000)
+    for _ in range(8):  # a rate limited login stays on the form; try again shortly
+        page.locator("button[type=submit]").click()
+        try:
+            page.wait_for_url("**/projects", timeout=15000)
+            break
+        except PlaywrightTimeout:
+            page.wait_for_timeout(10000)
     zero = "00000000-0000-0000-0000-000000000000"
     for path in (
         f"/projects/{seed.project_id}",
@@ -526,8 +619,10 @@ def toggle_transcript(r: Recorder) -> None:
     r.click(r.page.locator("button[title$='transcript pane (T)']").first)
 
 
-def draw_region(r: Recorder) -> None:
+def draw_region(r: Recorder, state: RunState, email: str, token: str, part_path: str) -> None:
+    """Draw the 4v region and record the id of the block the app created."""
     page = r.page
+    before = block_ids(token, part_path)
     box = page_image_box(page)
     r.click(page.get_by_role("button", name="Region (G)"))
     pad = 18
@@ -536,6 +631,13 @@ def draw_region(r: Recorder) -> None:
     label.wait_for(timeout=10000)
     r.type(label, REGION_LABEL)
     page.keyboard.press("Enter")
+    record_new(
+        state,
+        "regions",
+        email,
+        lambda: {f"{part_path}/blocks/{i}" for i in block_ids(token, part_path)},
+        {f"{part_path}/blocks/{i}" for i in before},
+    )
     r.hold(0.8)
 
 
@@ -549,7 +651,7 @@ def download(r: Recorder, target: Locator) -> None:
 
 
 def record_tour(
-    browser, captions: dict[str, str], work: Path, started: datetime
+    browser, captions: dict[str, str], work: Path, state: RunState
 ) -> tuple[list[Path], list[tuple[float, str]], list]:
     token = login(DEV_EMAIL, DEV_PASSWORD)
     need(token, "dev login failed")
@@ -585,6 +687,13 @@ def record_tour(
         f"document.querySelectorAll(\"polygon[aria-label^='Segment ']\").length > {count_before}",
         timeout=15000,
     )
+    record_new(
+        state,
+        "lines",
+        DEV_EMAIL,
+        lambda: {f"{part_base(seed)}/lines/{i}" for i in line_ids(token, seed)},
+        {f"{part_base(seed)}/lines/{i}" for i in lines_before},
+    )
     r.hold(1.2)
     r.click(page.get_by_role("button", name="Select and pan (Esc)"))
     r.click(((x0 + x1) / 2, y + 11))
@@ -601,7 +710,7 @@ def record_tour(
 
     r.caption("region")
     fit_view(r.page)
-    draw_region(r)
+    draw_region(r, state, DEV_EMAIL, token, part_base(seed))
 
     r.caption("workflow")
     r.click(page.get_by_role("button", name="Workflow"))
@@ -611,9 +720,11 @@ def record_tour(
     page.keyboard.press("Escape")
 
     r.caption("jobs")
+    jobs_before = job_ids(token, seed.project_id)
     r.click(page.get_by_role("button", name="Transcribe").first)
     pill = page.get_by_role("button", name="background job", exact=False)
     pill.wait_for(timeout=20000)
+    record_new(state, "jobs", DEV_EMAIL, lambda: job_ids(token, seed.project_id), jobs_before)
     r.click(pill)
     page.get_by_role("dialog", name="Background jobs").wait_for(timeout=20000)
     r.hold(3.0)
@@ -624,12 +735,9 @@ def record_tour(
 
     video = page.video
     ctx.close()
-    # The numbering demo deletes its Segment on screen, but a run that stopped
-    # half way must not leave it in the seeded page; the job it started is
-    # cancelled too.
-    for line_id in line_ids(token, seed) - lines_before:
-        api("DELETE", f"{part_base(seed)}/lines/{line_id}", token)
-    cancel_run_jobs(token, started)
+    # Leave the seeded page as it was: the region, the Segment if the on screen
+    # delete did not land, and the job, all by the ids recorded above.
+    finish_run(state, ("regions", "lines", "jobs"))
     lead = max(r.log[0][0] - 0.3, 0)
     log = [(t - lead, c) for t, c in r.log]
     return [Path(video.path())], log, [(lead, None, 0)]
@@ -638,7 +746,7 @@ def record_tour(
 # --- The explainer ----------------------------------------------------------
 
 
-def record_explainer(browser, captions: dict[str, str], work: Path, started: datetime):
+def record_explainer(browser, captions: dict[str, str], work: Path, state: RunState):
     dev_token = login(DEV_EMAIL, DEV_PASSWORD)
     need(dev_token, "dev login failed")
     seed = find_seed(dev_token)
@@ -673,9 +781,8 @@ def record_explainer(browser, captions: dict[str, str], work: Path, started: dat
     page.get_by_text(PROJECT_NAME, exact=True).first.wait_for(timeout=30000)
     open_created(r, "New document", PROJECT_NAME)
     project_url = page.url
-    project_id = next(
-        p["id"] for p in items(api("GET", "/projects", user_token)) if p["name"] == PROJECT_NAME
-    )
+    project_id = project_url.split("/projects/")[1].split("/")[0].split("?")[0]
+    state.add("projects", USER_EMAIL, id=project_id)
     # The narrator's transcribed document: the seeded Grec 1360 pages with their
     # ground truth, copied into her project while the camera shows the upload.
     pool = ThreadPoolExecutor(max_workers=1)
@@ -701,6 +808,7 @@ def record_explainer(browser, captions: dict[str, str], work: Path, started: dat
     picker.select_option(label="seg-v1")
     r.point(picker)
     r.click(page.get_by_text("Segment unsegmented pages").first)
+    record_new(state, "jobs", USER_EMAIL, lambda: job_ids(user_token, project_id), set())
     page.wait_for_timeout(800)
     page.keyboard.press("Escape")
     r.click(page.get_by_role("link", name=PROJECT_NAME))
@@ -710,8 +818,12 @@ def record_explainer(browser, captions: dict[str, str], work: Path, started: dat
     r.point(queued)
 
     # 5. The editor, on her transcribed copy of Grec 1360.
-    copied.result(timeout=120)
+    copy_id = copied.result(timeout=120)
     pool.shutdown()
+    copy_path = f"/projects/{project_id}/documents/{copy_id}"
+    copy_part = sorted(api("GET", copy_path, user_token)["parts"], key=lambda p: p.get("order", 0))[
+        0
+    ]
     page.reload()
     page.get_by_text(SEED_DOCUMENT, exact=True).first.wait_for(timeout=30000)
     r.caption("open_doc")
@@ -741,7 +853,7 @@ def record_explainer(browser, captions: dict[str, str], work: Path, started: dat
 
     r.caption("region")
     fit_view(r.page)
-    draw_region(r)
+    draw_region(r, state, USER_EMAIL, user_token, f"{copy_path}/parts/{copy_part['id']}")
     r.click(page.get_by_role("button", name="Select and pan (Esc)"))
 
     # 6. One export.
@@ -795,7 +907,8 @@ def record_explainer(browser, captions: dict[str, str], work: Path, started: dat
     ctx2.close()
     video1 = page.video
     ctx.close()
-    cancel_run_jobs(user_token, started)
+    # Her project stays until the next run; the queued jobs are cancelled now.
+    finish_run(state, ("jobs",))
 
     # The final cut: this context up to the public link, then the fresh
     # context's public page. The lead-in before the first caption is trimmed.
@@ -881,7 +994,6 @@ def main() -> None:
         help="do the cleanup listed by a dry run, then record (without it: list and stop)",
     )
     args = parser.parse_args()
-    started = datetime.now(UTC)
     guard_target(args.allow_remote)
     if not FFMPEG:
         raise SystemExit("ffmpeg not found on PATH; install it or set FFMPEG to its path.")
@@ -893,21 +1005,24 @@ def main() -> None:
                 "Set NOMIKOS_IMAGE_DIR (and NOMIKOS_IMAGES) to Greek page images."
             )
 
-    plan = plan_cleanup(args.video)
+    state = RunState.load(OUT_DIR / f".run-state-{args.video}.json")
+    plan = plan_cleanup(args.video, state)
     print("Cleanup before recording:" if args.yes else "Would remove before recording:")
     for text, _ in plan.steps:
         print(f"  - {text}")
     if not plan.steps:
         print("  (nothing)")
+    print(f"Run file: {state.path}")
     print(
-        "After recording: the Segment the tour draws and the jobs this run starts."
+        "After recording: the region, Segment and job the tour makes."
         if args.video == "tour"
-        else "After recording: the jobs this run starts."
+        else "After recording: the jobs this run starts (her project stays until the next run)."
     )
     if not args.yes:
         raise SystemExit("Dry run: nothing removed, nothing recorded. Re-run with --yes.")
     for _, action in plan.steps:
         action()
+    state.reset()
 
     captions = json.loads((HERE / "captions.json").read_text())[args.video]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -916,14 +1031,14 @@ def main() -> None:
         browser = p.chromium.launch(headless=not args.headed, slow_mo=SLOW_MO)
         try:
             if args.video == "tour":
-                videos, log, segments = record_tour(browser, captions, work, started)
+                videos, log, segments = record_tour(browser, captions, work, state)
                 mp4, md, title = (
                     "nomikos-whats-new.mp4",
                     "captions-whats-new.md",
                     "Nomikos: what is new",
                 )
             else:
-                videos, log, segments = record_explainer(browser, captions, work, started)
+                videos, log, segments = record_explainer(browser, captions, work, state)
                 mp4, md, title = "nomikos-explainer.mp4", "captions.md", "Nomikos explainer"
         except Exception:
             # Leave a picture of where it stopped; a moved button is the usual cause.

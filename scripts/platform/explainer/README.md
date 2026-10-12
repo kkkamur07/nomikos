@@ -64,14 +64,20 @@ its lines and their ground truth text. Nothing is generated; it is the seeded da
 
 ## Re-runs
 
-The script only removes what it made, and only with `--yes`:
+The script only removes what it made, and only with `--yes`. Every region, Segment, project and job a run
+creates is recorded by id (the API returns them) in a run file next to the videos,
+`$NOMIKOS_VIDEO_OUT/.run-state-tour.json` or `.run-state-explainer.json`. A `--yes` run first deletes or
+cancels what the previous run of the same video recorded and still exists, then starts a fresh file and
+adds to it as it goes, so a run that stops half way is still on record.
 
-- regions whose label starts with `video-` on the first seeded page (it labels its region `video-4v`);
-- Eleni's project named "Athos Letters" (with her copy of Grec 1360), after cancelling the open jobs in it;
-- after recording, the Segment the tour's numbering demo drew and the jobs created after the run started.
+- The tour removes its own region, Segment and job again right after recording, so the seeded page ends
+  as it started.
+- The explainer cancels its jobs after recording and leaves Eleni's project (with her published copy of
+  Grec 1360) until the next run.
+- If the run file is lost, the explainer's listing falls back to Eleni's projects named "Athos Letters".
 
-It never touches other regions, other projects, jobs queued before the run or the job history, and it
-never deletes accounts.
+Regions the recorder did not create are never touched, whatever their label, and neither are other
+projects, jobs it did not start or the job history. It never deletes accounts.
 
 The explainer registers Eleni through the Register page only when the account does not exist yet; on a
 re-run it shows the login instead. For the Register version again, delete her by hand, on a scratch
