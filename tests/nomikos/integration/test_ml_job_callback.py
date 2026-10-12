@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from backend.core.settings import get_inference_settings
+from backend.document.api.line_responses import line_transcription_response
 from backend.document.infrastructure.orm_models import (
     Document,
     DocumentPart,
@@ -464,6 +465,23 @@ def test_callback_transcribe_success_marks_job_done(client: TestClient):
     assert job.result["lines"][0]["line_id"] == str(line_id)
     assert job.result["lines"][0]["text"] == "Αβ"
     assert job.result["lines"][0]["confidence"] == 0.91
+
+    # Postgres round trip: the merge stored the per-character floats, and the
+    # API serves them paired with the code points of the stored text.
+    with sync_system_session() as session:
+        row = (
+            session.execute(select(LineTranscription).where(LineTranscription.line_id == line_id))
+            .scalars()
+            .one()
+        )
+        assert row.text == "Αβ"
+        assert row.character_confidences == [0.93, 0.89]
+        served = line_transcription_response(row)
+    assert served.character_confidences is not None
+    assert [(entry.char, entry.confidence) for entry in served.character_confidences] == [
+        ("Α", 0.93),
+        ("β", 0.89),
+    ]
 
 
 # --- Idempotency and validation ---

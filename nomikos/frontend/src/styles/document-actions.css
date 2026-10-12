@@ -84,7 +84,7 @@
 .action-menu__divider {
   height: 1px;
   background: var(--border);
-  margin: 5px 0;
+  margin: 7px 0;
 }
 
 .action-menu__item {
@@ -142,6 +142,76 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/*
+  A count that is read with the row, not a badge stuck on it. It stays on the
+  label's line even when the row carries a second line under the label.
+*/
+.action-menu__meta--quiet {
+  margin-top: 2px;
+  padding: 0;
+  background: none;
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+/*
+  One row per picker: the word "Model", the select taking the rest of the
+  width, on the same left edge as the items above and below it, and the line
+  under it. A grid, so the note starts exactly at the select's left edge: the
+  visible label sizes the first column and the picker's
+  own label element steps out of the way with `display: contents`. The note is
+  always rendered, empty when there is nothing to say, so that the items below
+  sit at the same height in both sections whatever it says.
+*/
+.action-menu__model {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding: 2px 10px 8px;
+}
+.action-menu__model .pe-model {
+  display: contents;
+}
+.action-menu__model-note {
+  grid-column: 2;
+  margin: 3px 0 0;
+  min-height: 14px;
+  font-size: 0.6875rem;
+  line-height: 14px;
+  color: var(--text-3);
+}
+/* The way back from a pick that moved the project, in the line's own size. */
+.action-menu__model-undo {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--navy);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.action-menu__model-undo:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+.action-menu__model-undo:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+.action-menu__model .pe-model__label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-3);
+}
+.action-menu__model .pe-model__select {
+  min-width: 0;
+  max-width: none;
 }
 
 /*

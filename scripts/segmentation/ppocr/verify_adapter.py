@@ -9,7 +9,8 @@ measurement. For each of the 14 reference fixtures (produced by the full
 `paddleocr.TextDetection` pipeline at cap 1920) it reads the page BYTES, calls
 the production entry point with refinement switched off (`merge_fragments`,
 `resolve_overlaps` and `noise_policy=off`, so the gate measures the detector
-and nothing else), and compares the
+and nothing else) in quad mode (`box_type=quad`, pinning the quad path now
+that the serving default is polygons), and compares the
 returned line quads with the fixture boxes: counts, then one-to-one nearest
 matching by quad centre with corner-SET distances (corner order may differ
 between the two, so for each corner only its nearest corner in the matched
@@ -243,6 +244,7 @@ def main() -> int:
                 "merge_fragments": False,
                 "resolve_overlaps": False,
                 "noise_policy": "off",
+                "box_type": "quad",
             },
         )
         fixture_boxes = [
@@ -303,6 +305,7 @@ def main() -> int:
             "merge_fragments": False,
             "resolve_overlaps": False,
             "noise_policy": "off",
+            "box_type": "quad",
         },
         "gate": {
             "identical_counts": True,

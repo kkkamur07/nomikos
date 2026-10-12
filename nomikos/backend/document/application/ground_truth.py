@@ -7,8 +7,9 @@ editing a ground-truth line directly. All three need the same two invariants hel
   by migration, because documents predate the layer and a document created through the
   repository already carries one;
 * ``text=None`` *removes* the line's ground-truth row rather than storing an empty
-  string, and any write clears ``confidence``. A confidence score is a claim the model
-  made; once a human has supplied the text there is nothing left for it to describe.
+  string, and any write clears ``confidence`` and ``character_confidences``. A
+  confidence score is a claim the model made; once a human has supplied the text
+  there is nothing left for it to describe.
 
 Kept out of the modules that use it precisely because all three need it: this is the one
 piece of shared behaviour that survived breaking up ``DocumentService``, and it is shared
@@ -90,8 +91,10 @@ class GroundTruthText:
                     transcription=ground_truth,
                     text=text,
                     confidence=None,
+                    character_confidences=None,
                 )
             )
             return
         existing.text = text
         existing.confidence = None
+        existing.character_confidences = None

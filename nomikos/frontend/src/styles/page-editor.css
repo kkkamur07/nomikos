@@ -1280,6 +1280,23 @@
   font-weight: 500;
 }
 
+/* A cursive joining script (Syriac, Arabic) is shaped by the font across a
+   whole word, and a browser shapes only inside one inline box with unbroken
+   layout. The 2px of horizontal padding above opens a gap at every span
+   boundary, so each letter falls back to its isolated form and the word reads
+   as loose letters: exactly the reported "detached characters". Keep the tint,
+   drop the padding on those lines. Non-joining scripts keep the padding.
+
+   `font-weight` breaks the same shaping for the same reason: `.ch-high` and
+   `.ch-low` ask for 500 and `.ch-mid` does not, so a tier change mid-word is
+   also a font change and the letters on both sides of it fall back to their
+   isolated forms. One weight for the whole line, and the colour and the tint
+   carry the tier on their own. */
+.pe-confidence-text--joining [data-conf] {
+  padding: 0;
+  font-weight: inherit;
+}
+
 .pe-confidence-text [data-conf]:hover,
 .pe-model-preview [data-conf]:hover {
   box-shadow: 0 0 0 1px var(--border-2);

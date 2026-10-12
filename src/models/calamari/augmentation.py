@@ -1,11 +1,15 @@
 """Random, print-aware line-image augmentation for the Calamari recognizer.
 
 Pool operations are tagged light / mild / heavy. Each training copy uses one
-strength from the fixed 5-copy scheme (two easy, two mild, one hard).
+strength from the configurable 5-copy plan (default two easy, two mild, one
+hard); a ``none`` copy is returned untouched.
 
-light: small photometric or geometric change; script polarity stays the same.
-mild: visible distortion or dirt; the line is still gray and readable.
-heavy: domain change or strong geometry (invert, binarize, perspective).
+light: small geometric shift or global tone change (pad, translate,
+    perspective, shear, tone, sharpen); script polarity stays the same.
+mild: visible distortion, dirt, or stroke thickening (rotate, elastic, jpeg /
+    pixelate, posterize, vignette, noise); the line is still gray and readable.
+heavy: domain change, heavy print noise, blur, ruling, or stroke loss (printlike,
+    otsu, sauvola, invert, thin, holes, box blur, motion blur, equalize, ruled lines).
 """
 
 from __future__ import annotations
@@ -61,24 +65,33 @@ def augment_grayscale_line(
     image: numpy.ndarray,
     strength: str,
     operation_count: int,
+    *,
+    ink_bright: bool = False,
 ) -> numpy.ndarray:
     """Apply the easy, mild, or hard pool to a ``(height, width)`` grayscale line.
 
     TrOCR and other image-layout callers use this. The ops themselves are still
     the width-major Calamari stack; the axis swap stays inside this function.
+    Input is paper-bright by default; pass ``ink_bright=True`` for ink = 255.
     """
     if image.ndim != 2:
         raise ValueError("Line augmentation requires a 2D grayscale array.")
+    if _is_identity(strength, operation_count):
+        return image.copy()
     original_dtype = image.dtype
     pixels = image.astype(numpy.float32, copy=False)
-    augmented = _augment_width_major(pixels.T, strength, operation_count).T
+    augmented = _augment_width_major(
+        pixels.T, strength, operation_count, ink_bright=ink_bright
+    ).T
     return augmented.astype(original_dtype, copy=False)
 
 
 def augment_legacy_line_image(image: Tensor, strength: str, operation_count: int) -> Tensor:
-    """Apply the easy, mild, or hard pool to a Calamari ``(width, height, 1)`` tensor."""
+    """Apply the easy, mild, or hard pool to an ink-bright Calamari ``(width, height, 1)`` tensor."""
     if image.ndim != 3 or image.shape[-1] != 1:
         raise ValueError("Calamari augmentation requires a (width, height, 1) image tensor.")
+    if _is_identity(strength, operation_count):
+        return image.clone()
 
     original_dtype = image.dtype
     pixels = image.squeeze(-1).detach().cpu().numpy()
@@ -86,6 +99,7 @@ def augment_legacy_line_image(image: Tensor, strength: str, operation_count: int
         pixels.astype(numpy.float32, copy=False),
         strength,
         operation_count,
+        ink_bright=True,
     )
     return Tensor(augmented.astype(pixels.dtype, copy=False)).to(dtype=original_dtype).unsqueeze(-1)
 
@@ -94,11 +108,20 @@ def _augment_width_major(
     pixels: numpy.ndarray,
     strength: str,
     operation_count: int,
+    *,
+    ink_bright: bool = False,
 ) -> numpy.ndarray:
-    """Run the legacy ink-bright ops on a ``(width, height)`` array."""
+    """Run the legacy ink-bright ops on a ``(width, height)`` array.
+
+    Paper-bright input is inverted into ink space and back; ink-bright input
+    (``ink_bright=True``) is used as is and returned ink-bright.
+    """
     scale = 255.0 if float(pixels.max(initial=0.0)) > 1.0 else 1.0
-    ink = 1.0 - numpy.clip(pixels / scale, 0.0, 1.0)
+    normalized = numpy.clip(pixels / scale, 0.0, 1.0)
+    ink = normalized if ink_bright else 1.0 - normalized
     augmented = _apply_strength(ink, strength, operation_count)
+    if ink_bright:
+        return numpy.clip(augmented * scale, 0.0, scale)
     return numpy.clip((1.0 - augmented) * scale, 0.0, scale)
 
 
@@ -113,29 +136,52 @@ def _apply_strength(image: numpy.ndarray, strength: str, operation_count: int) -
     return augmented
 
 
+def _is_identity(strength: str, operation_count: int) -> bool:
+    """True for a ``none`` copy or zero ops: the line is returned untouched."""
+    _operations_for_strength(strength)  # reject unknown strengths early
+    return strength == "none" or operation_count == 0
+
+
 def _operations_for_strength(strength: str) -> tuple[Callable[[numpy.ndarray], numpy.ndarray], ...]:
+    if strength == "none":
+        return ()
     if strength == "easy":
-        return (_line_pad, _random_rotate, _translate, _vignette)
+        return (
+            _line_pad,
+            _translate,
+            _perspective,
+            _tone,
+            _sharpen,
+            _shear,
+        )
     if strength == "mild":
         return (
             _smooth_elastic_distortion,
-            _printlike_degradation,
+            _random_rotate,
             _camera_degradation,
-            _other_blur,
-            _image_processing,
-            _stroke_morphology,
-            _shear,
+            _posterize,
+            _stroke_thicken,
             _anisotropic_scale,
             _bleed_through,
             _illumination_gradient,
-            _ruled_lines,
+            _vignette,
             _ink_fade,
             _gaussian_noise,
-            _poisson_noise,
             _salt_pepper,
         )
     if strength == "hard":
-        return (_perspective, _binarize, _invert)
+        return (
+            _printlike_degradation,
+            _binarize_otsu,
+            _binarize_sauvola,
+            _invert,
+            _stroke_thin,
+            _stroke_holes,
+            _box_blur,
+            _motion_blur,
+            _equalize_histogram,
+            _ruled_lines,
+        )
     raise ValueError(f"Unknown Calamari augmentation strength {strength!r}.")
 
 
@@ -159,7 +205,7 @@ def _random_pad(image: numpy.ndarray, horizontal: tuple[int, int]) -> numpy.ndar
 
 
 def _random_rotate(image: numpy.ndarray, maximum_degrees: float = 5.0) -> numpy.ndarray:
-    """light: ±5° rotation on a width-major line."""
+    """mild: ±5° rotation on a width-major line."""
     width, height = image.shape[:2]
     angle = float(numpy.random.uniform(-maximum_degrees, maximum_degrees))
     transform = cv2.getRotationMatrix2D((height / 2, width / 2), angle, 1.0)
@@ -180,34 +226,28 @@ def _smooth_elastic_distortion(image: numpy.ndarray) -> numpy.ndarray:
 
 
 def _printlike_degradation(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: paper texture, blotches, and uneven ink (ocrodeg-style)."""
+    """heavy: paper texture, blotches, and uneven ink (ocrodeg-style)."""
     return _printlike_multiscale(image, blur=1.0, inverted=True)
 
 
 def _camera_degradation(image: numpy.ndarray) -> numpy.ndarray:
-    """mild wrapper: brightness, contrast (light) or jpeg / pixelate (mild)."""
-    return random.choice((_adjust_brightness, _adjust_contrast, _jpeg_compression, _pixelate))(
-        image
-    )
+    """mild wrapper: jpeg compression or pixelate."""
+    return random.choice((_jpeg_compression, _pixelate))(image)
 
 
-def _adjust_brightness(image: numpy.ndarray) -> numpy.ndarray:
-    """light: global brightness 0.75–1.25."""
-    return image * random.uniform(0.75, 1.25)
-
-
-def _adjust_contrast(image: numpy.ndarray) -> numpy.ndarray:
-    """light: global contrast 0.7–1.3."""
-    factor = random.uniform(0.7, 1.3)
-    return (image - image.mean()) * factor + image.mean()
+def _tone(image: numpy.ndarray) -> numpy.ndarray:
+    """light: one linear tone map, gain 0.7–1.3 about the mean plus offset ±0.1"""
+    gain = random.uniform(0.7, 1.3)
+    offset = random.uniform(-0.1, 0.1)
+    return (image - image.mean()) * gain + image.mean() + offset
 
 
 def _jpeg_compression(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: JPEG quality 35–75."""
+    """mild: JPEG quality fixed at 15."""
     encoded, buffer = cv2.imencode(
         ".jpg",
         numpy.rint(image * 255.0).astype(numpy.uint8),
-        [cv2.IMWRITE_JPEG_QUALITY, random.randint(35, 75)],
+        [cv2.IMWRITE_JPEG_QUALITY, 15],
     )
     if not encoded:
         return image
@@ -227,10 +267,13 @@ def _pixelate(image: numpy.ndarray) -> numpy.ndarray:
     return cv2.resize(reduced, (height, width), interpolation=cv2.INTER_NEAREST)
 
 
-def _other_blur(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: 3×3/5×5 box blur or 5–9 px horizontal motion blur."""
-    if random.choice((True, False)):
-        return cv2.blur(image, (random.choice((3, 5)),) * 2)
+def _box_blur(image: numpy.ndarray) -> numpy.ndarray:
+    """heavy: 3×3 or 5×5 box blur."""
+    return cv2.blur(image, (random.choice((3, 5)),) * 2)
+
+
+def _motion_blur(image: numpy.ndarray) -> numpy.ndarray:
+    """heavy: 5–9 px horizontal motion blur."""
     kernel_size = random.choice((5, 7, 9))
     kernel = numpy.zeros((kernel_size, kernel_size), dtype=numpy.float32)
     cv2.line(
@@ -244,22 +287,8 @@ def _other_blur(image: numpy.ndarray) -> numpy.ndarray:
     return cv2.filter2D(image, -1, kernel)
 
 
-def _image_processing(image: numpy.ndarray) -> numpy.ndarray:
-    """mild wrapper: autocontrast / sharpen (light) or equalize / posterize (mild)."""
-    return random.choice((_autocontrast, _equalize_histogram, _sharpen, _posterize))(image)
-
-
-def _autocontrast(image: numpy.ndarray) -> numpy.ndarray:
-    """light: stretch intensities to [0, 1]."""
-    minimum = float(image.min())
-    maximum = float(image.max())
-    if maximum == minimum:
-        return image
-    return (image - minimum) / (maximum - minimum)
-
-
 def _equalize_histogram(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: histogram equalization."""
+    """heavy: histogram equalization."""
     equalized = cv2.equalizeHist(numpy.rint(image * 255.0).astype(numpy.uint8))
     return equalized.astype(numpy.float32) / 255.0
 
@@ -271,29 +300,46 @@ def _sharpen(image: numpy.ndarray) -> numpy.ndarray:
 
 
 def _posterize(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: quantize to 16, 32, or 64 gray levels."""
-    levels = random.choice((16, 32, 64))
+    """mild: quantize to 16 gray levels."""
+    levels = 16
     return numpy.floor(image * (levels - 1)) / (levels - 1)
 
 
-def _stroke_morphology(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: thicken, thin, or punch sparse holes in ink-bright strokes."""
-    operation = random.choice(("thicken", "thin", "holes"))
-    if operation == "thicken":
-        return cv2.dilate(
-            image,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
-            iterations=1,
-        )
-    if operation == "thin":
-        return cv2.erode(
-            image,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
-            iterations=1,
-        )
+def _stroke_thicken(image: numpy.ndarray) -> numpy.ndarray:
+    """mild: thicken ink-bright strokes (3x3 dilate)."""
+    return cv2.dilate(
+        image,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1,
+    )
+
+
+def _stroke_thin(image: numpy.ndarray) -> numpy.ndarray:
+    """heavy: thin ink-bright strokes (3x3 erode)."""
+    return cv2.erode(
+        image,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1,
+    )
+
+
+def _stroke_holes(image: numpy.ndarray) -> numpy.ndarray:
+    """heavy: punch 2–4 px holes through strokes, removing 5–10% of the ink."""
+    ink = image > 0.5
+    ink_total = int(ink.sum())
+    if ink_total == 0:
+        return image
+    ink_coords = numpy.argwhere(ink)
+    radius = random.randint(2, 4)
+    target = random.uniform(0.05, 0.10)
+    mask = numpy.zeros(image.shape[:2], dtype=numpy.uint8)
+    for _ in range(2000):
+        x, y = ink_coords[random.randrange(len(ink_coords))]
+        cv2.circle(mask, (int(y), int(x)), radius, 1, thickness=-1)
+        if numpy.count_nonzero(mask[ink]) >= target * ink_total:
+            break
     transformed = image.copy()
-    holes = (transformed > 0.5) & (numpy.random.random(transformed.shape) < 0.005)
-    transformed[holes] = 0.0
+    transformed[mask.astype(bool)] = 0.0
     return transformed
 
 
@@ -325,7 +371,7 @@ def _warp_width_major(
 
 
 def _shear(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: horizontal slant, factor ±0.28."""
+    """light: horizontal slant, factor ±0.28."""
     width, height = image.shape[:2]
     factor = float(numpy.random.uniform(-0.28, 0.28))
     matrix = numpy.array(
@@ -366,7 +412,7 @@ def _translate(image: numpy.ndarray) -> numpy.ndarray:
 
 
 def _perspective(image: numpy.ndarray) -> numpy.ndarray:
-    """heavy: trapezoid warp; can drop corners onto empty fill."""
+    """light: trapezoid warp; shrinks inward onto empty fill."""
     width, height = image.shape[:2]
     jitter_x = 0.14 * height
     jitter_y = 0.08 * width
@@ -408,7 +454,7 @@ def _illumination_gradient(image: numpy.ndarray) -> numpy.ndarray:
 
 
 def _vignette(image: numpy.ndarray) -> numpy.ndarray:
-    """light: darken the borders."""
+    """mild: darken the borders."""
     width, height = image.shape[:2]
     ys, xs = numpy.ogrid[:width, :height]
     radius = numpy.sqrt(
@@ -420,7 +466,7 @@ def _vignette(image: numpy.ndarray) -> numpy.ndarray:
 
 
 def _ruled_lines(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: one or two ruling strokes through the line."""
+    """heavy: one or two ruling strokes through the line."""
     result = image.copy()
     width, height = image.shape[:2]
     for _ in range(random.randint(1, 2)):
@@ -447,11 +493,6 @@ def _ink_fade(image: numpy.ndarray) -> numpy.ndarray:
     return image * (1.0 - ink * fade)
 
 
-def _binarize(image: numpy.ndarray) -> numpy.ndarray:
-    """heavy: drop gray levels via Otsu, Sauvola-like, or a random threshold."""
-    return random.choice((_binarize_otsu, _binarize_sauvola, _binarize_random))(image)
-
-
 def _binarize_otsu(image: numpy.ndarray) -> numpy.ndarray:
     """heavy: global Otsu."""
     pixels = numpy.rint(image * 255.0).astype(numpy.uint8)
@@ -470,11 +511,6 @@ def _binarize_sauvola(image: numpy.ndarray) -> numpy.ndarray:
     return (pixels > threshold).astype(numpy.float32)
 
 
-def _binarize_random(image: numpy.ndarray) -> numpy.ndarray:
-    """heavy: hard threshold in 0.35–0.65 (ink space)."""
-    return (image > random.uniform(0.35, 0.65)).astype(numpy.float32)
-
-
 def _invert(image: numpy.ndarray) -> numpy.ndarray:
     """heavy: swap polarity (white-on-black after the outer invert)."""
     return 1.0 - image
@@ -485,13 +521,6 @@ def _gaussian_noise(image: numpy.ndarray) -> numpy.ndarray:
     return image + numpy.random.normal(0.0, random.uniform(0.03, 0.08), image.shape).astype(
         numpy.float32
     )
-
-
-def _poisson_noise(image: numpy.ndarray) -> numpy.ndarray:
-    """mild: Poisson sensor grain."""
-    scale = random.uniform(18.0, 32.0)
-    peaked = numpy.clip(image * scale, 0.0, None)
-    return numpy.random.poisson(peaked).astype(numpy.float32) / scale
 
 
 def _salt_pepper(image: numpy.ndarray) -> numpy.ndarray:

@@ -14,13 +14,13 @@ from backend.annotation.application.page_xml_export_service import PageXmlExport
 from backend.annotation.application.transcription_pdf_service import TranscriptionPdfService
 from backend.core.api.content_disposition import attachment_disposition
 from backend.core.api.pagination import MAX_CURSOR_LENGTH, decode_cursor, paginate_rows
+from backend.document.api.line_responses import line_transcription_response
 from backend.document.api.public_rate_limit import throttle_public_export, throttle_public_read
 from backend.document.api.responses import public_document_with_parts_response
 from backend.document.api.schemas import (
     DEFAULT_PUBLIC_LAYOUT_LINES,
     MAX_PUBLIC_LAYOUT_LINES,
     MAX_SHARE_TOKEN_LENGTH,
-    LineTranscriptionResponse,
     PublicBlockResponse,
     PublicDocumentWithPartsResponse,
     PublicLayoutResponse,
@@ -81,14 +81,7 @@ def _public_line_response(line) -> PublicLineResponse:
         order=line.order,
         points=line.points,
         line_transcriptions=[
-            LineTranscriptionResponse(
-                id=transcription.id,
-                transcription_id=transcription.transcription_id,
-                transcription_kind=transcription.transcription.kind,
-                text=transcription.text,
-                confidence=transcription.confidence,
-            )
-            for transcription in line.transcriptions
+            line_transcription_response(transcription) for transcription in line.transcriptions
         ],
     )
 

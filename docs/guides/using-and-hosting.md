@@ -21,8 +21,8 @@ Prerequisites:
 From the repository root:
 
 ```bash
-git clone https://github.com/kkkamur07/greekOCR.git
-cd greekOCR
+git clone https://github.com/kkkamur07/nomikos.git
+cd nomikos
 cp infrastructure/.env.compose.example infrastructure/.env
 ```
 

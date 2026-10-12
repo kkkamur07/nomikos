@@ -1,9 +1,16 @@
-"""SegmentRunResponse construction for PP-OCRv6 detection quads."""
+"""SegmentRunResponse construction for PP-OCRv6 detection quads and polygons."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from nomikos_inference.architectures.ppocr_det.polygons import (
+    DEFAULT_OUTLINE_TOLERANCE_PX,
+    DEFAULT_VERTICAL_GROWTH,
+    grow_outlines_vertical,
+    polyline_baseline,
+    simplify_outline,
+)
 from nomikos_inference.architectures.ppocr_det.postprocessing import DetectedQuad
 from nomikos_inference.architectures.ppocr_det.reading_order import (
     PageLayout,
@@ -81,6 +88,37 @@ def _regions(
     return blocks, [external_of[key] for key in keys]
 
 
+def _poly_points_for(
+    quad: DetectedQuad,
+    baseline_fraction: float,
+    image_width: int,
+    image_height: int,
+    outline_tolerance_px: float,
+) -> tuple[list[list[float]], list[list[float]], list[list[float]], bool]:
+    """Ungrown polygon, quad ring and baseline polyline for one detection.
+
+    Returns the simplified outline, the quad ring and baseline the growth
+    step needs for direction, the baseline polyline sampled from the ungrown
+    outline, and whether the quad stood in as the polygon.
+    """
+    quad_points = [[float(x), float(y)] for x, y in quad.points]
+    outline = quad.polygon if quad.polygon is not None else quad_points
+    fallback = bool(quad.polygon_fallback) or quad.polygon is None
+    quad_baseline = _baseline_points(quad_points, baseline_fraction)
+    simplified = simplify_outline(
+        outline,
+        outline_tolerance_px=outline_tolerance_px,
+        page_width=image_width,
+        page_height=image_height,
+    )
+    if simplified is None:
+        return quad_points, quad_points, quad_baseline, True
+    baseline = polyline_baseline(simplified, quad_points, baseline_fraction, baseline=quad_baseline)
+    if baseline is None:
+        baseline = quad_baseline
+    return simplified, quad_points, baseline, fallback
+
+
 def build_ppocr_det_response(
     image_width: int,
     image_height: int,
@@ -88,6 +126,9 @@ def build_ppocr_det_response(
     *,
     baseline_fraction: float = DEFAULT_BASELINE_FRACTION,
     reading_direction: str = "ltr",
+    box_type: str = "quad",
+    outline_tolerance_px: float = DEFAULT_OUTLINE_TOLERANCE_PX,
+    vertical_growth: float = DEFAULT_VERTICAL_GROWTH,
 ) -> SegmentRunResponse:
     """Number detection quads in reading order, one block per column.
 
@@ -95,14 +136,37 @@ def build_ppocr_det_response(
     keep input order), then the survivors are ordered; numbering always
     follows reading order from 1. Blocks follow ``column_order``: region n
     is the nth column in reading order, with the bounds of its member
-    quads as its box. Spanning lines read as their own band, in a block of
+    lines as its box. Spanning lines read as their own band, in a block of
     their own; blocks are numbered by their first line's reading position.
+    With ``box_type="poly"`` each line serves its polygon grown across the
+    line and a baseline polyline sampled from the ungrown outline; the quad
+    path is unchanged.
     """
 
+    if box_type not in ("quad", "poly"):
+        raise ValueError('box_type must be "poly" or "quad"')
     ranked = sorted(range(len(quads)), key=lambda i: (-quads[i].score, i))
     survivors = [quads[i] for i in ranked[:MAX_SEGMENT_LINES]]
     reading = order_lines(survivors, direction=reading_direction)
     layout = layout_lines(survivors, direction=reading_direction)
+    per_survivor: list[tuple] = []
+    grown_points: list[list[list[float]]] = []
+    if box_type == "poly":
+        for quad in survivors:
+            per_survivor.append(
+                _poly_points_for(
+                    quad, baseline_fraction, image_width, image_height, outline_tolerance_px
+                )
+            )
+        grown_points = grow_outlines_vertical(
+            [simplified for simplified, _, _, _ in per_survivor],
+            [ring for _, ring, _, _ in per_survivor],
+            factor=float(vertical_growth),
+            baselines=[_baseline_points(quad.points, baseline_fraction) for quad in survivors],
+            page_width=image_width,
+            page_height=image_height,
+            outline_tolerance_px=outline_tolerance_px,
+        )
 
     spanning = set(layout.spanning)
     column_of: dict[int, int] = {}
@@ -111,7 +175,10 @@ def build_ppocr_det_response(
             column_of[member] = position
     blocks, block_of_line = _regions(
         [None if index in spanning else column_of[index] for index in reading],
-        [survivors[index].points for index in reading],
+        [
+            grown_points[index] if box_type == "poly" else survivors[index].points
+            for index in reading
+        ],
     )
 
     lines = []
@@ -124,6 +191,23 @@ def build_ppocr_det_response(
             "baseline_source": "quad_axis",
             "baseline_fraction": float(baseline_fraction),
         }
+        if box_type == "poly":
+            _, _, served_baseline, fallback = per_survivor[quad_index]
+            if fallback:
+                source_metadata["polygon_fallback"] = True
+            lines.append(
+                SegmentLine(
+                    external_id=f"ppocr-det-line-{position + 1}",
+                    order=position,
+                    block_external_id=block_external_id,
+                    baseline={"points": served_baseline},
+                    mask=None,
+                    points=grown_points[quad_index],
+                    kraken_ceiling=None,
+                    source_metadata=source_metadata,
+                )
+            )
+            continue
         lines.append(
             SegmentLine(
                 external_id=f"ppocr-det-line-{position + 1}",
@@ -149,6 +233,7 @@ def build_refined_ppocr_det_response(
     baseline_fraction: float = DEFAULT_BASELINE_FRACTION,
     reading_direction: str = "ltr",
     noise_policy: str = "flag",
+    box_type: str = "quad",
 ) -> SegmentRunResponse:
     """Number refined lines in reading order, one block per column.
 
@@ -162,10 +247,12 @@ def build_refined_ppocr_det_response(
     spanning lines read in a block of their own per band.
     """
 
+    if box_type not in ("quad", "poly"):
+        raise ValueError('box_type must be "poly" or "quad"')
     scoped = [item for item in items if not (noise_policy == "drop" and item.suspect)]
 
     def _mid(item: Any) -> tuple[float, float]:
-        first, second = item.baseline
+        first, second = item.baseline[0], item.baseline[-1]
         return ((first[0] + second[0]) / 2.0, (first[1] + second[1]) / 2.0)
 
     ranked = sorted(
@@ -253,6 +340,8 @@ def build_refined_ppocr_det_response(
             source_metadata["suspect_reason"] = item.suspect_reason
         if item.overlap_unresolved:
             source_metadata["overlap_unresolved"] = True
+        if box_type == "poly" and getattr(item, "polygon_fallback", False):
+            source_metadata["polygon_fallback"] = True
         lines.append(
             SegmentLine(
                 external_id=f"ppocr-det-line-{position + 1}",

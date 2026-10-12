@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { FocusEvent, KeyboardEvent, ReactNode } from "react";
 
 type FocusTarget = "first" | "last";
 
@@ -52,12 +52,18 @@ function menuItems(container: HTMLElement): HTMLElement[] {
 }
 
 /**
- * A keyboard-operable dropdown menu.
+ * A keyboard-operable dropdown menu, some of whose popups also hold native
+ * controls (a model picker select, a plain button) beside the run items.
  *
  * Enter, Space, ArrowDown and ArrowUp all open it from the trigger; the arrows
  * walk the items and wrap; Home and End jump; Escape closes it and puts focus
- * back on the trigger, as does Tab before it moves on. Every item is a real
- * `<button role="menuitem">`, so nothing here depends on a pointer.
+ * back on the trigger. Every item is a real `<button role="menuitem">`, so
+ * nothing here depends on a pointer.
+ *
+ * Tab is never intercepted: it moves through every control in DOM order, and
+ * the popup closes when focus leaves it. Arrow keys inside a native select
+ * keep the select's own behaviour (they change its value) instead of walking
+ * the menu.
  *
  * The trigger handles Enter and Space in `keydown` and calls `preventDefault`.
  * A native button would otherwise turn both into a click, and the click
@@ -132,6 +138,22 @@ export function ActionMenu({
       globalThis.document.removeEventListener("mousedown", handlePointerDown);
   }, [open, close]);
 
+  /**
+   * Tab is never intercepted, so the wrapper has to notice focus leaving on
+   * its own. A move inside the wrapper (arrows, Tab between the popup's own
+   * controls, or either way between the trigger and the popup) keeps it
+   * open; a move to a real target outside closes it, leaving focus wherever
+   * the browser put it. A null target (a Safari click that moves no focus, a
+   * press on a non-focusable spot, a window blur) closes nothing: outside
+   * pointer presses already have their own mousedown handling.
+   */
+  function handleMenuFocusOut(event: FocusEvent<HTMLDivElement>) {
+    const next = event.relatedTarget;
+    if (next instanceof Node && !wrapRef.current?.contains(next)) {
+      close();
+    }
+  }
+
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -169,13 +191,9 @@ export function ActionMenu({
       closeAndRestoreFocus();
       return;
     }
-    if (event.key === "Tab") {
-      // Focus goes back to the trigger and the browser's own Tab handling then
-      // moves on from there, which lands on whatever follows this menu instead
-      // of somewhere inside a popup that is about to disappear.
-      closeAndRestoreFocus();
-      return;
-    }
+    // A native select keeps its own keys: arrows change its value, Tab moves
+    // on. Walking the menu from inside one would steal both.
+    if (event.target instanceof HTMLSelectElement) return;
     const container = menuRef.current;
     if (!container) return;
     const items = menuItems(container);
@@ -212,7 +230,7 @@ export function ActionMenu({
   }
 
   return (
-    <div className="action-menu" ref={wrapRef}>
+    <div className="action-menu" ref={wrapRef} onBlur={handleMenuFocusOut}>
       <button
         ref={triggerRef}
         type="button"
@@ -261,6 +279,11 @@ export type ActionMenuItemProps = {
   ariaLabel?: string;
   /** The count or size badge that sits at the end of the row. */
   meta?: string;
+  /**
+   * Draw {@link meta} as muted text rather than a badge, for a count that is
+   * part of reading the row ("7 pages") rather than a label on it.
+   */
+  quietMeta?: boolean;
   /** A second line under the label, for a consequence worth spelling out. */
   detail?: string;
   disabled?: boolean;
@@ -274,6 +297,7 @@ export function ActionMenuItem({
   label,
   ariaLabel,
   meta,
+  quietMeta = false,
   detail,
   disabled = false,
   destructive = false,
@@ -292,7 +316,13 @@ export function ActionMenuItem({
         <span className="action-menu__item-label">{label}</span>
         {detail && <span className="action-menu__item-detail">{detail}</span>}
       </span>
-      {meta && <span className="action-menu__meta">{meta}</span>}
+      {meta && (
+        <span
+          className={`action-menu__meta${quietMeta ? " action-menu__meta--quiet" : ""}`}
+        >
+          {meta}
+        </span>
+      )}
     </button>
   );
 }

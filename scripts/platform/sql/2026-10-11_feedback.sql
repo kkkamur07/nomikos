@@ -1,4 +1,4 @@
--- Equivalent of alembic revision 009_feedback, for production, which never runs
+-- Equivalent of alembic revision 010_feedback, for production, which never runs
 -- alembic automatically. Apply once, before deploying the API build that serves
 -- POST /feedback and GET /admin/feedback.
 --
@@ -35,12 +35,12 @@ $$;
 
 -- Keep alembic's bookkeeping in step, so a later `alembic upgrade head` does not
 -- create the table a second time. Skipped without an alembic_version table,
--- and a no-op unless the database was at 008_block_label before the statements above.
+-- and a no-op unless the database was at 009_block_label before the statements above.
 DO $$
 BEGIN
   IF to_regclass('alembic_version') IS NOT NULL THEN
-    UPDATE alembic_version SET version_num = '009_feedback'
-    WHERE version_num = '008_block_label';
+    UPDATE alembic_version SET version_num = '010_feedback'
+    WHERE version_num = '009_block_label';
   END IF;
 END
 $$;

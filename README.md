@@ -1,12 +1,13 @@
 <div align="center">
   <h1>Nomikos</h1>
-  <p><strong>Nomikos is an open-source platform for transcribing historical manuscripts you can run in minutes.</strong></p>
+  <p><strong>Nomikos is an open-source platform for transcribing historical manuscripts.</strong></p>
   <img src="landing/assets/screenshots/editor-1280.webp" alt="The Nomikos page editor open on Grec1360 p.3, a two-page Greek manuscript spread with 49 line segments outlined in green, an HTR model selector in the toolbar, and a paired/unpaired legend" width="720">
   <p><em>Grec1360 p.3, segmented into 49 lines. Pick an HTR model in the toolbar, let it draft the first pass, then correct, review, share, publish, and export.</em></p>
   <p>
     <a href="#why-nomikos"><strong>Why Nomikos</strong></a> ·
     <a href="#current-model-support"><strong>Models</strong></a> ·
     <a href="#accuracy"><strong>Accuracy</strong></a> ·
+    <a href="docs/talks/how-did-we-do-it.pdf"><strong>How we did it</strong></a> ·
     <a href="#quick-start"><strong>Quick Start</strong></a> ·
     <a href="docs/README.md"><strong>Documentation</strong></a> ·
     <a href="https://huggingface.co/nomikos-project"><strong>Hugging Face</strong></a> ·
@@ -16,21 +17,25 @@
   <a href="https://nomikos.app"><img src="https://img.shields.io/badge/Website-nomikos.app-navy" alt="Website"></a>
   <a href="https://app.nomikos.app"><img src="https://img.shields.io/badge/App-app.nomikos.app-green" alt="Application"></a>
   <a href="https://huggingface.co/nomikos-project"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Hugging Face models"></a>
+  <a href="docs/talks/how-did-we-do-it.pdf"><img src="https://img.shields.io/badge/Slides-How_we_did_it-purple" alt="Methodology slides"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue" alt="License: Apache 2.0"></a>
 </div>
 
 Upload a manuscript page and Nomikos segments it into written lines, drafts a transcription where a compatible HTR model is available, and hands you a browser editor to correct, review, share, publish, and export. Behind that sit the editor, the API, storage, job state, streaming, and inference that runs on a researcher's laptop or in the cloud, all in this repository.
+
+Nomikos is the whole ecosystem, data, models, and the application to use them: we trained transcription models for Byzantine Greek, Armenian, Syriac, and Coptic, and published them with open line-level datasets for Greek, Armenian, and Syriac on [Hugging Face](https://huggingface.co/nomikos-project).
 
 ## Why Nomikos
 
 - **Keep the expert in the loop.** Models draft segments and transcriptions; researchers correct and approve. Model output is never treated as automatic ground truth.
 - **Operate inside your own data boundary.** Keep application data behind an API you control, with your own hosting, data policy, and review conventions.
-- **Run inference on your own computer.** Point the `nomikos` agent at the platform and run supported BLLA and Calamari models on a researcher's CPU. The agent only makes outbound requests, so it needs no inbound port, VPN, or proxy.
+- **Run inference on your own computer.** Point the `nomikos` agent at the platform and run supported BLLA, Calamari, and PP-OCR models on a researcher's CPU. The agent only makes outbound requests, so it needs no inbound port, VPN, or proxy.
 - **Collaborate through projects and sharing.** Organize work in projects, share documents with colleagues, and publish read-only views behind a secret link that a reader opens without an account.
 - **Correct rather than retype.** Fixing a model draft is faster than transcribing a blank page, and approved work exports in a predictable format for publication or retraining.
 
 ## Built for Research
 
-Nomikos is being developed for the Nomos research ecosystem, with a focus on Syriac, Coptic, Armenian, Byzantine Greek, and related scripts.
+Nomikos is being developed for the Nomos research ecosystem, with a focus on Syriac, Coptic, Armenian, Byzantine Greek, and related scripts. The platform itself is script agnostic: if you want to collaborate or develop models for your own script, get in touch via [GitHub](https://github.com/kkkamur07/nomikos) or the [Hugging Face organization](https://huggingface.co/nomikos-project).
 
 The system is expert-in-the-loop by design. Models draft, and researchers decide what is correct. Approved work produces processed line images and transcription files for publication or future model training.
 
@@ -49,12 +54,16 @@ Through the pinned runtime registry, Nomikos pages can use:
 | Registry id | Task and script | Architecture | Weights |
 | --- | --- | --- | --- |
 | `blla-segment` | Page segmentation, any script | Kraken BLLA | [segmentation-blla](https://huggingface.co/nomikos-project/segmentation-blla) |
+| `ppocr-segment` | Page segmentation, any script | PP-OCRv6 detection (ONNX Runtime) | [segmentation-ppocrv6-det](https://huggingface.co/nomikos-project/segmentation-ppocrv6-det) |
 | `greek-calamari-v1` | Line HTR, Byzantine Greek (`grc`) | Calamari | [greek-htr-calamari](https://huggingface.co/nomikos-project/greek-htr-calamari) |
 | `armenian-calamari-v1` | Line HTR, Armenian (`hy`) | Calamari | [armenian-htr-calamari](https://huggingface.co/nomikos-project/armenian-htr-calamari) |
 | `syriac-calamari-v2` | Line HTR, Syriac (`syr`) | Calamari | [syriac-htr-calamari](https://huggingface.co/nomikos-project/syriac-htr-calamari) |
+| `syriac-ppocr-v1` | Line HTR, Syriac (`syr`) | PP-OCRv6 recognition (ONNX Runtime) | [syriac-htr-ppocr_rec](https://huggingface.co/nomikos-project/syriac-htr-ppocr_rec) |
 | `coptic-calamari-v1` | Line HTR, Coptic (`cop`) | Calamari | [coptic-htr-calamari](https://huggingface.co/nomikos-project/coptic-htr-calamari) |
 
-All four HTR checkpoints share one architecture: a 40/60-filter CNN followed by two 200-unit
+In the platform pickers the segmenters appear as seg-v1 (blla-segment) and seg-v2 (ppocr-segment); each picker starts on the project's default model, else seg-v1, and there is no Default entry.
+
+All four Calamari HTR checkpoints share one architecture: a 40/60-filter CNN followed by two 200-unit
 bidirectional LSTM layers at line height 48. Read off the Coptic and Syriac checkpoints, whose
 structural fields agree exactly (3x3 convolutions 1 to 40 to 60, BiLSTM weights at `layers.4`
 and `layers.6` with 200-unit hidden states, blank index 0, temperature -1.0); each trains
@@ -74,21 +83,17 @@ Point it at a different platform with `NOMIKOS_API_URL` or `--api-url`.
 
 ## Accuracy
 
-The Hugging Face model cards report these figures. The Greek, Armenian and Syriac rows come from the same evaluator, `python -m src.evaluate.calamari`, run over that script's held-out finetuning pack (`data/processed/greek/finetuning`, `data/processed/armenian/finetuning`, `data/processed/syriac/finetuning`). The Coptic test row is the card's held-out test figure, whose validation split and SROIE F1 the card does not give:
+Test character error rate (CER) of each transcription model. Lower is better. Values come from the Hugging Face model cards, except `syriac-ppocr-v1`, whose approximate figure is reported by the model's authors and is not directly comparable.
 
-| Model | Split | Lines | CER | WER | Exact match | SROIE F1 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `greek-calamari-v1` | val | 19 | 0.156 | 0.648 | 0.000 | 0.415 |
-| `greek-calamari-v1` | test | 21 | 0.226 | 0.675 | 0.000 | 0.390 |
-| `armenian-calamari-v1` | val | 119 | 0.092 | 0.440 | 0.319 | 0.588 |
-| `armenian-calamari-v1` | test | 120 | 0.072 | 0.340 | 0.458 | 0.701 |
-| `syriac-calamari-v2` | val | 331 | 0.181 | 0.535 | 0.245 | 0.485 |
-| `syriac-calamari-v2` | test | 335 | 0.210 | 0.577 | 0.245 | 0.452 |
-| `coptic-calamari-v1` | test | 283 | 0.0823 | 0.591 | 0.431 |  |
+| Model | Script | Test CER |
+| --- | --- | ---: |
+| `greek-calamari-v1` | Byzantine Greek | 0.226 |
+| `armenian-calamari-v1` | Armenian | 0.072 |
+| `syriac-calamari-v2` | Syriac | 0.210 |
+| `syriac-ppocr-v1` | Syriac | about 0.07 |
+| `coptic-calamari-v1` | Coptic | 0.082 |
 
-Each of the Greek, Armenian and Syriac checkpoints selects `best.pt` on validation CER: 0.156 for Greek, 0.092 for Armenian, 0.181 for Syriac. Weigh the rows by how much text stands behind them.
-
-None of this is a platform-wide accuracy guarantee. Every pack here comes from specific manuscripts in specific hands, and CER moves with the script, the hand, image quality, layout, and the training data behind the checkpoint.
+These figures come from specific manuscripts and hands; expect CER to move with the script, the hand and the image quality. The [methodology slides](docs/talks/how-did-we-do-it.pdf) explain how the models were trained and evaluated.
 
 ## Quick Start
 
@@ -97,8 +102,8 @@ The fastest way to evaluate the complete application is the development Compose 
 Prerequisites: Git, Docker Desktop with Compose, and about 10 GB of free disk space.
 
 ```bash
-git clone https://github.com/kkkamur07/greekOCR.git
-cd greekOCR
+git clone https://github.com/kkkamur07/nomikos.git
+cd nomikos
 cp infrastructure/.env.compose.example infrastructure/.env
 ```
 
@@ -151,6 +156,7 @@ See [`docs/security/`](docs/security/), [`docs/architecture.md`](docs/architectu
 
 ## Explore Nomikos
 
+- [How we did it: methodology slides (PDF)](docs/talks/how-did-we-do-it.pdf), the final project talk on data, models, training and evaluation for Armenian, Byzantine Greek, Coptic and Syriac
 - [Use and host Nomikos](docs/guides/using-and-hosting.md)
 - [Models and datasets](docs/inference/models-and-datasets.md)
 - [Technical architecture](docs/architecture.md)
@@ -163,8 +169,8 @@ See [`docs/security/`](docs/security/), [`docs/architecture.md`](docs/architectu
 
 ## Community
 
-Questions, script requests, and model contributions are welcome via [GitHub](https://github.com/kkkamur07/greekOCR), the [Hugging Face organization](https://huggingface.co/nomikos-project), and the [website](https://nomikos.app). The hosted editor is at [app.nomikos.app](https://app.nomikos.app).
+Questions, script requests, and model contributions are welcome via [GitHub](https://github.com/kkkamur07/nomikos), the [Hugging Face organization](https://huggingface.co/nomikos-project), and the [website](https://nomikos.app). The hosted editor is at [app.nomikos.app](https://app.nomikos.app).
 
 ## License
 
-Nomikos is developed as an open-source platform for the Nomos research ecosystem. No `LICENSE` file is published in this snapshot. See the repository and linked documentation for current terms.
+Copyright 2026 Astha Gupta and Krrish Agarwalla. Nomikos is released under the [Apache License 2.0](LICENSE).

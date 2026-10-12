@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +16,19 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from transformers import Trainer, TrainerCallback, TrainingArguments
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 
+from ...augmentation.augmentation import DEFAULT_COPIES
+from ...early_stopping import EarlyStoppingCallback
+
 from ...metrics.languages import language_indices
-from ...metrics.metrics import compute_sequence_length_metrics, compute_text_metrics
+from ...metrics.metrics import (
+    compute_reference_length_counts,
+    compute_sequence_length_metrics,
+    compute_text_metrics,
+)
 from .checkpoint import load_calamari_checkpoint, save_calamari_checkpoint
 from .codec import CharacterCodec
 from .config import default_model_config
+from .ctc_steps import ctc_step_report, write_ctc_step_report
 from .data import (
     CalamariAugmentedDataset,
     CalamariLineDataset,
@@ -31,13 +39,15 @@ from .data import (
 from .model import CalamariTorchModel
 
 
-TRAIN_OCR_METRIC_NAMES = ("cer", "wer", "exact_match")
-EVAL_OCR_METRIC_NAMES = (
-    *TRAIN_OCR_METRIC_NAMES,
+TRAIN_OCR_METRIC_NAMES = (
+    "cer",
+    "wer",
+    "exact_match",
     "sroie_precision",
     "sroie_recall",
     "sroie_f1",
 )
+EVAL_OCR_METRIC_NAMES = TRAIN_OCR_METRIC_NAMES
 _EMA_FILENAME = "calamari_ema.pt"
 _METADATA_FILENAME = "calamari_metadata.json"
 
@@ -53,16 +63,22 @@ class CalamariTrainingSettings:
     device: str
     temperature: float
     lstm_layers: int
+    dropout_rate: float = 0.3
+    conv0_filters: int = 40
+    conv1_filters: int = 60
     checkpoint: Path | None = None
     mode: str = "train"
     train_split: str = "train"
     validation_split: str = "val"
-    n_augmentations: int = 5
+    copies: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_COPIES))
     augmentation_probability: float = 1.0
     ema_decay: float = 0.99
     logging_steps: int = 10
     warmup_ratio: float = 0.09
     checkpoint_top_k: int = 1
+    early_stopping_patience: int | None = None
+    early_stopping_min_delta: float = 0.0
+    seed: int = 1111
 
 
 class ExponentialMovingAverage:
@@ -250,9 +266,29 @@ class CalamariTrainer(Trainer):
             if language_metrics:
                 self.log(language_metrics)
                 metrics.update(language_metrics)
+            self._print_eval_ctc_steps()
             return metrics
         finally:
             model.load_state_dict(raw_state)
+
+    def _print_eval_ctc_steps(self, n_lines: int = 3, top_k: int = 3) -> None:
+        """Print greedy CTC softmax rivals for a few val lines while EMA weights are loaded."""
+        dataset = self.eval_dataset
+        if dataset is None or len(dataset) == 0:
+            return
+        model = self.accelerator.unwrap_model(self.model)
+        device = next(model.parameters()).device
+        report = ctc_step_report(model, dataset, self.codec, device, n_lines=n_lines, top_k=top_k)
+        if not report:
+            return
+        print(report)
+        epoch = self.state.epoch if self.state.epoch is not None else 0
+        write_ctc_step_report(
+            report,
+            Path(self.args.output_dir)
+            / "eval_ctc_steps"
+            / f"epoch-{epoch:g}-step-{self.state.global_step}.txt",
+        )
 
     def _language_eval_metrics(self) -> dict[str, float]:
         if len(self.language_eval_datasets) < 2:
@@ -333,6 +369,10 @@ def train_calamari(
         )
     if settings.checkpoint_top_k <= 0:
         raise ValueError("Calamari checkpoint_top_k must be greater than zero.")
+    if settings.early_stopping_patience is not None and settings.early_stopping_patience <= 0:
+        raise ValueError("Calamari early_stopping_patience must be greater than zero or null.")
+    if settings.early_stopping_min_delta < 0.0:
+        raise ValueError("Calamari early_stopping_min_delta must be greater than or equal to zero.")
 
     train_samples = collect_samples(data_root, settings.train_split)
     if not train_samples:
@@ -344,7 +384,7 @@ def train_calamari(
         train_lines = repeat_syriac_2024_train(train_lines)
     train_dataset = CalamariAugmentedDataset(
         train_lines,
-        settings.n_augmentations,
+        settings.copies,
         probability=settings.augmentation_probability,
     )
     validation_dataset = CalamariLineDataset(
@@ -387,10 +427,19 @@ def train_calamari(
         remove_unused_columns=False,
         label_names=["labels"],
         report_to=[],
-        seed=1111,
+        seed=settings.seed,
         use_cpu=_resolve_device(settings.device).type == "cpu",
         fp16=_resolve_device(settings.device).type == "cuda",
     )
+    # Per-epoch evaluation above produces the eval_cer our EarlyStoppingCallback reads.
+    callbacks: list[TrainerCallback] = [_EMACallback(ema), _ReportCallback(report)]
+    if settings.early_stopping_patience is not None:
+        callbacks.append(
+            EarlyStoppingCallback(
+                patience=settings.early_stopping_patience,
+                min_delta=settings.early_stopping_min_delta,
+            )
+        )
     trainer = CalamariTrainer(
         model=model,
         args=training_args,
@@ -403,9 +452,28 @@ def train_calamari(
         line_height=settings.line_height,
         temperature=settings.temperature,
         language_eval_datasets=language_eval_datasets,
-        callbacks=[_EMACallback(ema), _ReportCallback(report)],
+        callbacks=callbacks,
     )
     resume_checkpoint = _trainer_checkpoint(settings)
+    if report is not None:
+        length_charts = {"step": 0.0, "epoch": 0.0}
+        length_charts.update(
+            {
+                f"train_{key}": value
+                for key, value in compute_reference_length_counts(
+                    [sample.text for sample in train_samples]
+                ).items()
+            }
+        )
+        length_charts.update(
+            {
+                f"eval_{key}": value
+                for key, value in compute_reference_length_counts(
+                    [sample.text for sample in validation_samples]
+                ).items()
+            }
+        )
+        report(length_charts)
     trainer.train(resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint else None)
 
     best_checkpoint = (
@@ -468,6 +536,9 @@ def _initial_model(
                     classes=codec.classes,
                     temperature=float(metadata["temperature"]),
                     lstm_layers=_metadata_lstm_layers(metadata),
+                    dropout_rate=settings.dropout_rate,
+                    conv0_filters=settings.conv0_filters,
+                    conv1_filters=settings.conv1_filters,
                 )
             ),
             codec,
@@ -475,7 +546,9 @@ def _initial_model(
     if settings.mode == "finetune":
         if settings.checkpoint is None:
             raise ValueError("Fine-tuning requires training.checkpoint.")
-        model, metadata = load_calamari_checkpoint(settings.checkpoint)
+        model, metadata = load_calamari_checkpoint(
+            settings.checkpoint, dropout_rate=settings.dropout_rate
+        )
         if metadata.line_height != settings.line_height:
             raise ValueError(
                 "Fine-tuning line height must match the checkpoint: "
@@ -500,6 +573,9 @@ def _initial_model(
                 classes=codec.classes,
                 temperature=settings.temperature,
                 lstm_layers=settings.lstm_layers,
+                dropout_rate=settings.dropout_rate,
+                conv0_filters=settings.conv0_filters,
+                conv1_filters=settings.conv1_filters,
             )
         ),
         codec,
@@ -516,11 +592,31 @@ def _expand_checkpoint_charset(
     """Extend a pretrained checkpoint's classifier without changing known outputs."""
     expanded_charset = (*codec.charset, *additional_characters)
     lstm_layers = sum(layer.kind == "bilstm" for layer in model.config.layers)
+    dropout_rate = next(
+        (
+            float(layer.rate)
+            for layer in model.config.layers
+            if layer.kind == "dropout" and layer.rate is not None
+        ),
+        0.3,
+    )
+    conv_filters = [
+        int(layer.filters)
+        for layer in model.config.layers
+        if layer.kind == "conv2d" and layer.filters is not None
+    ]
+    if len(conv_filters) != 2:
+        raise ValueError(
+            "Cannot expand a Calamari checkpoint without exactly two convolution blocks."
+        )
     expanded_model = CalamariTorchModel(
         default_model_config(
             classes=len(expanded_charset),
             temperature=model.config.temperature,
             lstm_layers=lstm_layers,
+            dropout_rate=dropout_rate,
+            conv0_filters=conv_filters[0],
+            conv1_filters=conv_filters[1],
         )
     )
     expanded_model.eval()
@@ -630,11 +726,7 @@ def _read_metadata(path: Path) -> dict[str, object]:
 
 def _metadata_lstm_layers(metadata: dict[str, object]) -> int:
     lstm_layers = metadata.get("lstm_layers", 1)
-    if (
-        not isinstance(lstm_layers, int)
-        or isinstance(lstm_layers, bool)
-        or lstm_layers not in {1, 2}
-    ):
+    if not isinstance(lstm_layers, int) or isinstance(lstm_layers, bool) or lstm_layers < 1:
         raise ValueError("Calamari Trainer checkpoint has an invalid LSTM layer count.")
     return lstm_layers
 

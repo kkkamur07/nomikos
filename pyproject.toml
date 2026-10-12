@@ -9,9 +9,10 @@
 # wheel is built explicitly (`uv build`), not installed into every dev venv.
 [project]
 name = "nomikos-inference"
-version = "0.4.0"
+version = "0.4.2"
 description = "Manuscript segmentation and transcription runtime for the nomikos platform"
 readme = "nomikos_inference/README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.13"
 # [project].dependencies is the closure that reaches a researcher's laptop.
 # Anything added here is downloaded by every `uv tool install nomikos-inference`,
@@ -119,11 +120,19 @@ exclude = [
 # model is part of what runs one. Use `uv run --group train`.
 train = [
     "accelerate>=1.13.0",
+    # Hydra config composition for `python -m src.train.calamari` (config/calamari).
+    "hydra-core>=1.3.0",
     "jiwer>=4.0.0",
+    "omegaconf>=2.3.0",
+    # Report tables and the per-run metric exports under src/reports.
+    "pandas>=2.2.0",
     "pillow>=12.3.0",
+    # W&B length/CER bar charts (src/logging/wandb.py).
+    "plotly>=6.0.0",
     "torch>=2.10.0",
     "torchvision>=0.25.0",
     "transformers>=5.11.0",
+    "wandb>=0.27.0",
 ]
 # Artifact production, not artifact execution (ADR 0006).
 # `nomikos_inference/export/` traces the

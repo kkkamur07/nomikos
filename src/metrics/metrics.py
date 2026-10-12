@@ -43,6 +43,11 @@ def compute_text_metrics(
             "sroie_precision": 0.0,
             "sroie_recall": 0.0,
             "sroie_f1": 0.0,
+            "n_samples": 0.0,
+            "character_edits": 0.0,
+            "reference_characters": 0.0,
+            "word_edits": 0.0,
+            "reference_words": 0.0,
         }
 
     character_edits = 0
@@ -90,6 +95,41 @@ def compute_text_metrics(
     }
 
 
+def _reference_length_bins(
+    references: Sequence[str],
+    *,
+    bins: int = 10,
+) -> list[tuple[int, int, list[int]]]:
+    """Group reference strings into equal-width character-length bins."""
+    if bins < 1:
+        raise ValueError("bins must be at least one.")
+    if not references:
+        return []
+    lengths = [len(reference) for reference in references]
+    minimum = min(lengths)
+    maximum = max(lengths)
+    width = max(1, -(-(maximum - minimum + 1) // bins))
+    grouped: list[tuple[int, int, list[int]]] = []
+    for lower in range(minimum, maximum + 1, width):
+        upper = min(maximum, lower + width - 1)
+        indices = [index for index, length in enumerate(lengths) if lower <= length <= upper]
+        if indices:
+            grouped.append((lower, upper, indices))
+    return grouped
+
+
+def compute_reference_length_counts(
+    references: Sequence[str],
+    *,
+    bins: int = 10,
+) -> dict[str, float]:
+    """Count how many references fall in each character-length bin."""
+    metrics: dict[str, float] = {}
+    for lower, upper, indices in _reference_length_bins(references, bins=bins):
+        metrics[f"sequence_length_{lower:03d}_{upper:03d}_samples"] = float(len(indices))
+    return metrics
+
+
 def compute_sequence_length_metrics(
     references: Sequence[str],
     predictions: Sequence[str],
@@ -104,25 +144,12 @@ def compute_sequence_length_metrics(
     """
     if len(references) != len(predictions):
         raise ValueError("references and predictions must have the same length.")
-    if bins < 1:
-        raise ValueError("bins must be at least one.")
     if not references:
         return {}
 
-    lengths = [len(reference) for reference in references]
-    minimum = min(lengths)
-    maximum = max(lengths)
-    width = max(1, -(-(maximum - minimum + 1) // bins))
     metrics: dict[str, float] = {}
-    for lower in range(minimum, maximum + 1, width):
-        upper = min(maximum, lower + width - 1)
-        selected = [
-            (reference, prediction)
-            for reference, prediction in zip(references, predictions, strict=True)
-            if lower <= len(reference) <= upper
-        ]
-        if not selected:
-            continue
+    for lower, upper, indices in _reference_length_bins(references, bins=bins):
+        selected = [(references[index], predictions[index]) for index in indices]
         character_edits = sum(
             edit_distance(reference, prediction) for reference, prediction in selected
         )

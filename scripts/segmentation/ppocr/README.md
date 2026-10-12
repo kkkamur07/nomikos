@@ -70,7 +70,8 @@ preprocessing, pyclipper DB postprocess) on real weights. For each of the 14
 reference fixtures it reads the page BYTES, calls the production entry
 point with refinement switched off (`merge_fragments` false,
 `resolve_overlaps` false, `noise_policy` off, so the gate measures the
-detector and nothing else), and compares the returned line quads
+detector and nothing else) in quad mode (`box_type` quad, pinning the quad
+path now that the serving default is polygons), and compares the returned line quads
 with the fixture boxes: counts, then greedy one-to-one matching by quad
 centre with corner-SET distances (each corner counts only its nearest
 corner in the matched box, since corner order may differ). It writes
@@ -121,6 +122,11 @@ ratio, prints a sweep table (recall, precision, F1, lines lost against
 off with page and line, lines fixed, merged count) with a per-ratio sweep
 summary in the JSON, and skips the overlays.
 `--merge-max-overlap-ratio` sweeps the same way at gap 0.25.
+`--box-type quad|poly|both` (default `quad`) selects the served geometry;
+`both` runs off, defaults and drop in each mode and additionally prints a
+per-page and overall quad-vs-poly comparison (mean polygon points, mean
+polygon over quad area, mean overlap between consecutive lines per mode,
+seconds per page per mode) into `poly_stats` in the JSON.
 
 ## `profile_onnx.py`
 

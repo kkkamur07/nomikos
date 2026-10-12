@@ -1,6 +1,0 @@
-# @package augmentation
-probability: 1.0
-# 5 copies + original: 2 easy (3 light ops), 2 mild (2 mild ops), 1 hard (1 heavy op).
-n_augmentations: 5
-num_operations: 3
-max_rotation_degrees: 5.0

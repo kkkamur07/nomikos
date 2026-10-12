@@ -243,6 +243,10 @@ class LineTranscription(Base):
     )
     text: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Per-code-point model scores, aligned one to one with ``text``. Only what
+    # cannot be derived is stored: the characters are in ``text`` already. Null
+    # for human-written rows and for rows written before this column existed.
+    character_confidences: Mapped[list[float] | None] = mapped_column(JSONB, nullable=True)
 
     line: Mapped[Line] = relationship("Line", back_populates="transcriptions")
     transcription: Mapped[Transcription] = relationship(

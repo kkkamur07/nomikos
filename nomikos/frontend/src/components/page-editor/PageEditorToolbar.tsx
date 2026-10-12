@@ -278,9 +278,16 @@ export function PageEditorToolbar({
   const selectedModelName =
     transcribeModels.find((model) => model.id === selectedTranscribeModelId)
       ?.name ?? "not selected";
-  const selectedSegmentModelName =
-    segmentModels.find((model) => model.id === selectedSegmentModelId)?.name ??
-    "Default";
+  const selectedSegmentModel = segmentModels.find(
+    (model) => model.id === selectedSegmentModelId,
+  );
+  const selectedSegmentModelName = selectedSegmentModel?.name ?? "not selected";
+  // The tooltip names the model the button will actually use. Null only
+  // happens while the catalog is empty or failed to load, when the select
+  // is disabled and the request omits the model id.
+  const segmentTooltip = selectedSegmentModel
+    ? `Segment this page with ${selectedSegmentModel.name}`
+    : "Segment this page";
 
   // The quick button transcribes what the researcher is looking at: the
   // selected segment if there is one, otherwise the page. Naming the scope on
@@ -292,7 +299,6 @@ export function PageEditorToolbar({
     (Boolean(selectedSegmentId) || lines.length > 0);
 
   const segmentText = segmenting ? "Segmenting…" : "Segment";
-  const segmentTitle = `Segment this page with ${selectedSegmentModelName}`;
   const transcribeText = ocrRunning ? "Transcribing…" : "Transcribe";
   const transcribeTitle = selectedTranscribeModelId
     ? `Transcribe the ${transcribeScope} with ${selectedModelName}`
@@ -601,7 +607,6 @@ export function PageEditorToolbar({
             selectedModelId={selectedSegmentModelId}
             onSelectedModelIdChange={onSelectedSegmentModelIdChange}
             disabled={processing}
-            includeDefaultOption
           />
           {!folded && (
             <>
@@ -613,7 +618,7 @@ export function PageEditorToolbar({
                   onActionsOpenChange(false);
                   void onRunAutoSegment();
                 }}
-                title={segmentTitle}
+                title={segmentTooltip}
                 aria-label={iconOnly ? segmentText : undefined}
               >
                 <SegmentIcon />

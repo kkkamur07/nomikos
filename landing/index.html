@@ -296,7 +296,7 @@
         <section class="section" id="models">
           <div class="section__head">
             <div>
-              <p class="eyebrow">Models</p>
+              <p class="eyebrow">Models and datasets</p>
               <h2 class="section-title">On Hugging Face</h2>
             </div>
             <a
@@ -304,7 +304,7 @@
               href="https://huggingface.co/nomikos-project"
               target="_blank"
               rel="noreferrer"
-              aria-label="Models on Hugging Face"
+              aria-label="Models and datasets on Hugging Face"
             >
               <img src="assets/huggingface.svg" alt="" width="32" height="30" />
             </a>
@@ -332,12 +332,12 @@
             </li>
             <li>
               <div class="links__main">
-                <a href="https://huggingface.co/nomikos-project/syriac-htr-calamari" target="_blank" rel="noreferrer">
-                  syriac-htr-calamari
+                <a href="https://huggingface.co/nomikos-project/syriac-htr-ppocr_rec" target="_blank" rel="noreferrer">
+                  syriac-htr-ppocr_rec
                 </a>
-                <span class="links__desc">Syriac line HTR, Calamari</span>
+                <span class="links__desc">Syriac line HTR, PP-OCR recognition</span>
               </div>
-              <span class="links__cer" title="Character error rate on the validation pack reported in the model card">val CER <b>0.181</b></span>
+              <span class="links__cer" title="Character error rate on the held-out test set, about 7 percent, reported by the model's authors" aria-label="test CER about 0.07, reported by the model's authors">test CER <b>≈ 0.07</b></span>
               <span class="status status--live"><span class="status__dot" aria-hidden="true"></span>Live</span>
             </li>
             <li>
@@ -352,11 +352,33 @@
             </li>
             <li>
               <div class="links__main">
-                <span class="links__name">Curated HTR datasets</span>
-                <span class="links__desc">Training and evaluation sets on Hugging Face</span>
+                <a href="https://huggingface.co/datasets/nomikos-project/greek-manuscript-htr" target="_blank" rel="noreferrer">
+                  greek-manuscript-htr
+                </a>
+                <span class="links__desc">Byzantine Greek HTR dataset, BnF Grec 1360, 5 pages, 204 lines</span>
               </div>
               <span class="links__cer" aria-hidden="true"></span>
-              <span class="status status--soon"><span class="status__dot" aria-hidden="true"></span>Coming soon</span>
+              <span class="status status--live"><span class="status__dot" aria-hidden="true"></span>Live</span>
+            </li>
+            <li>
+              <div class="links__main">
+                <a href="https://huggingface.co/datasets/nomikos-project/armenian-manuscript-htr" target="_blank" rel="noreferrer">
+                  armenian-manuscript-htr
+                </a>
+                <span class="links__desc">Armenian HTR dataset, BnF Arménien 172 and UCLA Armenian MS 72, 34 pages, 1,704 lines</span>
+              </div>
+              <span class="links__cer" aria-hidden="true"></span>
+              <span class="status status--live"><span class="status__dot" aria-hidden="true"></span>Live</span>
+            </li>
+            <li>
+              <div class="links__main">
+                <a href="https://huggingface.co/datasets/nomikos-project/syriac-manuscript-htr" target="_blank" rel="noreferrer">
+                  syriac-manuscript-htr
+                </a>
+                <span class="links__desc">East Syriac HTR dataset, Alqosh 65, 7 pages, 143 lines</span>
+              </div>
+              <span class="links__cer" aria-hidden="true"></span>
+              <span class="status status--live"><span class="status__dot" aria-hidden="true"></span>Live</span>
             </li>
           </ul>
         </section>

@@ -234,11 +234,13 @@ class TranscriptionService:
                         transcription_id=ground_truth.id,
                         text=source_row.text,
                         confidence=None,
+                        character_confidences=None,
                     )
                 )
             else:
                 target.text = source_row.text
                 target.confidence = None
+                target.character_confidences = None
 
         await session.commit()
         return copied_line_ids
@@ -292,13 +294,19 @@ class TranscriptionService:
                 transcription_id=transcription.id,
                 text=text,
                 confidence=None,
+                character_confidences=None,
             )
             session.add(line_transcription)
         else:
             line_transcription.text = text
             line_transcription.confidence = None
+            line_transcription.character_confidences = None
         await session.commit()
         await session.refresh(line_transcription)
+        # The API serialises the row's layer kind from the relationship, which
+        # this write never loaded. Attach the layer already in hand (in memory,
+        # no IO) rather than paying a query for a value the caller supplied.
+        line_transcription.transcription = transcription
         return line_transcription
 
     # --- Lookups ---

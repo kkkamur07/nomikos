@@ -85,7 +85,9 @@ def _run_with_session(
 def test_response_validates_and_lines_read_top_to_bottom(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    response = _run_with_session(monkeypatch, tmp_path, _two_line_map())
+    response = _run_with_session(
+        monkeypatch, tmp_path, _two_line_map(), params={"box_type": "quad"}
+    )
 
     assert isinstance(response, SegmentRunResponse)
     assert len(response.blocks) == 1
@@ -117,7 +119,9 @@ def test_response_validates_and_lines_read_top_to_bottom(
 
 
 def test_baselines_lie_inside_their_quads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    response = _run_with_session(monkeypatch, tmp_path, _two_line_map())
+    response = _run_with_session(
+        monkeypatch, tmp_path, _two_line_map(), params={"box_type": "quad"}
+    )
 
     assert len(response.lines) == 2
     for line in response.lines:
@@ -134,6 +138,7 @@ def test_bad_params_raise(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
         {"reading_direction": "diagonal"},
         {"baseline_fraction": 1.5},
         {"baseline_fraction": -0.1},
+        {"box_type": "circle"},
     ):
         with pytest.raises(ValueError):
             _run_with_session(monkeypatch, tmp_path, _two_line_map(), params=params)

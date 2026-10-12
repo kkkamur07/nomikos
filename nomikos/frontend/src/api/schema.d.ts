@@ -3033,6 +3033,9 @@ export interface components {
     };
     /** LineTranscriptionResponse */
     LineTranscriptionResponse: {
+      /** Character Confidences */
+      character_confidences?:
+        components["schemas"]["CharacterConfidence"][] | null;
       /** Confidence */
       confidence: number | null;
       /**

@@ -1,7 +1,7 @@
 import type { MessageInstance } from "antd/es/message/interface";
 import { reportClientFailure } from "../../api/failureBeacon";
 
-export type ToastVariant = "success" | "error";
+export type ToastVariant = "success" | "info" | "error";
 
 /** Matches the dismiss delay the hand-rolled stack used, in antd's seconds. */
 const DISMISS_SECONDS = 2.8;
@@ -21,6 +21,13 @@ export function registerToastApi(instance: MessageInstance | null): void {
 export const toast = {
   success: (message: string): void => {
     void api?.success(message, DISMISS_SECONDS);
+  },
+  /**
+   * Neither good news nor a failure: something changed under the person and
+   * they should know. Deliberately not routed to the failure beacon.
+   */
+  info: (message: string): void => {
+    void api?.info(message, DISMISS_SECONDS);
   },
   error: (message: string): void => {
     // Centralized here, not at call sites, so every surfaced error is

@@ -13,6 +13,7 @@ Start with the audience-appropriate guide:
 | [Root README](../README.md)                             | You want the product overview and a quick start                                          |
 | [Use and host Nomikos](guides/using-and-hosting.md)    | You want Docker, local inference, Supabase, or deployment steps                          |
 | [Models and datasets](inference/models-and-datasets.md) | You want the runtime catalog, HTR/segmentation models, or dataset workflow               |
+| [How we did it (PDF)](talks/how-did-we-do-it.pdf)       | You want the methodology: data, models, training and evaluation, as presented in the final talk |
 | [Technical architecture](architecture.md)               | You want the system design, stack rationale, jobs, notifications, or security boundaries |
 
 ## Developer guides

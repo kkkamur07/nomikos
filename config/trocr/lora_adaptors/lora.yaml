@@ -1,6 +1,0 @@
-enabled: false
-rank: 8
-alpha_rank_ratio: 2.0
-dropout: 0.05
-num_layers: 4
-target_modules: [query, value]

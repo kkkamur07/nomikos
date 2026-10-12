@@ -34,6 +34,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import time
 from pathlib import Path
 
 import cv2
@@ -88,6 +89,16 @@ def _parse_args() -> argparse.Namespace:
             "Score the defaults and drop variants at gap 0.25 for these "
             "merge max-overlap ratios (repeatable or comma separated). "
             "Same sweep output style as --merge-gap-ratio."
+        ),
+    )
+    parser.add_argument(
+        "--box-type",
+        choices=("quad", "poly", "both"),
+        default="quad",
+        help=(
+            "Which served geometry to score: quad masks, poly masks, or both "
+            "(both runs off/defaults/drop in each mode and prints the "
+            "quad-vs-poly comparison with polygon statistics)."
         ),
     )
     return parser.parse_args()
@@ -215,7 +226,30 @@ def _pairs_above(polygons: list[Polygon], threshold: float) -> int:
     return count
 
 
-def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) -> list[int]:
+def _adjacent_overlap_mean(polygons: list[Polygon]) -> float:
+    """Mean shared-over-smaller area between consecutive served lines."""
+    ratios = []
+    for upper, lower in zip(polygons, polygons[1:], strict=False):
+        smaller = min(upper.area, lower.area)
+        if smaller > 0:
+            ratios.append(upper.intersection(lower).area / smaller)
+    return float(sum(ratios) / len(ratios)) if ratios else 0.0
+
+
+def _poly_quad_area_ratios(
+    poly_polygons: list[Polygon], quad_polygons: list[Polygon]
+) -> list[float]:
+    """Per-line polygon over quad area, paired by reading order position."""
+    ratios = []
+    for poly, quad in zip(poly_polygons, quad_polygons, strict=False):
+        if quad.area > 0:
+            ratios.append(poly.area / quad.area)
+    return ratios
+
+
+def _draw_overlay(
+    page: str, image_bytes: bytes, lines: list, output_dir: Path, mode: str | None = None
+) -> list[int]:
     """Reading-order overlay: body quads green with numbers, suspects red.
 
     Drawing mirrors verify_adapter.py (green quads, order numbers beside the
@@ -245,10 +279,10 @@ def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) 
         )
         baseline = np.asarray(line["baseline"]["points"], dtype=np.float64)
         if not suspect:
-            cv2.line(
+            cv2.polylines(
                 canvas,
-                (int(baseline[0][0]), int(baseline[0][1])),
-                (int(baseline[1][0]), int(baseline[1][1])),
+                [baseline.astype(np.int32).reshape(-1, 1, 2)],
+                False,
                 (0, 255, 255),
                 thickness,
                 cv2.LINE_AA,
@@ -282,9 +316,11 @@ def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) 
             cv2.LINE_AA,
         )
     output_dir.mkdir(parents=True, exist_ok=True)
-    ok = cv2.imwrite(
-        str(output_dir / f"{page}.refined.overlay.jpg"), canvas, [cv2.IMWRITE_JPEG_QUALITY, 90]
-    )
+    if mode is None:
+        overlay_name = f"{page}.refined.overlay.jpg"
+    else:
+        overlay_name = f"{page}.refined.{mode}.overlay.jpg"
+    ok = cv2.imwrite(str(output_dir / overlay_name), canvas, [cv2.IMWRITE_JPEG_QUALITY, 90])
     if not ok:
         raise RuntimeError(f"could not write overlay for page {page}")
     return suspect_numbers
@@ -328,15 +364,42 @@ def main() -> int:
             sweep.append((str(ratio), f"ov-{ratio}", f"dropov-{ratio}"))
     else:
         sweep = []
-        variants = {
-            "off": {
-                "merge_fragments": False,
-                "resolve_overlaps": False,
-                "noise_policy": "off",
-            },
-            "defaults": None,
-            "drop": {"noise_policy": "drop"},
-        }
+        if args.box_type == "both":
+            variants = {
+                "off-quad": {
+                    "merge_fragments": False,
+                    "resolve_overlaps": False,
+                    "noise_policy": "off",
+                    "box_type": "quad",
+                },
+                "off-poly": {
+                    "merge_fragments": False,
+                    "resolve_overlaps": False,
+                    "noise_policy": "off",
+                    "box_type": "poly",
+                },
+                "defaults-quad": {"box_type": "quad"},
+                "defaults-poly": {"box_type": "poly"},
+                "drop-quad": {"noise_policy": "drop", "box_type": "quad"},
+                "drop-poly": {"noise_policy": "drop", "box_type": "poly"},
+            }
+        else:
+            variants = {
+                "off": {
+                    "merge_fragments": False,
+                    "resolve_overlaps": False,
+                    "noise_policy": "off",
+                    "box_type": args.box_type,
+                },
+                "defaults": {"box_type": args.box_type},
+                "drop": {"noise_policy": "drop", "box_type": args.box_type},
+            }
+    mode = args.box_type if args.box_type != "both" else "quad"
+    for name, params in list(variants.items()):
+        if params is None:
+            variants[name] = {"box_type": mode}
+        else:
+            params.setdefault("box_type", mode)
     totals = {
         name: {
             "tp": 0,
@@ -352,6 +415,8 @@ def main() -> int:
         for name in variants
     }
     pages: dict[str, dict] = {}
+    served: dict[str, dict[str, list]] = {}
+    timings: dict[str, list[float]] = {name: [] for name in variants}
     print(
         "variant detections precision recall f1 alone pairs suspects wrong",
         flush=True,
@@ -360,13 +425,17 @@ def main() -> int:
         image_bytes = _load_image(page, args.fixtures, args.images)
         targets = _load_targets(args.gt, page)
         pages[page] = {}
+        served[page] = {}
         for name, params in variants.items():
+            started = time.perf_counter()
             response = run_ppocr_det_segment(
                 image_bytes,
                 model_path=args.onnx,
                 artifact_sha256=args.artifact_sha256,
                 params=params,
             )
+            timings[name].append(time.perf_counter() - started)
+            served[page][name] = [line.points for line in response.lines]
             polygons = [Polygon(line.points) for line in response.lines]
             scored = _score_page(targets, polygons)
             suspects = [
@@ -392,20 +461,38 @@ def main() -> int:
             totals[name]["wrong"] += wrong
             totals[name]["merged"] += merged
         if not sweep and page in OVERLAY_PAGES:
-            defaults = run_ppocr_det_segment(
-                image_bytes, model_path=args.onnx, artifact_sha256=args.artifact_sha256, params=None
-            )
-            serial = [
-                {
-                    "points": line.points,
-                    "baseline": line.baseline,
-                    "source_metadata": line.source_metadata,
-                }
-                for line in defaults.lines
-            ]
-            numbers = _draw_overlay(page, image_bytes, serial, args.output_dir)
-            pages[page]["suspect_numbers"] = numbers
-            print(f"{page} suspect line numbers: {numbers}", flush=True)
+            overlay_modes = ("quad", "poly") if args.box_type == "both" else (mode,)
+            for overlay_mode in overlay_modes:
+                defaults = run_ppocr_det_segment(
+                    image_bytes,
+                    model_path=args.onnx,
+                    artifact_sha256=args.artifact_sha256,
+                    params={"box_type": overlay_mode},
+                )
+                serial = [
+                    {
+                        "points": line.points,
+                        "baseline": line.baseline,
+                        "source_metadata": line.source_metadata,
+                    }
+                    for line in defaults.lines
+                ]
+                numbers = _draw_overlay(
+                    page,
+                    image_bytes,
+                    serial,
+                    args.output_dir,
+                    mode=overlay_mode if args.box_type == "both" else None,
+                )
+                if args.box_type == "both":
+                    pages[page][f"suspect_numbers_{overlay_mode}"] = numbers
+                    print(
+                        f"{page} {overlay_mode} suspect line numbers: {numbers}",
+                        flush=True,
+                    )
+                else:
+                    pages[page]["suspect_numbers"] = numbers
+                    print(f"{page} suspect line numbers: {numbers}", flush=True)
     for name in variants:
         total = totals[name]
         precision = total["tp"] / (total["tp"] + total["fp"]) if total["tp"] + total["fp"] else 0.0
@@ -425,12 +512,83 @@ def main() -> int:
             flush=True,
         )
     payload: dict = {"pages": pages, "totals": totals}
+    if args.box_type == "both" and not sweep:
+        payload["poly_stats"] = _print_quad_poly_comparison(pages, served, timings)
     if sweep:
         payload["sweep"] = _summarise_sweep(pages, totals, sweep)
     (args.output_dir / "refinement-evaluation.json").write_text(
         json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8"
     )
     return 0
+
+
+def _print_quad_poly_comparison(
+    pages: dict, served: dict[str, dict[str, list]], timings: dict[str, list[float]]
+) -> dict:
+    """Per-page and overall quad-vs-poly geometry statistics.
+
+    Grouping decisions run on quads in both modes, so the line-level counts
+    are expected identical; the polygons should be smaller (tighter around
+    the ink) and overlap their vertical neighbours less.
+    """
+    print(
+        "page n_quad n_poly mean_pts mean_poly_over_quad adj_overlap_quad adj_overlap_poly",
+        flush=True,
+    )
+    all_points: list[int] = []
+    all_ratios: list[float] = []
+    quad_overlaps: list[float] = []
+    poly_overlaps: list[float] = []
+    summary: dict[str, dict] = {}
+    for page in pages:
+        quad_polys = [Polygon(points) for points in served[page]["defaults-quad"]]
+        poly_polys = [Polygon(points) for points in served[page]["defaults-poly"]]
+        points = [len(ring) for ring in served[page]["defaults-poly"]]
+        ratios = _poly_quad_area_ratios(poly_polys, quad_polys)
+        quad_overlap = _adjacent_overlap_mean(quad_polys)
+        poly_overlap = _adjacent_overlap_mean(poly_polys)
+        all_points.extend(points)
+        all_ratios.extend(ratios)
+        quad_overlaps.append(quad_overlap)
+        poly_overlaps.append(poly_overlap)
+        summary[page] = {
+            "n_quad": len(quad_polys),
+            "n_poly": len(poly_polys),
+            "mean_points": float(sum(points) / len(points)) if points else 0.0,
+            "mean_poly_over_quad": float(sum(ratios) / len(ratios)) if ratios else 0.0,
+            "adj_overlap_quad": quad_overlap,
+            "adj_overlap_poly": poly_overlap,
+        }
+        row = summary[page]
+        print(
+            f"{page} {row['n_quad']} {row['n_poly']} {row['mean_points']:.2f} "
+            f"{row['mean_poly_over_quad']:.4f} {row['adj_overlap_quad']:.4f} "
+            f"{row['adj_overlap_poly']:.4f}",
+            flush=True,
+        )
+    overall = {
+        "mean_points": float(sum(all_points) / len(all_points)) if all_points else 0.0,
+        "mean_poly_over_quad": float(sum(all_ratios) / len(all_ratios)) if all_ratios else 0.0,
+        "adj_overlap_quad": float(sum(quad_overlaps) / len(quad_overlaps))
+        if quad_overlaps
+        else 0.0,
+        "adj_overlap_poly": float(sum(poly_overlaps) / len(poly_overlaps))
+        if poly_overlaps
+        else 0.0,
+        "sec_per_page_quad": float(sum(timings["defaults-quad"]) / len(timings["defaults-quad"])),
+        "sec_per_page_poly": float(sum(timings["defaults-poly"]) / len(timings["defaults-poly"])),
+    }
+    print(
+        f"overall mean_pts={overall['mean_points']:.2f} "
+        f"mean_poly_over_quad={overall['mean_poly_over_quad']:.4f} "
+        f"adj_overlap_quad={overall['adj_overlap_quad']:.4f} "
+        f"adj_overlap_poly={overall['adj_overlap_poly']:.4f} "
+        f"sec_per_page_quad={overall['sec_per_page_quad']:.2f} "
+        f"sec_per_page_poly={overall['sec_per_page_poly']:.2f}",
+        flush=True,
+    )
+    summary["overall"] = overall
+    return summary
 
 
 def _summarise_sweep(pages: dict, totals: dict, sweep: list[tuple[str, str, str]]) -> dict:

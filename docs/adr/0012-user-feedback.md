@@ -12,7 +12,7 @@ in the interface and almost no new machinery on the server.
 
 ## Decision
 
-1. **One table, `feedback`** (migration `009_feedback`): the author
+1. **One table, `feedback`** (migration `010_feedback`): the author
    (`user_id`, cascade on delete), the note (`message`, 1 to 2000 chars),
    and the app route the user was on (`page_path`, nullable). No status, no
    threads, no attachments: triage happens outside the app, and every extra

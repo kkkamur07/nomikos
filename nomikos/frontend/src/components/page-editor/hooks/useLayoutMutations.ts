@@ -109,9 +109,9 @@ type LayoutMutationsInput = {
   setSelectedSegmentId: Dispatch<SetStateAction<string | null>>;
   setApprovedTextDraft: Dispatch<SetStateAction<string>>;
   /**
-   * Null means "Default": `model_id` is not sent and the backend resolves
-   * the binding or the worker's own default, exactly as before the picker
-   * existed.
+   * Null only while the segment catalog is empty or failed to load: then
+   * `model_id` is not sent and the backend resolves its own default. Once
+   * the catalog loads the picker always holds one of its ids.
    */
   selectedSegmentModelId?: string | null;
   onDrawComplete: () => void;
