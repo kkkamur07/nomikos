@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.annotation.application.line_geometry import resolve_line_baseline_and_mask
@@ -34,13 +35,27 @@ from backend.document.application.reading_order import (
     region_sequence,
     renumber,
 )
-from backend.document.application.regions import line_in_box
+from backend.document.application.regions import line_in_box, region_containing, region_position
+from backend.document.application.script_detection import detect_script, is_rtl
 from backend.document.infrastructure.document_repository import DocumentRepository
-from backend.document.infrastructure.orm_models import Block, Line, LineGeometryKind, LineSource
+from backend.document.infrastructure.orm_models import (
+    Block,
+    Line,
+    LineGeometryKind,
+    LineSource,
+    LineTranscription,
+)
 from backend.project.infrastructure.project_repository import ProjectRepository
 from backend.users.infrastructure.orm_models import User
 
 MAX_REPLACE_PART_LINES = 10_000
+
+# Lines whose text the page-direction guess reads; a page's script shows in a few lines.
+_SCRIPT_SAMPLE_LINES = 200
+
+# The fields that move a line's shape. A PATCH carrying only others (a region, an
+# order) files the line without claiming a human drew it.
+_GEOMETRY_PATCH_FIELDS = frozenset({"points", "baseline", "mask"})
 
 
 def _preserved(data: dict, field: str, prior: Line | None, default: object) -> object:
@@ -116,7 +131,7 @@ class LayoutService:
         document_id: UUID,
         part_id: UUID,
         *,
-        order: int,
+        order: int | None = None,
         box: dict,
         label: str | None = None,
         assign_contained: bool = True,
@@ -125,8 +140,16 @@ class LayoutService:
         # A block is part of the same layout segment health renumbers.
         await self._documents.lock_part(session, part_id)
         part = context.part
-        blocks = await self._documents.list_part_blocks(session, part.id)
+        blocks = _sorted_blocks(await self._documents.list_part_blocks(session, part.id))
         lines = await self._documents.list_part_lines(session, part.id)
+        if order is None:
+            # No explicit order: the region reads where it sits (ADR 0011), and the
+            # page's regions are renumbered 0..n-1 around it.
+            rtl = await self._part_reads_rtl(session, part.id)
+            position = region_position([other.box for other in blocks], box, rtl=rtl)
+            for rank, other in enumerate(blocks):
+                other.order = rank if rank < position else rank + 1
+            order = position
         block = Block(
             id=uuid4(), part_id=part.id, order=order, box=box, label=label, manual_geometry=True
         )
@@ -219,8 +242,14 @@ class LayoutService:
         # arriving by a different route.
         await self._documents.lock_part(session, part_id)
         part = context.part
+        blocks = _sorted_blocks(await self._documents.list_part_blocks(session, part.id))
         if block_id is not None:
             await self._block_or_404(session, part.id, block_id)
+        else:
+            # A line drawn without a region joins the one it sits in (ADR 0011), so a
+            # line drawn on a page of regions is numbered among its neighbours.
+            container = region_containing(points, blocks)
+            block_id = container.id if container is not None else None
         line = Line(
             id=uuid4(),
             part_id=part.id,
@@ -237,7 +266,7 @@ class LayoutService:
         # where it sits on the page; with one (undo restoring a deleted line) it goes
         # before the first line numbered at least that. Either way every line after it
         # moves down one, so the page stays numbered 0..n-1.
-        block_orders = await self._block_orders(session, part.id)
+        block_orders = block_ranks(blocks)
         existing = region_sequence(
             await self._documents.list_part_lines(session, part.id), block_orders
         )
@@ -260,7 +289,8 @@ class LayoutService:
         line_id: UUID,
         **updates: object,
     ) -> Line:
-        # Any geometry edit through PATCH marks the line as manually overridden.
+        # Any geometry edit through PATCH marks the line as manually overridden; filing it
+        # into a region or reordering it does not (the shape is still the model's).
         # Bulk PUT /lines and POST /layout/reset are the paths that preserve kraken source.
         reject_unknown_fields(updates, LINE_PATCH_FIELDS, "line patch")
         context = await self._access.require_part(session, user, project_id, document_id, part_id)
@@ -280,8 +310,9 @@ class LayoutService:
         moved_region = "block_id" in updates and updates["block_id"] != line.block_id
         for key, value in updates.items():
             setattr(line, key, value)
-        line.manual_geometry = True
-        line.source = LineSource.manual
+        if _GEOMETRY_PATCH_FIELDS & updates.keys():
+            line.manual_geometry = True
+            line.source = LineSource.manual
         if moved_region:
             # A line moved to another region is placed among that region's lines by
             # where it sits, as a newly drawn line would be (ADR 0011).
@@ -460,6 +491,20 @@ class LayoutService:
         )
         await session.commit()
         return await self._documents.list_part_lines(session, part.id)
+
+    async def _part_reads_rtl(self, session: AsyncSession, part_id: UUID) -> bool:
+        """Whether the page reads right to left, from the script of its transcribed text.
+
+        A document has no direction field; the text's script is the only signal. A page
+        with no text yet reads left to right.
+        """
+        texts = await session.scalars(
+            select(LineTranscription.text)
+            .join(Line, Line.id == LineTranscription.line_id)
+            .where(Line.part_id == part_id, LineTranscription.text != "")
+            .limit(_SCRIPT_SAMPLE_LINES)
+        )
+        return is_rtl(detect_script("".join(texts)))
 
     async def _block_orders(self, session: AsyncSession, part_id: UUID) -> BlockOrders:
         return block_ranks(await self._documents.list_part_blocks(session, part_id))

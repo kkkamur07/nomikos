@@ -421,12 +421,19 @@
             "title": "Label"
           },
           "order": {
-            "minimum": 0.0,
-            "title": "Order",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
           }
         },
-        "required": ["order", "box"],
+        "required": ["box"],
         "title": "BlockCreateRequest",
         "type": "object"
       },

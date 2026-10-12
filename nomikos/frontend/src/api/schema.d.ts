@@ -2079,7 +2079,7 @@ export interface components {
       /** Label */
       label?: string | null;
       /** Order */
-      order: number;
+      order?: number | null;
     };
     /**
      * BlockPatchRequest

@@ -131,16 +131,22 @@ def _same_column(a: tuple[float, float], b: tuple[float, float]) -> bool:
     return overlap >= _COLUMN_OVERLAP * narrower
 
 
-def _beside_wins(gap: float, height: float, column_gap: float) -> bool:
+def _beside_wins(gap: float, height: float, column_gap: float, line_height: float) -> bool:
     """Whether a line on the new line's row decides its place over its own column.
 
-    With no same-column line at all, the row neighbour always does. Otherwise only one
-    right beside it (no further off sideways than it is tall; the gutter of a spread is
-    wider) and nearer than the column's nearest line is vertically, so a line low on a
-    short verso stays on the verso although recto lines share its height.
+    ``height`` is the new line's own height, ``line_height`` the larger of it and the
+    nearest same-column line's. With no same-column line at all, the row neighbour
+    always does. A new line with a same-column line within one line height of it is
+    main text, not a margin note, and its column decides. Otherwise only a
+    neighbour right beside it (no further off sideways than the new line is tall; the
+    gutter of a spread is wider) and nearer than the column's nearest line is
+    vertically, so a line low on a short verso stays on the verso although recto lines
+    share its height.
     """
     if math.isinf(column_gap):
         return True
+    if column_gap <= line_height:
+        return False
     return gap <= height and gap < column_gap
 
 
@@ -171,11 +177,15 @@ def insertion_index(
 
     above: tuple[float, int] | None = None
     below: tuple[float, int] | None = None
-    # The nearest line of the same column, by vertical distance between centres.
+    # The nearest line of the same column, by vertical distance between centres, and
+    # the larger of its height and the new line's: one line height on this column.
     column_gap = math.inf
+    line_height = 0.0
     # The nearest line of another column whose height spans the new line's centre, by
-    # horizontal gap, with its height; on a tie the later one in reading order wins.
-    beside: tuple[float, int, float] | None = None
+    # horizontal gap; on a tie the later one in reading order wins.
+    beside: tuple[float, int] | None = None
+    new_y_range = _y_range(new_line)
+    new_height = new_y_range[1] - new_y_range[0] if new_y_range is not None else 0.0
     for index, line in enumerate(existing_lines):
         if _group(line, block_orders) != group:
             continue
@@ -188,9 +198,12 @@ def insertion_index(
             if y_range is not None and y_range[0] <= new_y <= y_range[1]:
                 gap = max(x_range[0] - new_x[1], new_x[0] - x_range[1], 0.0)
                 if beside is None or gap <= beside[0]:
-                    beside = (gap, index, y_range[1] - y_range[0])
+                    beside = (gap, index)
             continue
-        column_gap = min(column_gap, abs(y - new_y))
+        if abs(y - new_y) < column_gap:
+            column_gap = abs(y - new_y)
+            y_range = _y_range(line)
+            line_height = max(new_height, y_range[1] - y_range[0] if y_range else 0.0)
         if y < new_y:
             # Closest from above; on a tie the later one in reading order wins, so a
             # line goes after the whole run it sits under.
@@ -199,7 +212,7 @@ def insertion_index(
         elif below is None or y < below[0]:
             below = (y, index)
 
-    if beside is not None and _beside_wins(beside[0], beside[2], column_gap):
+    if beside is not None and _beside_wins(beside[0], new_height, column_gap, line_height):
         return beside[1] + 1
     if above is not None:
         return above[1] + 1

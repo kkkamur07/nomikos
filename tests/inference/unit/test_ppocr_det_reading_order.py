@@ -322,7 +322,7 @@ def test_plain_builder_rtl_reads_the_right_column_first() -> None:
     ]
 
 
-def test_plain_builder_leaves_a_spanning_header_unblocked() -> None:
+def test_plain_builder_puts_a_spanning_header_in_a_first_region_of_its_own() -> None:
     from nomikos_inference.architectures.ppocr_det.response import build_ppocr_det_response
 
     quads = [_quad(0, 50, 1900, 90)]
@@ -331,15 +331,15 @@ def test_plain_builder_leaves_a_spanning_header_unblocked() -> None:
     response = build_ppocr_det_response(2000, 600, quads, reading_direction="ltr")
 
     assert layout_lines(quads, direction="ltr").spanning == (0,)
-    assert len(response.blocks) == 2
+    assert [block.order for block in response.blocks] == [0, 1, 2]
     assert [line.block_external_id for line in response.lines] == [
-        None,
-        "ppocr-det-region-1",
-        "ppocr-det-region-1",
         "ppocr-det-region-1",
         "ppocr-det-region-2",
         "ppocr-det-region-2",
         "ppocr-det-region-2",
+        "ppocr-det-region-3",
+        "ppocr-det-region-3",
+        "ppocr-det-region-3",
     ]
 
 
