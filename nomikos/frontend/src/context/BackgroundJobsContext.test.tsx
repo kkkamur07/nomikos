@@ -95,9 +95,7 @@ describe("BackgroundJobsProvider all-terminal auto-dismiss", () => {
   });
 
   it("never auto-dismisses while a job is still running", () => {
-    mockWaitForJob.mockReturnValue(
-      Promise.withResolvers<JobResponse>().promise,
-    );
+    mockWaitForJob.mockReturnValue(new Promise<JobResponse>(() => {}));
     const get = probe();
 
     act(() => {

@@ -280,7 +280,7 @@ def test_document_pdf_keeps_a_page_that_has_no_transcription(
     reader = PdfReader(io.BytesIO(response.content))
     # Three pages, not two: dropping the blank one would silently make "page 3" page 2.
     assert len(reader.pages) == 3
-    assert (reader.pages[1].extract_text() or "").strip() == ""
+    assert (reader.pages[1].extract_text() or "").strip() == "(no transcribed lines)"
     assert "third" in (reader.pages[2].extract_text() or "")
 
 
@@ -336,7 +336,7 @@ def test_document_text_marks_a_page_that_has_no_transcription(
     response = client.get(_export_url(project_id, document_id, "text"), headers=owner_headers)
 
     assert response.status_code == 200
-    assert response.text == "[p.1]\nfirst\n\n[p.2]\n"
+    assert response.text == "[p.1]\nfirst\n\n[p.2]\n(no transcribed lines)\n"
 
 
 def test_document_text_covers_only_reviewed_pages_when_asked(
