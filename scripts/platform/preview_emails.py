@@ -24,11 +24,11 @@ def main() -> int:
     out_dir = Path(sys.argv[1])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    welcome = welcome_email("Ada", "https://nomikos.app", reply_to="hello@nomikos.app")
+    welcome = welcome_email("https://app.nomikos.app", reply_to="hello@nomikos.app")
     welcome.to = "ada@example.com"
 
     signin = signin_notice_email(
-        "Ada", datetime(2026, 10, 11, 9, 30, tzinfo=UTC), "https://nomikos.app"
+        "Ada", datetime(2026, 10, 11, 9, 30, tzinfo=UTC), "https://app.nomikos.app"
     )
     signin.to = "ada@example.com"
 

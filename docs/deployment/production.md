@@ -193,28 +193,38 @@ is wanted.
    `EMAIL_SIGNIN_NOTICES`, `APP_NAME`. Use `NOMIKOS_SECRETS_FILE` for another path.
 4. From your own terminal run `scripts/platform/apply_email_env.sh --check`
    (validates the file, contacts nothing), `--dry-run` (masked plan, contacts
-   nothing), then without flags to apply.
+   nothing), then without flags to apply. `bash tests/platform/test_apply_email_env.sh`
+   runs all three modes against a stub HTTP server, never against Coolify.
 
 Hosts: the API is the Coolify application on `root@65.21.249.167`. The ssh alias
 `nomikos` (95.217.208.209) is the inference box and needs no email variables.
 The script finds the API application in Coolify (name contains `api`, override
-with `APP_NAME`), sets the five variables below through the Coolify REST API, and
-redeploys, which is required because Coolify injects variables at deploy time. It
-never uses ssh. **Unverified against production:** nothing on the Coolify server
+with `APP_NAME`), sets the variables below through the Coolify REST API, and
+redeploys, which is required because Coolify injects variables at deploy time.
+**The redeploy rebuilds from the head of the tracked branch**, so every commit
+pushed there since the last deploy ships too: the script prints the branch and
+commit Coolify reports and waits 5 seconds for ctrl+c before it redeploys. It
+never uses ssh, and the key travels to curl on stdin, never on the command line. **Unverified against production:** nothing on the Coolify server
 has been inspected, so confirm the application and variables in Coolify after the
-first run. Manual fallback: set the five variables by hand in Coolify, Projects,
+first run. Manual fallback: set the variables by hand in Coolify, Projects,
 the API application, Environment Variables, then Redeploy.
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `RESEND_API_KEY` | *(unset)* | Enables sending; when unset, mail is logged, not sent |
 | `EMAIL_FROM` | `Nomikos <no-reply@nomikos.app>` | Sender identity, must use a verified domain |
-| `EMAIL_REPLY_TO` | *(unset)* | Reply-to address on the welcome mail; when unset, the mail invites no reply |
-| `APP_PUBLIC_URL` | `https://nomikos.app` | Link target of the "Open Nomikos" button |
+| `EMAIL_REPLY_TO` | *(unset)* | A mailbox someone reads. Named in both mails when set; when unset, the welcome mail invites no reply, the sign-in notice says to contact the project owner, and the env script does not write it |
+| `APP_PUBLIC_URL` | `https://app.nomikos.app` | The app origin (not the `nomikos.app` landing site): the "Open Nomikos" button and the hosted logo `/email/nomikos-logo.png` |
 | `EMAIL_SIGNIN_NOTICES` | `true` | Set `false` to stop sign-in notices (welcome mail still sends) |
 
 Preview the templates without a key: `python scripts/platform/preview_emails.py <out_dir>`
 renders `welcome.html`, `welcome.txt`, `signin.html`, `signin.txt`.
+
+The welcome mail carries no username (registration is unverified, so it must not
+relay caller text); the sign-in notice greets by username, which registration
+limits to one line without control characters. Logs name the user id, never the
+address: `email_sent id=<resend id> user_id=...` on each send, and
+`email_send_failed ... error=<exception class>` on a failure.
 
 ---
 
@@ -397,6 +407,10 @@ broken critical flow.
 
 `scripts/platform/sql/usage_report.sql` is one read-only report (SELECTs only): accounts, per-user
 activity, content totals, jobs by kind, status and model, job durations, failures, jobs per day and
-database size. Run it from your own terminal with `~/nomikos-usage/usage_report.sh [--days N]`; it
-asks for the SSH password once and saves the output to `~/nomikos-usage/report-<date>.txt`. Use
-`--local <dbname>` to try it against the local Postgres first.
+database size. Run it from your own terminal with `scripts/platform/usage_report.sh [--days N]`;
+it reads the SQL file next to it (`USAGE_SQL` overrides), asks for the SSH password once and saves
+the output to `~/nomikos-usage/report-<date>.txt`. Use `--local <dbname>` to try it against the
+local Postgres first. Read-only is enforced by the database: psql runs with
+`PGOPTIONS='-c default_transaction_read_only=on'`, so a write in the SQL fails; the keyword check
+in the script is only an early refusal. `bash tests/platform/test_usage_report.sh` checks this
+with stub `ssh` and `docker`.

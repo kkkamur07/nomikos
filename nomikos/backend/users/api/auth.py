@@ -92,10 +92,9 @@ async def register(
     )
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
     email_settings = get_email_settings()
-    message = welcome_email(
-        user.username, email_settings.app_public_url, reply_to=email_settings.reply_to
-    )
+    message = welcome_email(email_settings.app_public_url, reply_to=email_settings.reply_to)
     message.to = user.email
+    message.user_id = str(user.id)
     send_in_background(background_tasks, message)
     return _issue_session(response, tokens)
 
@@ -110,11 +109,16 @@ async def login(
 ) -> TokenResponse:
     user, _token = await _auth.login(db, email=body.email, password=body.password)
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
-    if get_email_settings().signin_notices:
+    email_settings = get_email_settings()
+    if email_settings.signin_notices:
         message = signin_notice_email(
-            user.username, datetime.now(UTC), get_email_settings().app_public_url
+            user.username,
+            datetime.now(UTC),
+            email_settings.app_public_url,
+            reply_to=email_settings.reply_to,
         )
         message.to = user.email
+        message.user_id = str(user.id)
         send_in_background(background_tasks, message)
     return _issue_session(response, tokens)
 
