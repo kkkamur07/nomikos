@@ -4,11 +4,11 @@
 
 | `--video` | Output | Length | What it shows |
 |---|---|---|---|
-| `tour` | `nomikos-whats-new.mp4`, `captions-whats-new.md` | about 1:40 | What changed this round, on the seeded Grec 1360 document as the dev user |
-| `explainer` | `nomikos-explainer.mp4`, `captions.md` | about 3:00 | A new user from sign up to export, plus sharing and the public page |
+| `tour` | `nomikos-whats-new.mp4`, `captions-whats-new.md` | under 1:00 | What changed this round, on the seeded Grec 1360 document as the dev user |
+| `explainer` | `nomikos-explainer.mp4`, `captions.md` | under 1:50 | A new user from sign up to export, plus sharing and the public page with its text |
 
 Captions live in `captions.json`. Edit the wording there and re-record. Each caption has to stay under 90
-characters (the script checks) and is held for at least 2.5 seconds.
+characters (the script checks; aim for 8 words) and is held for at least 2.5 seconds.
 
 ## Re-record
 
@@ -24,7 +24,7 @@ $PY scripts/platform/explainer/record_explainer.py --video explainer
 The script refuses to run unless both URLs are on `localhost` or `127.0.0.1`, because its cleanup deletes
 data through the API; pass `--allow-remote` to override, and it prints both URLs before the first request.
 
-Add `--headed` to watch the browser. `NOMIKOS_SLOW_MO` (default 400 ms) sets the pace and `FFMPEG` the
+Add `--headed` to watch the browser. `NOMIKOS_SLOW_MO` (default 150 ms) sets the pace and `FFMPEG` the
 ffmpeg binary (default `/opt/homebrew/bin/ffmpeg`).
 
 Other variables, all optional:
@@ -40,8 +40,6 @@ Other variables, all optional:
 ## What the stack needs
 
 - Seeded with `seed_dev_nomikos.py` and `seed_dev_inference.py` (the pickers list the catalog rows).
-- The dev user is an admin, for the tour's Admin page:
-  `update users set is_admin = true where email = 'dev@example.com';`
 - An inference host that is online. Without one the API refuses every job ("No inference host is available")
   and the job steps fail. A local stack has none, so the recordings used a stand-in cloud device that never
   claims anything; jobs then sit queued, which is what the captions say:
@@ -54,12 +52,19 @@ Other variables, all optional:
 
   Never do this on a stack with a real worker: delete the row after recording.
 
+## The narrator's transcribed document
+
+The explainer shows the editor, the export and the public page on a document Eleni owns, so the public
+page has text. Right after she creates her project, the script copies the seeded Grec 1360 into it through
+the API, in the background while the camera shows the upload: each page image (read with the dev token),
+its lines and their ground truth text. Nothing is generated; it is the seeded data.
+
 ## Re-runs
 
 The script tidies up through the API before it records: it cancels open jobs, deletes regions labelled
-`4v` (or unlabelled) on the first seeded page, deletes Eleni's "Athos Letters" project, and after the tour
-deletes any Segment the numbering demo left behind. The page text edit types back the character it removes,
-so the seeded transcript is unchanged.
+`4v` (or unlabelled) on the first seeded page and deletes Eleni's "Athos Letters" project (with her copy of
+Grec 1360). After the tour it deletes any Segment the numbering demo left behind and cancels the job it
+started.
 
 The explainer registers Eleni through the Register page only when the account does not exist yet; on a
 re-run it shows the login instead. For the Register version again, delete her first:
@@ -74,5 +79,4 @@ before the camera rolls. When a step fails (usually a button that moved or was r
 - Playwright records at 1440x900. An init script adds a fixed caption bar (text kept in `sessionStorage`
   so it survives navigations), a red dot that follows the mouse, and hides the Next.js dev badge.
 - The public page is opened in a second, fresh browser context. The final cut is assembled with ffmpeg:
-  the main recording up to the public link, the fresh context, then the main recording from the closing
-  caption. The uncaptioned lead-in is trimmed. Output is H.264, yuv420p, faststart, no audio.
+  the main recording up to the public link, then the fresh context. The uncaptioned lead-in is trimmed. Output is H.264, yuv420p, faststart, no audio.
