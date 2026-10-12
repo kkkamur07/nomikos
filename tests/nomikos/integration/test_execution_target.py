@@ -44,6 +44,7 @@ from tests.nomikos.integration.helpers import (
     assert_api_error,
     documents_url,
     pair_inference_device,
+    seed_transcription_model,
     user_id_for_email,
 )
 
@@ -280,7 +281,9 @@ def test_a_transcription_announces_its_host_at_submission_too(
     assert drawn.status_code == 201, drawn.text
 
     response = client.post(
-        f"{base}/{document_id}/parts/{part_id}/transcribe", headers=owner_headers
+        f"{base}/{document_id}/parts/{part_id}/transcribe",
+        headers=owner_headers,
+        json={"model_id": seed_transcription_model()},
     )
 
     assert response.status_code == 202, response.text

@@ -153,7 +153,14 @@ describe("PageEditorPlaceholderPage side by side", () => {
       screen
         .getByRole("button", { name: /^Zoom \d+%/ })
         .getAttribute("aria-label");
-    await waitFor(() => expect(zoomLabel()).not.toMatch(/^Zoom 100%/));
+    // The button animates the step (100%, 101%, 105%, ... 113%), so read the
+    // zoom once it has stopped moving, not on the first frame that left 100%.
+    await waitFor(async () => {
+      const before = zoomLabel();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(before).not.toMatch(/^Zoom 100%/);
+      expect(zoomLabel()).toBe(before);
+    });
     const zoomed = zoomLabel();
 
     fireEvent.keyDown(window, { key: "t" });
