@@ -42,6 +42,7 @@ from tests.nomikos.integration.helpers import (
     documents_url,
     pair_inference_device,
     return_pooled_connections_before_leaving,  # noqa: F401 - autouse fixture
+    seed_transcription_model,
     user_id_for_email,
 )
 
@@ -259,7 +260,7 @@ def test_transcribing_unpaired_pages_skips_pages_that_already_carry_text(
     response = client.post(
         _batch_url(project_id, document_id, "jobs/transcribe"),
         headers=owner_headers,
-        json={"scope": "unpaired"},
+        json={"scope": "unpaired", "model_id": seed_transcription_model()},
     )
 
     assert response.status_code == 202, response.text
@@ -286,7 +287,7 @@ def test_transcribing_every_page_still_leaves_out_the_pages_with_no_segments(
     response = client.post(
         _batch_url(project_id, document_id, "jobs/transcribe"),
         headers=owner_headers,
-        json={"scope": "all"},
+        json={"scope": "all", "model_id": seed_transcription_model()},
     )
 
     assert response.status_code == 202, response.text
@@ -504,7 +505,7 @@ def test_the_counts_match_what_the_matching_scope_queues(
     transcribed = client.post(
         _batch_url(project_id, document_id, "jobs/transcribe"),
         headers=owner_headers,
-        json={"scope": "unpaired"},
+        json={"scope": "unpaired", "model_id": seed_transcription_model()},
     )
 
     assert segmented.status_code == 202, segmented.text
