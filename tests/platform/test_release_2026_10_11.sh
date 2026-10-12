@@ -142,6 +142,8 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.exists(os.path.join(state, "patched")):
                 open(os.path.join(state, "deployed"), "w").close()
             return self._send(200, {"number": 165, "merged": True})
+        if self.command == "GET" and p == "/repos/ratelimited/pulls/165":
+            return self._send(403, {"message": "API rate limit exceeded"})
         if self.command == "GET" and p == "/health":
             return self._send(200, {"status": "ok"})
         self._send(404, {"message": "not found"})
@@ -228,7 +230,7 @@ run() { # run NAME [ARGS]: output to $WORK/NAME.out, exit code to $WORK/NAME.rc
   RELEASE_ALLOW_NONROOT=1 NOMIKOS_SECRETS_FILE="${SECRETS_OVERRIDE:-$SECRETS}" RELEASE_LOG="$WORK/release.log" \
     DOCKER_BIN="$WORK/bin/docker" REAL_DOCKER="$(command -v docker)" FAKE_STATE="$WORK/state" \
     FAKE_VENV="$MAIN_VENV" FAKE_REPO="$ROOT" \
-    GITHUB_API_URL="http://127.0.0.1:$PORT/repos/kkkamur07/nomikos/pulls/165" \
+    GITHUB_API_URL="${GITHUB_OVERRIDE:-http://127.0.0.1:$PORT/repos/kkkamur07/nomikos/pulls/165}" \
     PUBLIC_HEALTH_URL="http://127.0.0.1:$PORT/health" \
     PG_CONTAINER=nomikos-db-1 PG_DATABASE="$DB" PG_USER=postgres \
     MERGE_POLL_SECONDS=1 DEPLOY_POLL_SECONDS=1 DEPLOY_TIMEOUT_SECONDS=20 \
@@ -303,6 +305,11 @@ check "--from-phase 6 exits 0 (rc $(rc resume))" [ "$(rc resume)" = 0 ]
 check "--from-phase 6 runs phase 6" grep -q "Phase 6: renumber lines" "$WORK/resume.out"
 check "--from-phase 6 skips phase 2" bash -c "! grep -q 'Phase 2:' '$WORK/resume.out'"
 [ "$(rc resume)" = 0 ] || show resume
+
+echo "== merge gate on a GitHub rate limit"
+GITHUB_OVERRIDE="http://127.0.0.1:$PORT/repos/ratelimited/pulls/165" run ratelimit --yes --keep-secrets --from-phase 4
+check "403 prints the rate limit message" grep -q "GitHub rate limit reached" "$WORK/ratelimit.out"
+check "403 with no Enter available exits 7 (rc $(rc ratelimit))" [ "$(rc ratelimit)" = 7 ]
 
 echo "== secrets file removed without --keep-secrets"
 cp -p "$SECRETS" "$WORK/release-copy.env"

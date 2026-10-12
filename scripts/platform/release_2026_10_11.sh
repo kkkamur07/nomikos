@@ -40,7 +40,9 @@ LOG_FILE="${RELEASE_LOG:-/root/nomikos-release-2026-10-11.log}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com/repos/kkkamur07/nomikos/pulls/165}"
 PUBLIC_HEALTH_URL="${PUBLIC_HEALTH_URL:-https://api.nomikos.app/health}"
-MERGE_POLL_SECONDS="${MERGE_POLL_SECONDS:-20}"
+# 60 s: unauthenticated GitHub API calls are limited to 60 per hour per IP, so a
+# faster poll hits 403 within the hour and falls back to "press Enter".
+MERGE_POLL_SECONDS="${MERGE_POLL_SECONDS:-60}"
 MERGE_TIMEOUT_SECONDS="${MERGE_TIMEOUT_SECONDS:-3600}"
 DEPLOY_POLL_SECONDS="${DEPLOY_POLL_SECONDS:-15}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-1200}"
@@ -371,14 +373,14 @@ sys.exit(0 if all(have.get(k) == os.environ[k] for k in os.environ["KEYS"].split
 if env_matches; then ENV_STATE="already applied"; else ENV_STATE="will write"; fi
 
 GH_STATE=unknown
-gh_merged() { # prints true | false | unavailable
+gh_merged() { # prints true | false | ratelimited | unavailable
   local code
   code=$(curl -sS -m 15 -H 'Accept: application/vnd.github+json' -o "$WORK/pr.json" -w '%{http_code}' "$GITHUB_API_URL" 2>/dev/null) || code=000
-  if [ "$code" = 200 ]; then
-    python3 -c 'import json, sys; print("true" if json.load(open(sys.argv[1])).get("merged") else "false")' "$WORK/pr.json" 2>/dev/null || echo unavailable
-  else
-    echo unavailable
-  fi
+  case "$code" in
+    200) python3 -c 'import json, sys; print("true" if json.load(open(sys.argv[1])).get("merged") else "false")' "$WORK/pr.json" 2>/dev/null || echo unavailable ;;
+    403|429) echo ratelimited ;;
+    *) echo unavailable ;;
+  esac
 }
 GH_STATE=$(gh_merged)
 
@@ -547,7 +549,8 @@ if [ "$FROM_PHASE" -le 4 ]; then
     while :; do
       state=$(gh_merged)
       if [ "$state" = true ]; then echo "PR #165 is merged."; break; fi
-      if [ "$state" = unavailable ]; then
+      if [ "$state" = ratelimited ] || [ "$state" = unavailable ]; then
+        [ "$state" = unavailable ] || echo "GitHub rate limit reached."
         echo "GitHub API not readable ($GITHUB_API_URL). Press Enter once PR #165 is merged."
         read -r _ || die 7 "no input; re-run with --from-phase 5 after the merge"
         echo "continuing as merged"

@@ -461,6 +461,8 @@ Coolify and GitHub, and a fake docker.
 Manual fallback, the same steps by hand (as the PR #165 body lists them), against the production
 database with `psql -v ON_ERROR_STOP=1`, before the merge:
 
+0. `alembic_version` must read `007_line_character_confidences` (at `006_public_sharing`, add `line_transcriptions.character_confidences JSONB` and stamp 007 first)
+   and the catalog must already hold the 2026-09-20 rows (`catalog/README.md`, section Order on production)
 1. `scripts/platform/catalog/2026-10-11_model_names_v2.sql` (once; it refuses a second run)
 2. `scripts/platform/sql/2026-10-11_user_is_admin.sql`, then
    `UPDATE users SET is_admin = true WHERE lower(email) = lower('<you>');`

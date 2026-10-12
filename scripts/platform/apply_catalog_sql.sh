@@ -16,8 +16,10 @@
 #   SSH_BIN      ssh binary, used for every ssh call (default ssh)
 #   PG_CONTAINER Postgres container name (default: discovered by image name)
 #   PG_DATABASE  production database name (default: detected by content)
-#   MUST_HAVE    model names that identify production
-#                (default "greek-calamari-v1 armenian-calamari-v1")
+#   MUST_HAVE    registry ids that identify production: each one must appear
+#                as artifact_ref 'registry://<id>...' in inference_models
+#                (default "greek-calamari-v1 armenian-calamari-v1"). artifact_ref
+#                survives the 2026-10-11 display-name rename; names do not.
 set -euo pipefail
 
 SSH_TARGET="${SSH_TARGET:-root@65.21.249.167}"
@@ -46,8 +48,8 @@ Exit codes:
   0  success (look-only, rows-only, or applied)
   1  usage error (unknown flag, missing file)
   2  no Postgres container on this host
-  3  no database holds the known models
-  4  more than one database holds the known models
+  3  no database holds the known registry ids (artifact_ref registry://<id>...)
+  4  more than one database holds the known registry ids
   5  refusing an unsafe container, database, or user name
 EOF
 }
@@ -121,11 +123,19 @@ for candidate in "${CANDIDATES[@]}"; do
 done
 
 # Rows that identify production (present since 2026-09-07): the production
-# database must already hold these model names.
+# database must already hold a row whose artifact_ref is registry://<id>...
+# for every registry id in MUST_HAVE (the same test as artifact_ref like
+# 'registry://<id>%'). Display names change; artifact_ref does not.
 holds_must_have() {
-  names="$1"
-  [ -n "$names" ] || return 1
-  for m in $MUST_HAVE; do echo " $names " | grep -q " $m " || return 1; done
+  refs="$1"
+  [ -n "$refs" ] || return 1
+  for m in $MUST_HAVE; do
+    found=0
+    for r in $refs; do
+      case "$r" in "registry://$m"*) found=1; break ;; esac
+    done
+    [ "$found" -eq 1 ] || return 1
+  done
   return 0
 }
 
@@ -135,14 +145,14 @@ if [ -n "${PG_DATABASE:-}" ]; then
   C="${CANDIDATES[0]}"
   U="$(run "docker exec \"$C\" printenv POSTGRES_USER" 2>/dev/null || echo postgres)"
   check_safe_name "user" "$U"
-  NAMES="$(run "docker exec \"$C\" psql -U \"$U\" -d \"$PG_DATABASE\" -Atc \"select name from inference_models order by name\"" 2>/dev/null | tr '\n' ' ' | sed 's/ $//' || true)"
+  REFS="$(run "docker exec \"$C\" psql -U \"$U\" -d \"$PG_DATABASE\" -Atc \"select artifact_ref from inference_models order by artifact_ref\"" 2>/dev/null | tr '\n' ' ' | sed 's/ $//' || true)"
   echo "== candidate: container=$C user=$U db=$PG_DATABASE"
-  echo "   inference_models: $NAMES"
-  holds_must_have "$NAMES" || { echo "Database $PG_DATABASE does not hold the known models ($MUST_HAVE). Not changing anything."; exit 3; }
+  echo "   inference_models artifact_refs: $REFS"
+  holds_must_have "$REFS" || { echo "Database $PG_DATABASE does not hold the known registry ids ($MUST_HAVE). Not changing anything."; exit 3; }
   FOUND="$C|$U|$PG_DATABASE"
 else
   # 2. Pick the database that really is production: it must already hold the
-  # known models. More than one match is a refusal, not a guess.
+  # known registry ids. More than one match is a refusal, not a guess.
   MATCHES=""
   for c in "${CANDIDATES[@]}"; do
     U="$(run "docker exec \"$c\" printenv POSTGRES_USER" 2>/dev/null || echo postgres)"
@@ -150,23 +160,23 @@ else
     DBS="$(run "docker exec \"$c\" psql -U \"$U\" -d postgres -Atc \"select datname from pg_database where not datistemplate\"" 2>/dev/null || true)"
     for d in $DBS; do
       check_safe_name "database" "$d"
-      NAMES="$(run "docker exec \"$c\" psql -U \"$U\" -d \"$d\" -Atc \"select name from inference_models order by name\"" 2>/dev/null | tr '\n' ' ' | sed 's/ $//' || true)"
-      [ -n "$NAMES" ] || continue
+      REFS="$(run "docker exec \"$c\" psql -U \"$U\" -d \"$d\" -Atc \"select artifact_ref from inference_models order by artifact_ref\"" 2>/dev/null | tr '\n' ' ' | sed 's/ $//' || true)"
+      [ -n "$REFS" ] || continue
       echo "== candidate: container=$c user=$U db=$d"
-      echo "   inference_models: $NAMES"
-      if holds_must_have "$NAMES"; then
+      echo "   inference_models artifact_refs: $REFS"
+      if holds_must_have "$REFS"; then
         MATCHES="${MATCHES}${c}|${U}|${d}
 "
       fi
     done
   done
   if [ -z "$MATCHES" ]; then
-    echo "No database here holds the known models ($MUST_HAVE). Not changing anything."
+    echo "No database here holds the known registry ids ($MUST_HAVE). Not changing anything."
     exit 3
   fi
   COUNT="$(printf '%s' "$MATCHES" | grep -c .)"
   if [ "$COUNT" -gt 1 ]; then
-    echo "More than one database holds the known models ($MUST_HAVE). Refusing to guess:"
+    echo "More than one database holds the known registry ids ($MUST_HAVE). Refusing to guess:"
     printf '%s' "$MATCHES"
     exit 4
   fi
