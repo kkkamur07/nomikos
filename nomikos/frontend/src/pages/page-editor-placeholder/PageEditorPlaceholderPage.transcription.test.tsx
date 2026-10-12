@@ -15,6 +15,11 @@ import {
 describe("PageEditorPlaceholderPage transcription", () => {
   beforeEach(() => {
     resetPageEditorApiMocks();
+    // These tests exercise the segment strip, which only opens when the transcript column is off.
+    localStorage.setItem(
+      "nomikos_page_editor_settings",
+      JSON.stringify({ sideBySide: false }),
+    );
   });
 
   afterEach(async () => {
@@ -56,7 +61,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
     expect(
       await screen.findByText("Pairing progress: 0/2 Lines paired"),
     ).toBeTruthy();
-    fireEvent.click(screen.getByLabelText(/^Segment 1/));
+    fireEvent.click(screen.getByRole("button", { name: /^Segment 1/ }));
     fireEvent.click(screen.getByRole("button", { name: /pair text line 2/i }));
 
     await waitFor(() => {
@@ -95,7 +100,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     fireEvent.change(
       screen.getByLabelText(/approved text for selected segment/i),
       {
@@ -122,7 +127,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
         screen.queryByLabelText(/approved text for selected segment/i),
       ).toBeNull();
     });
-    expect(screen.getByLabelText(/^Segment 1/)).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^Segment 1/ })).toHaveAttribute(
       "aria-current",
       "true",
     );
@@ -183,7 +188,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
     renderPageEditor();
 
     expect(await screen.findByText("ANNOTE PAGE WORKSPACE")).toBeTruthy();
-    fireEvent.click(screen.getByLabelText(/^Segment 1/));
+    fireEvent.click(screen.getByRole("button", { name: /^Segment 1/ }));
 
     const textArea = screen.getByLabelText(
       /ground truth text for selected segment/i,
@@ -297,7 +302,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
     });
 
     renderPageEditor();
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     fireEvent.click(
       screen.getByRole("button", { name: /re-run ocr on segment 1/i }),
     );
@@ -368,7 +373,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     // Ground truth is the open layer and the segment has none yet, so the
     // model output is there to be accepted rather than merely read.
     fireEvent.click(await screen.findByRole("button", { name: /^accept$/i }));
@@ -402,7 +407,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
 
     renderPageEditor();
 
-    fireEvent.click(await screen.findByLabelText(/^Segment 1/));
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
     fireEvent.change(
       screen.getByLabelText(/approved text for selected segment/i),
       { target: { value: "my own reading" } },
@@ -445,7 +450,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
     renderPageEditor();
 
     expect(await screen.findByText("ANNOTE PAGE WORKSPACE")).toBeTruthy();
-    fireEvent.click(screen.getByLabelText(/^Segment 1/));
+    fireEvent.click(screen.getByRole("button", { name: /^Segment 1/ }));
     const textArea = screen.getByLabelText(
       /ground truth text for selected segment/i,
     );

@@ -11,12 +11,12 @@
 /* ─── Toolbar ───────────────────────────────────────────────────── */
 .pe-toolbar {
   flex-shrink: 0;
-  /* One 52px row on a normal desktop window. A narrower window wraps the
-     action clusters onto a second row instead of crushing them into the
-     shell's hidden overflow; the canvas below flexes to absorb the height. */
-  min-height: 52px;
-  flex-wrap: wrap;
-  row-gap: 4px;
+  /* Always one 52px row. Nothing wraps: the title ellipsises, and the action
+     buttons fold to icons and then into "More" as the bar measures itself
+     running out of room (useToolbarCollapse). */
+  height: 52px;
+  flex-wrap: nowrap;
+  min-width: 0;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -51,8 +51,10 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  min-width: 0;
-  flex-shrink: 1;
+  /* Takes the slack and gives it back first. The floor keeps back link,
+     pager and a few characters of the name; below it the actions fold. */
+  flex: 1 1 0;
+  min-width: 13rem;
 }
 .pe-toolbar__back {
   display: inline-flex;
@@ -143,14 +145,12 @@
 }
 
 .pe-toolbar__center {
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 10px;
-  row-gap: 4px;
-  min-width: 0;
 }
 
 /* Desktop-first: below a comfortable desktop width, shed the decorative
@@ -159,9 +159,6 @@
    goes. */
 @media (max-width: 1200px) {
   .pe-kbd {
-    display: none;
-  }
-  .pe-toolbar__progress-track {
     display: none;
   }
   .pe-infstat__sep,
@@ -175,6 +172,10 @@
 .pe-toolbar__stat {
   font-size: 0.8125rem;
   color: var(--text-3);
+  white-space: nowrap;
+}
+.pe-toolbar__stat-sep {
+  color: var(--text-4);
 }
 .pe-toolbar__stat strong {
   color: var(--text);
@@ -320,8 +321,8 @@
 .pe-toolbar__actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  row-gap: 4px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   justify-content: flex-end;
   margin-left: auto;
 }
@@ -492,6 +493,26 @@
   justify-content: space-between;
   gap: 10px;
 }
+/* A checkable item that is on: a 12px tick in the left gutter. Drawn as a
+   mask so it takes the item's text colour in both themes. */
+.pe-dd-item--checked {
+  position: relative;
+  padding-left: 26px;
+}
+.pe-dd-item--checked::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.4l2.5 2.4 5.1-5.6' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.4l2.5 2.4 5.1-5.6' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
 .pe-dd-meta {
   font-size: 0.6875rem;
   color: var(--text-4);
@@ -557,6 +578,11 @@
   width: 260px;
   right: 0;
   left: auto;
+  /* Taller than a laptop screen once every control is shown: it scrolls
+     inside the space below the 52px bar instead of running off the bottom. */
+  max-height: calc(100vh - 52px - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .pe-dd-field--stack {
@@ -1523,6 +1549,7 @@
     animation: none;
   }
   .pe-seg,
+  .pe-job-panel,
   .pe-strip__resizer::after,
   .pe-model-preview [data-conf] {
     transition: none;
@@ -1532,14 +1559,21 @@
 .pe-job-panel {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  bottom: calc(16px + var(--nk-bottom-inset, 0px));
   z-index: 40;
   width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px - var(--nk-bottom-inset, 0px));
+  /* Rides up and down with the strip. Only changes animate, never the
+     first paint. */
+  transition:
+    bottom 120ms ease-out,
+    max-height 120ms ease-out;
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-md);
   box-shadow: 0 12px 40px rgba(13, 31, 60, 0.18);
-  overflow: hidden;
+  overflow-x: hidden;
 }
 .pe-job-panel--collapsed {
   width: auto;
@@ -1974,4 +2008,17 @@
   .pe-pager__of {
     display: none;
   }
+}
+
+/* Linked hover from the text panel: brighten the segment without touching
+   the selection colours, which stay inline on the shape. */
+.pe-segment-shape.is-hovered {
+  filter: brightness(1.2);
+}
+
+/* The split pane stays mounted with the transcript closed (the canvas keeps
+   its zoom); the pane's own display: flex would otherwise beat [hidden]. */
+.pe-split-right[hidden],
+.pe-split-handle[hidden] {
+  display: none;
 }

@@ -258,3 +258,113 @@ def test_measured_pages_read_identically_under_shuffling() -> None:
             permutation = _shuffled(len(quads), seed)
             rerun = [permutation[i] for i in order_lines([quads[i] for i in permutation])]
             assert rerun == base, f"{path.name} seed={seed}"
+
+
+def _two_column_page() -> list[DetectedQuad]:
+    return [
+        _quad(600, 100, 900, 130),
+        _quad(100, 200, 400, 230),
+        _quad(600, 200, 900, 230),
+        _quad(100, 100, 400, 130),
+    ]
+
+
+def test_plain_builder_emits_one_region_per_column_in_reading_order() -> None:
+    from nomikos_inference.architectures.ppocr_det.response import build_ppocr_det_response
+
+    response = build_ppocr_det_response(1000, 500, _two_column_page(), reading_direction="ltr")
+
+    assert [block.external_id for block in response.blocks] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+    ]
+    assert [block.order for block in response.blocks] == [0, 1]
+    assert response.blocks[0].box == {
+        "points": [[100.0, 100.0], [400.0, 100.0], [400.0, 230.0], [100.0, 230.0]]
+    }
+    assert response.blocks[1].box == {
+        "points": [[600.0, 100.0], [900.0, 100.0], [900.0, 230.0], [600.0, 230.0]]
+    }
+    assert [line.block_external_id for line in response.lines] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+        "ppocr-det-region-2",
+    ]
+    assert [line.external_id for line in response.lines] == [
+        "ppocr-det-line-1",
+        "ppocr-det-line-2",
+        "ppocr-det-line-3",
+        "ppocr-det-line-4",
+    ]
+
+
+def test_plain_builder_rtl_reads_the_right_column_first() -> None:
+    from nomikos_inference.architectures.ppocr_det.response import build_ppocr_det_response
+
+    response = build_ppocr_det_response(1000, 500, _two_column_page(), reading_direction="rtl")
+
+    assert [block.external_id for block in response.blocks] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+    ]
+    assert response.blocks[0].box == {
+        "points": [[600.0, 100.0], [900.0, 100.0], [900.0, 230.0], [600.0, 230.0]]
+    }
+    assert response.blocks[1].box == {
+        "points": [[100.0, 100.0], [400.0, 100.0], [400.0, 230.0], [100.0, 230.0]]
+    }
+    assert [line.block_external_id for line in response.lines] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+        "ppocr-det-region-2",
+    ]
+
+
+def test_plain_builder_puts_a_spanning_header_in_a_first_region_of_its_own() -> None:
+    from nomikos_inference.architectures.ppocr_det.response import build_ppocr_det_response
+
+    quads = [_quad(0, 50, 1900, 90)]
+    quads.extend(_quad(100, y, 800, y + 30) for y in (200, 300, 400))
+    quads.extend(_quad(1100, y, 1800, y + 30) for y in (200, 300, 400))
+    response = build_ppocr_det_response(2000, 600, quads, reading_direction="ltr")
+
+    assert layout_lines(quads, direction="ltr").spanning == (0,)
+    assert [block.order for block in response.blocks] == [0, 1, 2]
+    assert [line.block_external_id for line in response.lines] == [
+        "ppocr-det-region-1",
+        "ppocr-det-region-2",
+        "ppocr-det-region-2",
+        "ppocr-det-region-2",
+        "ppocr-det-region-3",
+        "ppocr-det-region-3",
+        "ppocr-det-region-3",
+    ]
+
+
+def test_plain_builder_single_column_yields_one_bounding_block() -> None:
+    from nomikos_inference.architectures.ppocr_det.response import build_ppocr_det_response
+
+    quads = [
+        _quad(100, 300, 500, 330),
+        _quad(100, 100, 500, 130),
+        _quad(100, 200, 500, 230),
+    ]
+    response = build_ppocr_det_response(1000, 500, quads, reading_direction="ltr")
+
+    assert [block.external_id for block in response.blocks] == ["ppocr-det-region-1"]
+    assert response.blocks[0].order == 0
+    assert response.blocks[0].box == {
+        "points": [[100.0, 100.0], [500.0, 100.0], [500.0, 330.0], [100.0, 330.0]]
+    }
+    assert {line.block_external_id for line in response.lines} == {"ppocr-det-region-1"}
+
+
+def test_plain_builder_empty_page_yields_no_blocks() -> None:
+    from nomikos_inference.architectures.ppocr_det.response import build_ppocr_det_response
+
+    response = build_ppocr_det_response(100, 100, [], reading_direction="ltr")
+
+    assert response.blocks == []
+    assert response.lines == []

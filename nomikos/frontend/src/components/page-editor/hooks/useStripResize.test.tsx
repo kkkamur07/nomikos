@@ -1,0 +1,50 @@
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { useStripResize } from "./useStripResize";
+
+const INSET = "--nk-bottom-inset";
+
+afterEach(() => {
+  document.documentElement.style.removeProperty(INSET);
+});
+
+describe("useStripResize bottom inset", () => {
+  it("publishes the strip height and removes it on unmount", () => {
+    const { result, unmount } = renderHook(() => useStripResize(240));
+
+    expect(result.current.height).toBe(240);
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe(
+      "240px",
+    );
+
+    act(() => {
+      result.current.setHeight(300);
+    });
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe(
+      "300px",
+    );
+
+    unmount();
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("");
+  });
+
+  it("publishes 0 while the strip is hidden and the height once shown", () => {
+    const { rerender, unmount } = renderHook(
+      ({ visible }: { visible: boolean }) => useStripResize(240, visible),
+      { initialProps: { visible: false } },
+    );
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("0px");
+
+    rerender({ visible: true });
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe(
+      "240px",
+    );
+
+    rerender({ visible: false });
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("0px");
+
+    unmount();
+    expect(document.documentElement.style.getPropertyValue(INSET)).toBe("");
+  });
+});

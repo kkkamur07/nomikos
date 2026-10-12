@@ -18,13 +18,19 @@ lines is therefore not added: what it covers is already claimed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from shapely.geometry import Polygon
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.core.exceptions import NotFoundError
+from backend.document.application.reading_order import (
+    block_ranks,
+    merge_reading_order,
+    renumber,
+)
+from backend.document.application.regions import box_polygon, region_containing
 from backend.document.infrastructure.orm_models import (
     Block,
     DocumentPart,
@@ -60,6 +66,10 @@ class SegmentMergeSummary:
 # inside a fresh text line's polygon covers a small fraction of it and does not trip this.
 _COVERED_FRACTION = 0.5
 
+# A segmenter's only block covering at least this fraction of the image's width and
+# height is the page, not a region (blla wraps every line in one such block).
+_FULL_PAGE_FRACTION = 0.9
+
 
 class SegmentMergeService:
     """Apply canonical segment output to a part without touching what a human did."""
@@ -94,13 +104,20 @@ class SegmentMergeService:
         # Blocks carry no transcription of their own, so the geometry rule is the whole
         # rule for them. A kept line whose block goes loses only its block_id (SET NULL),
         # which is the state kraken lines without a block are already in.
+        kept_blocks: list[Block] = []
         for block in list(part.blocks):
-            if not block.manual_geometry:
+            if block.manual_geometry:
+                kept_blocks.append(block)
+            else:
                 session.delete(block)
         session.flush()
 
         blocks_by_external_id: dict[str, Block] = {}
         for block_data in canonical_segment.blocks:
+            if len(canonical_segment.blocks) == 1 and _covers_page(block_data.box, part):
+                # Not a region: its lines are stored with no block (ADR 0011), so drawing
+                # a region or a line on the page works as on a page never segmented.
+                continue
             block = Block(
                 part_id=part.id,
                 order=block_data.order,
@@ -111,7 +128,18 @@ class SegmentMergeService:
             blocks_by_external_id[block_data.external_id] = block
         session.flush()
 
+        # A kept line whose block was just deleted joins the fresh region it sits in, so
+        # it is placed among that region's lines rather than after every region.
+        kept_block_ids = {block.id for block in kept_blocks}
+        fresh_blocks = sorted(blocks_by_external_id.values(), key=lambda block: block.order)
+        for line in kept_lines:
+            if line.block_id is not None and line.block_id in kept_block_ids:
+                continue
+            container = region_containing(line.points, fresh_blocks)
+            line.block_id = container.id if container is not None else None
+
         kept_geometry = _polygons(line.points for line in kept_lines)
+        model_lines: list[Line] = []
         added_lines = 0
         skipped_covered_lines = 0
         for line_data in canonical_segment.lines:
@@ -125,6 +153,7 @@ class SegmentMergeService:
                 "job_id": str(job_id),
             }
             line = Line(
+                id=uuid4(),
                 part_id=part.id,
                 block_id=(
                     blocks_by_external_id[line_data.block_external_id].id
@@ -142,6 +171,23 @@ class SegmentMergeService:
                 order=line_data.order,
             )
             session.add(line)
+            model_lines.append(line)
+
+        # Kept lines still carry the numbers of the page they were kept from, and the
+        # segmenter numbers its own lines from 0, so the two collide. One reading order:
+        # the segmenter's sequence, with each kept line placed where it sits (ADR 0008).
+        model_lines.sort(key=lambda line: line.order)
+        kept_lines.sort(key=lambda line: (line.order, line.created_at))
+        # Region-first (ADR 0011): a human's regions and the segmenter's, by block order,
+        # a kept region before a fresh one of the same order since it is older.
+        kept_blocks.sort(key=lambda block: (block.order, block.created_at))
+        block_orders = block_ranks(
+            sorted([*kept_blocks, *blocks_by_external_id.values()], key=lambda b: b.order)
+        )
+        sequence = merge_reading_order(kept_lines, model_lines, block_orders)
+        orders = renumber(sequence, block_orders)
+        for line in sequence:
+            line.order = orders[line.id]
 
         if commit:
             session.commit()
@@ -201,6 +247,22 @@ class SegmentMergeService:
         if part is None:
             raise NotFoundError("Part not found")
         return part
+
+
+def _covers_page(box: dict, part: DocumentPart) -> bool:
+    """Whether ``box`` spans at least ``_FULL_PAGE_FRACTION`` of the image both ways.
+
+    A part with no recorded size cannot be measured, and its block is kept.
+    """
+    points = box_polygon(box)
+    if not points or not part.width or not part.height:
+        return False
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return (
+        max(xs) - min(xs) >= _FULL_PAGE_FRACTION * part.width
+        and max(ys) - min(ys) >= _FULL_PAGE_FRACTION * part.height
+    )
 
 
 def _polygons(point_lists) -> list[Polygon]:

@@ -86,8 +86,11 @@ class AnnotationExportService:
         pending: list[tuple[UUID, int, str, dict]] = []
         unpaired_segments: list[int] = []
         paired_text_orders: set[int] = set()
-        for line in await self._documents.list_part_lines(session, part.id):
-            segment_number = line.order + 1
+        # The segment number is the line's position in reading order, the number every
+        # other surface shows, not ``order + 1``: a page written before orders were kept
+        # dense can carry gaps and duplicates (ADR 0008).
+        lines = await self._documents.list_part_lines(session, part.id)
+        for segment_number, line in enumerate(lines, start=1):
             text = self._ground_truth_text(line)
             if text is None:
                 unpaired_segments.append(segment_number)

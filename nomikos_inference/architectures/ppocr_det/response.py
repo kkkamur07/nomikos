@@ -12,7 +12,11 @@ from nomikos_inference.architectures.ppocr_det.polygons import (
     simplify_outline,
 )
 from nomikos_inference.architectures.ppocr_det.postprocessing import DetectedQuad
-from nomikos_inference.architectures.ppocr_det.reading_order import PageLayout, order_lines
+from nomikos_inference.architectures.ppocr_det.reading_order import (
+    PageLayout,
+    layout_lines,
+    order_lines,
+)
 from nomikos_inference.contracts.common import MAX_SEGMENT_LINES
 from nomikos_inference.contracts.segment import SegmentBlock, SegmentLine, SegmentRunResponse
 
@@ -39,6 +43,49 @@ def synthetic_baseline_points(quad: list[list[float]], fraction: float) -> list[
 
 def _baseline_points(quad: list[list[float]], fraction: float) -> list[list[float]]:
     return synthetic_baseline_points(quad, fraction)
+
+
+def _bounds_box(polys: list[list[list[float]]]) -> dict[str, Any]:
+    """Axis-aligned bounds of several polygons as a box dict."""
+    xs = [float(point[0]) for poly in polys for point in poly]
+    ys = [float(point[1]) for poly in polys for point in poly]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    return {"points": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]}
+
+
+def _regions(
+    line_columns: list[int | None], line_points: list[list[list[float]]]
+) -> tuple[list[SegmentBlock], list[str]]:
+    """Blocks for lines in reading order, and each line's block.
+
+    One block per column, and one per spanning band: a run of consecutive lines that
+    belong to no column (a title, a heading across the columns, a footer). Blocks are
+    numbered by the reading position of their first line, so a title stays first when
+    the page is numbered region by region (ADR 0011).
+    """
+    keys: list[tuple[str, int]] = []
+    band = -1
+    previous: int | None = 0
+    for column in line_columns:
+        if column is None:
+            if previous is not None:
+                band += 1
+            keys.append(("band", band))
+        else:
+            keys.append(("column", column))
+        previous = column
+    external_of: dict[tuple[str, int], str] = {}
+    polys_of: dict[tuple[str, int], list[list[list[float]]]] = {}
+    for key, points in zip(keys, line_points, strict=True):
+        if key not in external_of:
+            external_of[key] = f"ppocr-det-region-{len(external_of) + 1}"
+        polys_of.setdefault(key, []).append(points)
+    blocks = [
+        SegmentBlock(external_id=external_id, order=order, box=_bounds_box(polys_of[key]))
+        for order, (key, external_id) in enumerate(external_of.items())
+    ]
+    return blocks, [external_of[key] for key in keys]
 
 
 def _poly_points_for(
@@ -83,13 +130,17 @@ def build_ppocr_det_response(
     outline_tolerance_px: float = DEFAULT_OUTLINE_TOLERANCE_PX,
     vertical_growth: float = DEFAULT_VERTICAL_GROWTH,
 ) -> SegmentRunResponse:
-    """Number detection quads in reading order under one full-page block.
+    """Number detection quads in reading order, one block per column.
 
     Past ``MAX_SEGMENT_LINES`` the highest scoring quads survive (score ties
     keep input order), then the survivors are ordered; numbering always
-    follows reading order from 1. With ``box_type="poly"`` each line serves
-    its polygon grown across the line and a baseline polyline sampled from
-    the ungrown outline; the quad path is unchanged.
+    follows reading order from 1. Blocks follow ``column_order``: region n
+    is the nth column in reading order, with the bounds of its member
+    lines as its box. Spanning lines read as their own band, in a block of
+    their own; blocks are numbered by their first line's reading position.
+    With ``box_type="poly"`` each line serves its polygon grown across the
+    line and a baseline polyline sampled from the ungrown outline; the quad
+    path is unchanged.
     """
 
     if box_type not in ("quad", "poly"):
@@ -97,6 +148,7 @@ def build_ppocr_det_response(
     ranked = sorted(range(len(quads)), key=lambda i: (-quads[i].score, i))
     survivors = [quads[i] for i in ranked[:MAX_SEGMENT_LINES]]
     reading = order_lines(survivors, direction=reading_direction)
+    layout = layout_lines(survivors, direction=reading_direction)
     per_survivor: list[tuple] = []
     grown_points: list[list[list[float]]] = []
     if box_type == "poly":
@@ -116,22 +168,23 @@ def build_ppocr_det_response(
             outline_tolerance_px=outline_tolerance_px,
         )
 
-    block = SegmentBlock(
-        external_id="ppocr-det-block-1",
-        order=0,
-        box={
-            "points": [
-                [0.0, 0.0],
-                [float(image_width), 0.0],
-                [float(image_width), float(image_height)],
-                [0.0, float(image_height)],
-            ]
-        },
+    spanning = set(layout.spanning)
+    column_of: dict[int, int] = {}
+    for position, column in enumerate(layout.columns):
+        for member in column.members:
+            column_of[member] = position
+    blocks, block_of_line = _regions(
+        [None if index in spanning else column_of[index] for index in reading],
+        [
+            grown_points[index] if box_type == "poly" else survivors[index].points
+            for index in reading
+        ],
     )
 
     lines = []
     for position, quad_index in enumerate(reading):
         quad = survivors[quad_index]
+        block_external_id = block_of_line[position]
         source_metadata: dict[str, Any] = {
             "detector": "pp-ocrv6-det",
             "score": float(quad.score),
@@ -146,7 +199,7 @@ def build_ppocr_det_response(
                 SegmentLine(
                     external_id=f"ppocr-det-line-{position + 1}",
                     order=position,
-                    block_external_id=block.external_id,
+                    block_external_id=block_external_id,
                     baseline={"points": served_baseline},
                     mask=None,
                     points=grown_points[quad_index],
@@ -159,7 +212,7 @@ def build_ppocr_det_response(
             SegmentLine(
                 external_id=f"ppocr-det-line-{position + 1}",
                 order=position,
-                block_external_id=block.external_id,
+                block_external_id=block_external_id,
                 baseline={"points": _baseline_points(quad.points, baseline_fraction)},
                 mask=None,
                 points=[[float(x), float(y)] for x, y in quad.points],
@@ -167,7 +220,7 @@ def build_ppocr_det_response(
                 source_metadata=source_metadata,
             )
         )
-    return SegmentRunResponse(blocks=[block] if lines else [], lines=lines)
+    return SegmentRunResponse(blocks=blocks if lines else [], lines=lines)
 
 
 def build_refined_ppocr_det_response(
@@ -182,14 +235,16 @@ def build_refined_ppocr_det_response(
     noise_policy: str = "flag",
     box_type: str = "quad",
 ) -> SegmentRunResponse:
-    """Number refined lines in reading order under one full-page block.
+    """Number refined lines in reading order, one block per column.
 
     ``items`` are refinement output whose ``members`` name the original quad
     indices, so the body order follows ``order_lines`` over the raw quads:
     each refined line is emitted at its first member's position, initials
     first within their row group, and suspects (unless dropped) after every
     body line, top to bottom. Past ``MAX_SEGMENT_LINES`` the highest
-    scoring items survive, ties broken geometrically.
+    scoring items survive, ties broken geometrically. Blocks follow
+    reading position over the refined lines that landed in each column;
+    spanning lines read in a block of their own per band.
     """
 
     if box_type not in ("quad", "poly"):
@@ -245,21 +300,31 @@ def build_refined_ppocr_det_response(
         )
         emission = body + tail
 
-    block = SegmentBlock(
-        external_id="ppocr-det-block-1",
-        order=0,
-        box={
-            "points": [
-                [0.0, 0.0],
-                [float(image_width), 0.0],
-                [float(image_width), float(image_height)],
-                [0.0, float(image_height)],
-            ]
-        },
-    )
+    spanning = set(layout.spanning)
+    column_of_member: dict[int, int] = {}
+    for column_index, column in enumerate(layout.columns):
+        for member in column.members:
+            column_of_member[member] = column_index
+
+    def _item_column(item: Any) -> int | None:
+        columns = set()
+        for member in item.members:
+            if member in spanning:
+                return None
+            column = column_of_member.get(member)
+            if column is None:
+                return None
+            columns.add(column)
+        if len(columns) == 1:
+            return next(iter(columns))
+        return None
+
+    item_columns = [_item_column(item) for item in emission]
+    blocks, block_of_line = _regions(item_columns, [item.points for item in emission])
 
     lines = []
     for position, item in enumerate(emission):
+        block_external_id = block_of_line[position]
         source_metadata: dict[str, Any] = {
             "detector": "pp-ocrv6-det",
             "score": float(item.score),
@@ -281,7 +346,7 @@ def build_refined_ppocr_det_response(
             SegmentLine(
                 external_id=f"ppocr-det-line-{position + 1}",
                 order=position,
-                block_external_id=block.external_id,
+                block_external_id=block_external_id,
                 baseline={"points": [[float(x), float(y)] for x, y in item.baseline]},
                 mask=None,
                 points=[[float(x), float(y)] for x, y in item.points],
@@ -289,7 +354,7 @@ def build_refined_ppocr_det_response(
                 source_metadata=source_metadata,
             )
         )
-    return SegmentRunResponse(blocks=[block] if lines else [], lines=lines)
+    return SegmentRunResponse(blocks=blocks if lines else [], lines=lines)
 
 
 __all__ = [

@@ -53,13 +53,13 @@ const TRANSCRIBE_MODEL = { id: "htr-1", task: "transcribe", name: "htr" };
 const SEGMENT_A = {
   id: "seg-a",
   task: "segment",
-  name: "kraken",
+  name: "seg-v1",
   artifact_ref: "registry://blla-segment?tag=stable",
 };
 const SEGMENT_B = {
   id: "seg-b",
   task: "segment",
-  name: "pp-ocr",
+  name: "seg-v2",
   artifact_ref: "registry://ppocr-segment?tag=stable",
 };
 

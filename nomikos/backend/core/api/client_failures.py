@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
+from backend.core.api import request_metrics
 from backend.users.api.rate_limit import attributable_client_ip, consume_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -93,5 +94,12 @@ async def report_client_failure(
         body.status if body.status is not None else "-",
         _sanitize_log_field(body.source or "ui", max_len=64),
         _sanitize_log_field(body.message, max_len=200),
+    )
+    # Also kept in memory for the admin dashboard; this route has no table.
+    request_metrics.record_client_failure(
+        path=_sanitize_log_field(body.path, max_len=512) if body.path else None,
+        status=body.status,
+        source=_sanitize_log_field(body.source or "ui", max_len=64),
+        message=_sanitize_log_field(body.message, max_len=200),
     )
     return ClientFailureResponse(accepted=True, ref=correlation_id)

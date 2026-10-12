@@ -38,6 +38,7 @@ vi.mock("../api/client", async (importOriginal) => {
       getPublicLayout: vi.fn(),
       getPublicTranscriptionPdf: vi.fn(),
       getPublicPageXmlBundle: vi.fn(),
+      getPublicDocx: vi.fn(),
     },
   };
 });
@@ -126,6 +127,11 @@ describe("PublicDocumentPage", () => {
     vi.mocked(api.getPublicPageXmlBundle).mockResolvedValue(
       new Blob(["PK"], { type: "application/zip" }),
     );
+    vi.mocked(api.getPublicDocx).mockResolvedValue(
+      new Blob(["PK"], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
   });
 
   it("keeps public chrome and spins only in the content region while loading", async () => {
@@ -196,6 +202,38 @@ describe("PublicDocumentPage", () => {
       "doc-1",
       "share-token-1",
     );
+  });
+
+  it("downloads the page as a Word file with the share token", async () => {
+    const saved: string[] = [];
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        saved.push(this.download);
+      });
+    URL.createObjectURL = vi.fn(() => "blob:docx");
+    URL.revokeObjectURL = vi.fn();
+
+    renderPublicPage();
+    await screen.findByRole("heading", { name: "MS Or. 1445 - Genesis" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Word (.docx)" }),
+    );
+
+    await waitFor(() => {
+      expect(api.getPublicDocx).toHaveBeenCalledWith(
+        "project-1",
+        "doc-1",
+        "part-1",
+        "share-token-1",
+      );
+    });
+    await waitFor(() => {
+      expect(saved).toEqual(["MS_Or._1445_-_Genesis_page_1.docx"]);
+    });
+    click.mockRestore();
   });
 
   it("shows the not-found state rather than spinning forever with no token", () => {

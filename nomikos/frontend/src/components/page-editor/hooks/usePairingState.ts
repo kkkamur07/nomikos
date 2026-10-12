@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type Dispatch,
@@ -23,6 +24,7 @@ import {
 import { segmentNumberFor, segmentsInNumberOrder } from "../segmentNumbering";
 import { statusMessage, type StatusMessage } from "../statusMessage";
 import { groundTruthLayer } from "../../../utils/transcriptionLayerLabel";
+import { useUnsavedTranscriptGuard } from "../PageEditorTranscriptEditor";
 import {
   lineTextForLayer,
   modelLayerIdForPromotion,
@@ -164,37 +166,58 @@ export function usePairingState({
     }
   }
 
-  /** Resolves true when the text was saved, false when the save failed. */
-  async function saveApprovedText(): Promise<boolean> {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) {
-      return false;
+  const lineIds = lines.map((line) => line.id);
+  useUnsavedTranscriptGuard(lineIds);
+
+  /**
+   * Saves one Segment's Ground truth text. The one write path for approved
+   * text: the strip saves the open Segment through it, the transcript column
+   * saves any row. Throws when the save fails and leaves reporting it to the
+   * caller: a transcript row says it in the row, the strip in the page alert.
+   * ``previousText`` is the text the edit started from; the server answers
+   * 409 when it no longer holds it.
+   */
+  async function commitLineText(
+    lineId: string,
+    text: string,
+    previousText?: string,
+  ): Promise<void> {
+    if (!projectId || !documentId || !partId) {
+      throw new Error("Page context is missing. Reload and try again.");
     }
     if (!groundTruthTranscriptionId) {
-      setPairingError("Ground truth transcription layer is not available.");
-      return false;
+      throw new Error("Ground truth transcription layer is not available.");
     }
-    try {
-      const updated = await api.updateGroundTruthLineText(
-        projectId,
-        documentId,
+    const updated = await api.updateGroundTruthLineText(
+      projectId,
+      documentId,
+      groundTruthTranscriptionId,
+      lineId,
+      previousText === undefined
+        ? { text }
+        : { text, previous_text: previousText },
+    );
+    // Read-modify-write after an await: fold into the current segments, not
+    // into the render-time snapshot, or a concurrent edit is reverted.
+    setLines((current) =>
+      withLocalGroundTruth(
+        current,
         groundTruthTranscriptionId,
-        selectedSegmentId,
-        { text: approvedTextDraft },
-      );
-      // Read-modify-write after an await: fold into the current segments, not
-      // into the render-time snapshot, or a concurrent edit is reverted.
-      setLines((current) =>
-        withLocalGroundTruth(
-          current,
-          groundTruthTranscriptionId,
-          selectedSegmentId,
-          updated.text,
-        ),
-      );
-      const pairing = await api.getPagePairing(projectId, documentId, partId);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-      notePartContentChanged();
+        lineId,
+        updated.text,
+      ),
+    );
+    const pairing = await api.getPagePairing(projectId, documentId, partId);
+    setTextLines(pairing.text_lines);
+    setPairingProgress(pairing.pairing_progress);
+    notePartContentChanged();
+  }
+
+  /** Resolves true when the text was saved, false when the save failed. */
+  async function saveApprovedText(): Promise<boolean> {
+    if (!selectedSegmentId) return false;
+    try {
+      await commitLineText(selectedSegmentId, approvedTextDraft);
       setPairingError(null);
       return true;
     } catch (err) {
@@ -204,6 +227,52 @@ export function usePairingState({
       return false;
     }
   }
+
+  /**
+   * Folds the server's current texts into the segments on screen, leaving
+   * geometry alone so an in-flight layout edit is not reverted.
+   */
+  function mergeLineTexts(fresh: LineResponse[]) {
+    const byId = new Map(fresh.map((line) => [line.id, line]));
+    setLines((current) =>
+      current.map((line) => {
+        const match = byId.get(line.id);
+        return match
+          ? { ...line, line_transcriptions: match.line_transcriptions }
+          : line;
+      }),
+    );
+  }
+
+  /** One row's "Reload row": its current text, or null when it is gone. */
+  async function reloadLineText(lineId: string): Promise<LineResponse | null> {
+    if (!projectId || !documentId || !partId) return null;
+    const fresh = await api.listPartLines(projectId, documentId, partId);
+    const match = fresh.find((line) => line.id === lineId) ?? null;
+    if (match) mergeLineTexts([match]);
+    return match;
+  }
+
+  // Back in a tab after a while: pick up text saved from elsewhere, so a row
+  // is edited from what the server holds now. Rows with a draft keep it.
+  const refreshTextsRef = useRef<() => void>(() => {});
+  refreshTextsRef.current = () => {
+    if (!projectId || !documentId || !partId) return;
+    api
+      .listPartLines(projectId, documentId, partId)
+      .then(mergeLineTexts)
+      .catch(() => {
+        // A failed background refresh changes nothing on screen.
+      });
+  };
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") refreshTextsRef.current();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
 
   function selectTranscriptionLayer(event: ChangeEvent<HTMLSelectElement>) {
     const nextLayerId = event.target.value;
@@ -347,7 +416,10 @@ export function usePairingState({
 
   async function applyTranscribeJob(
     job: JobResponse,
-  ): Promise<TranscribeJobResult | null> {
+  ): Promise<TranscribeJobResult | null | "cancelled"> {
+    // `waitForJob` resolves on a cancel, and a cancel from the jobs panel or
+    // another tab is not an AbortError: it is a choice, not a failure.
+    if (job.status === "cancelled") return "cancelled";
     const result = job.result as TranscribeJobResult | null;
     if (result?.transcription_id) {
       return applyTranscribeResult(result);
@@ -408,6 +480,10 @@ export function usePairingState({
         { timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS },
       );
       const result = await applyTranscribeJob(job);
+      if (result === "cancelled") {
+        setOcrMessage(statusMessage("Job cancelled"));
+        return;
+      }
       const hasAnyText =
         result === null || result.lines.some((line) => line.text?.trim());
       setOcrMessage(
@@ -463,6 +539,10 @@ export function usePairingState({
         { timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS },
       );
       const result = await applyTranscribeJob(job);
+      if (result === "cancelled") {
+        setOcrMessage(statusMessage("Job cancelled"));
+        return;
+      }
       const withText =
         result === null
           ? null
@@ -581,6 +661,8 @@ export function usePairingState({
     selectedSegmentNumber,
     selectedTranscriptionLayer,
     pairTextLine,
+    commitLineText,
+    reloadLineText,
     saveApprovedText,
     selectTranscriptionLayer,
     saveGroundTruthText,

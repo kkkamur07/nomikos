@@ -73,6 +73,9 @@ class _Repository:
         # Mirrors the repository contract: the rows the service just wrote back.
         return list(self.persisted)
 
+    async def list_part_blocks(self, _session, _part_id):
+        return []
+
 
 class _StubAccess:
     """The bulk replace is already authorized; what is under test is the payload defaults."""

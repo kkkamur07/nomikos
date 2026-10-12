@@ -1,5 +1,6 @@
 """Auth request/response schemas."""
 
+import unicodedata
 from datetime import datetime
 from uuid import UUID
 
@@ -21,6 +22,18 @@ def _normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
+def _clean_username(value: str) -> str:
+    # The username appears in mail and in the app, so it must be one line:
+    # no control characters (Cc, which covers tab, CR and LF) and no Unicode
+    # line or paragraph separators (Zl, Zp). Surrounding whitespace is dropped.
+    value = value.strip()
+    if not value:
+        raise ValueError("Username must not be blank")
+    if any(unicodedata.category(ch) in {"Cc", "Zl", "Zp"} for ch in value):
+        raise ValueError("Username must be one line without control characters")
+    return value
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     username: str = Field(min_length=1, max_length=150)
@@ -30,6 +43,11 @@ class RegisterRequest(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return _normalize_email(value)
+
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, value: str) -> str:
+        return _clean_username(value)
 
     @field_validator("password")
     @classmethod
@@ -81,6 +99,9 @@ class UserResponse(BaseModel):
     # account already does not need a second round trip to render the setting;
     # written through ``PUT /account/execution-target``.
     prefer_local_inference: bool = False
+    # Whether the client should offer the admin dashboard. Display only: every
+    # ``/admin`` route checks the column itself through ``require_admin``.
+    is_admin: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

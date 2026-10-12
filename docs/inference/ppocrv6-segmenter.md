@@ -95,6 +95,16 @@ caption) reads as its own band between the rows above and below it. Narrow
 quads (marginal notes, page numbers, initials) attach to the nearest column
 without splitting it.
 
+Regions, 2026-10-11: both response builders emit one `SegmentBlock` per
+column in `column_order` sequence, so a two-folio spread reaches the
+platform as two regions. A region id is `ppocr-det-region-<n>` with `order`
+n-1, n counting from 1 in reading order (under `rtl` the right column is
+region 1). A region box is the axis-aligned bounds of its column: member
+quad bounds on the plain path, refined line bounds on the refined path.
+Every line of a column carries its region id; a spanning line carries
+`block_external_id` null and the platform merge treats it as blockless. One
+column yields one bounding region, and an empty page yields no regions.
+
 Sessions are created with `ORT_ENABLE_EXTENDED`, sequential execution, 1
 inter-op thread and 4 intra-op threads: EXTENDED is about 2x faster than
 the ALL default with identical boxes, and 4 threads measured 5.85 s on c13
@@ -380,7 +390,8 @@ default segmenter.
 
 ## Known gaps
 
-* No region or column blocks: every line hangs under one full-page block.
+* Column regions are emitted (2026-10-11): one `ppocr-det-region-<n>` block
+  per column, spanning lines unblocked. The gap below is closed.
 * Refinement merges row fragments that share a row, refusing members
   that overlap by more than 0.1 median heights (those belong to the
   overlap stage). On the benchmark this loses no target line and fixes

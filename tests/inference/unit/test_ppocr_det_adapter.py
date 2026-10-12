@@ -91,7 +91,13 @@ def test_response_validates_and_lines_read_top_to_bottom(
 
     assert isinstance(response, SegmentRunResponse)
     assert len(response.blocks) == 1
-    assert response.blocks[0].external_id == "ppocr-det-block-1"
+    assert response.blocks[0].external_id == "ppocr-det-region-1"
+    assert response.blocks[0].order == 0
+    xs = [point[0] for line in response.lines for point in line.points]
+    ys = [point[1] for line in response.lines for point in line.points]
+    assert response.blocks[0].box == {
+        "points": [[min(xs), min(ys)], [max(xs), min(ys)], [max(xs), max(ys)], [min(xs), max(ys)]]
+    }
     assert len(response.lines) == 2
     assert [line.external_id for line in response.lines] == [
         "ppocr-det-line-1",
@@ -102,7 +108,7 @@ def test_response_validates_and_lines_read_top_to_bottom(
     bottom = np.mean([point[1] for point in response.lines[1].points])
     assert top < bottom
     for line in response.lines:
-        assert line.block_external_id == "ppocr-det-block-1"
+        assert line.block_external_id == "ppocr-det-region-1"
         assert len(line.points) == 4
         assert line.kraken_ceiling is None
         assert line.mask is None

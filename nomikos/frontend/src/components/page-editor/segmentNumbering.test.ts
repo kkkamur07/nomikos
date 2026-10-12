@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  nextSegmentOrder,
   segmentNumberFor,
   segmentNumbersById,
   segmentsInNumberOrder,
+  withServerOrders,
 } from "./segmentNumbering";
 
 function page(...orders: number[]) {
@@ -87,21 +87,31 @@ describe("segmentNumbering", () => {
     expect(segmentNumberFor(page(7), "line-7")).toBe(1);
   });
 
-  it("gives the first Segment drawn on an empty Page order 0", () => {
-    expect(nextSegmentOrder([])).toBe(0);
+  it("takes the shifted orders the server returns after an insert", () => {
+    const local = [...page(0, 1, 2), { id: "new", order: 1 }];
+    const server = [
+      { id: "line-0", order: 0 },
+      { id: "new", order: 1 },
+      { id: "line-1", order: 2 },
+      { id: "line-2", order: 3 },
+    ];
+
+    const synced = withServerOrders(local, server);
+
+    expect(segmentsInNumberOrder(synced).map((s) => s.id)).toEqual([
+      "line-0",
+      "new",
+      "line-1",
+      "line-2",
+    ]);
+    expect(segmentNumberFor(synced, "line-2")).toBe(4);
   });
 
-  it("gives a new Segment an order past every Segment already stored", () => {
-    expect(nextSegmentOrder(page(0))).toBe(1);
-    expect(nextSegmentOrder(page(0, 1, 2))).toBe(3);
-  });
+  it("leaves a Segment the server does not list, and keeps unchanged ones", () => {
+    const local = page(0, 1);
+    const synced = withServerOrders(local, [{ id: "line-1", order: 1 }]);
 
-  it("does not reuse an order freed by a delete", () => {
-    const lines = page(0, 1, 3);
-
-    expect(nextSegmentOrder(lines)).toBe(4);
-    expect(lines.some((line) => line.order === nextSegmentOrder(lines))).toBe(
-      false,
-    );
+    expect(synced[0]).toBe(local[0]);
+    expect(synced[1]).toBe(local[1]);
   });
 });

@@ -43,7 +43,7 @@ class _StubAccess:
 
 
 class _StubRepository:
-    """Only the two row lookups ``patch_part_line`` performs."""
+    """Only the row lookups ``patch_part_line`` and ``delete_part_line`` perform."""
 
     def __init__(self, line: Line | None, block: Block | None) -> None:
         self._line = line
@@ -58,6 +58,12 @@ class _StubRepository:
 
     async def get_block_in_part(self, _session, _part_id, _block_id):
         return self._block
+
+    async def list_part_lines(self, _session, _part_id):
+        return [self._line] if self._line is not None else []
+
+    async def list_part_blocks(self, _session, _part_id):
+        return [self._block] if self._block is not None else []
 
 
 def _service_with(monkeypatch, *, part: DocumentPart, line: Line | None, block: Block | None):

@@ -28,6 +28,10 @@ from backend.document.api.schemas import (
     PublicTranscriptionLayerResponse,
 )
 from backend.document.application.document_catalog import DocumentCatalog
+from backend.document.application.document_export_docx import (
+    DOCX_MEDIA_TYPE,
+    DocumentDocxExportService,
+)
 from infrastructure.db import get_db
 
 #: Every route here answers an unauthenticated caller, so the per-client read budget is
@@ -42,6 +46,7 @@ router = APIRouter(
 _service = DocumentCatalog()
 _transcription_pdf_service = TranscriptionPdfService()
 _page_xml_export_service = PageXmlExportService()
+_docx_export_service = DocumentDocxExportService()
 
 PDF_RESPONSE: dict[int | str, dict[str, Any]] = {
     200: {
@@ -53,6 +58,12 @@ XML_RESPONSE: dict[int | str, dict[str, Any]] = {
     200: {
         "content": {"application/xml": {"schema": {"type": "string", "format": "binary"}}},
         "description": "PAGE XML bytes",
+    }
+}
+DOCX_RESPONSE: dict[int | str, dict[str, Any]] = {
+    200: {
+        "content": {DOCX_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+        "description": "Word transcription of one published page",
     }
 }
 ZIP_RESPONSE: dict[int | str, dict[str, Any]] = {
@@ -158,7 +169,7 @@ async def list_published_transcriptions(
     "/projects/{project_id}/documents/{document_id}/parts/{part_id}/transcription-pdf",
     response_class=Response,
     responses=PDF_RESPONSE,
-    # Charged on top of the router's read budget: this is a full reportlab render over
+    # Charged on top of the router's read budget: this is a full fpdf2 render over
     # every line on the page, not a row read.
     dependencies=[Depends(throttle_public_export)],
 )
@@ -236,4 +247,32 @@ async def get_published_page_xml_bundle(
         content=zip_bytes,
         media_type="application/zip",
         headers={"Content-Disposition": attachment_disposition(bundle.zip_filename)},
+    )
+
+
+@router.get(
+    "/projects/{project_id}/documents/{document_id}/parts/{part_id}/docx",
+    response_class=Response,
+    responses=DOCX_RESPONSE,
+    dependencies=[Depends(throttle_public_export)],
+)
+async def get_published_docx(
+    project_id: UUID,
+    document_id: UUID,
+    part_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    t: str | None = Query(default=None, max_length=MAX_SHARE_TOKEN_LENGTH),
+) -> Response:
+    """One published page's transcription as a Word file."""
+    export = await _docx_export_service.export_part_docx_public(
+        db,
+        project_id,
+        document_id,
+        part_id,
+        token=t,
+    )
+    return Response(
+        content=export.content,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={"Content-Disposition": attachment_disposition(export.filename)},
     )

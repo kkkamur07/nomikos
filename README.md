@@ -61,7 +61,7 @@ Through the pinned runtime registry, Nomikos pages can use:
 | `syriac-ppocr-v1` | Line HTR, Syriac (`syr`) | PP-OCRv6 recognition (ONNX Runtime) | [syriac-htr-ppocr_rec](https://huggingface.co/nomikos-project/syriac-htr-ppocr_rec) |
 | `coptic-calamari-v1` | Line HTR, Coptic (`cop`) | Calamari | [coptic-htr-calamari](https://huggingface.co/nomikos-project/coptic-htr-calamari) |
 
-In the platform pickers the segmenters appear as kraken (blla-segment) and ppocr (ppocr-segment); kraken is preselected and there is no Default entry.
+In the platform pickers the segmenters appear as seg-v1 (blla-segment) and seg-v2 (ppocr-segment); each picker starts on the project's default model, else seg-v1, and there is no Default entry.
 
 All four Calamari HTR checkpoints share one architecture: a 40/60-filter CNN followed by two 200-unit
 bidirectional LSTM layers at line height 48. Read off the Coptic and Syriac checkpoints, whose

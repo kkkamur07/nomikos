@@ -42,6 +42,9 @@ vi.mock("../../api/client", async (importOriginal) => {
     createPartLine: vi.fn(),
     patchPartLine: vi.fn(),
     deletePartLine: vi.fn(),
+    createPartBlock: vi.fn(),
+    patchPartBlock: vi.fn(),
+    deletePartBlock: vi.fn(),
     updateLineGeometry: vi.fn(),
     resetPartLayout: vi.fn(),
     generateTranscriptionPdf: vi.fn(),
@@ -103,6 +106,9 @@ export type MockedEditorApi = {
   createPartLine: ReturnType<typeof vi.fn>;
   patchPartLine: ReturnType<typeof vi.fn>;
   deletePartLine: ReturnType<typeof vi.fn>;
+  createPartBlock: ReturnType<typeof vi.fn>;
+  patchPartBlock: ReturnType<typeof vi.fn>;
+  deletePartBlock: ReturnType<typeof vi.fn>;
   updateLineGeometry: ReturnType<typeof vi.fn>;
   resetPartLayout: ReturnType<typeof vi.fn>;
   generateTranscriptionPdf: ReturnType<typeof vi.fn>;
@@ -350,7 +356,7 @@ export function resetPageEditorApiMocks() {
     },
     model: {
       id: "model-1",
-      name: "kraken-transcribe-default",
+      name: "greek-v1",
       provider: "kraken",
       task: "transcribe",
       artifact_ref: "x",
@@ -387,12 +393,35 @@ export function resetPageEditorApiMocks() {
     reviewed: true,
   });
   mockedApi.deletePartLine.mockResolvedValue(undefined);
+  mockedApi.createPartBlock.mockImplementation(
+    async (_projectId, _documentId, _partId, body) => ({
+      id: "block-new",
+      part_id: "part-1",
+      manual_geometry: true,
+      created_at: "2026-10-11T10:00:00Z",
+      label: null,
+      ...body,
+    }),
+  );
+  mockedApi.patchPartBlock.mockImplementation(
+    async (_projectId, _documentId, _partId, blockId, body) => ({
+      id: blockId,
+      part_id: "part-1",
+      order: 0,
+      box: { points: [] },
+      manual_geometry: true,
+      created_at: "2026-10-11T10:00:00Z",
+      label: null,
+      ...body,
+    }),
+  );
+  mockedApi.deletePartBlock.mockResolvedValue(undefined);
   mockedApi.createPartLine.mockImplementation(
     async (_projectId, _documentId, _partId, body) => ({
-      id: `line-${body.order + 1}`,
+      id: `line-${(body.order ?? 0) + 1}`,
       part_id: "part-1",
       block_id: body.block_id ?? null,
-      order: body.order,
+      order: body.order ?? 0,
       kind: body.kind,
       points: body.points,
       baseline: body.baseline ?? { points: body.points },

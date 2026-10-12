@@ -3,12 +3,14 @@
  *
  * The report is a measurement of the page as it stands, so almost every
  * assertion here is about it being *discarded*: after an apply, after a failed
- * apply, and when the panel closes. A stale report is worse than none, because
+ * apply, and when the page or its lines change. Closing the panel alone keeps
+ * it, so the Workflow menu can show the finding count. A stale report is worse than none, because
  * every row in it is a button offering a fix the server will refuse.
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { LineResponse } from "../../../api/client";
 import { useSegmentHealth } from "./useSegmentHealth";
 
 const getSegmentHealth = vi.fn();
@@ -45,18 +47,23 @@ function report(findings = 0) {
   };
 }
 
+const LINES: LineResponse[] = [];
+
+type Props = { isOpen: boolean; partId?: string; lines?: LineResponse[] };
+
 function setup(open = true) {
   const setLines = vi.fn();
   const view = renderHook(
-    ({ isOpen }: { isOpen: boolean }) =>
+    ({ isOpen, partId = "part-1", lines = LINES }: Props) =>
       useSegmentHealth({
         projectId: "project-1",
         documentId: "document-1",
-        partId: "part-1",
+        partId,
         open: isOpen,
+        lines,
         setLines,
       }),
-    { initialProps: { isOpen: open } },
+    { initialProps: { isOpen: open } as Props },
   );
   return { ...view, setLines };
 }
@@ -107,13 +114,45 @@ describe("useSegmentHealth", () => {
     expect(result.current.pending).toBeNull();
   });
 
-  it("forgets the report when the panel closes", async () => {
+  it("keeps the report after the panel closes, for the menu's count", async () => {
+    getSegmentHealth.mockResolvedValue(report(7));
     const { result, rerender } = setup();
     await waitFor(() => expect(result.current.report).not.toBeNull());
 
     rerender({ isOpen: false });
 
-    await waitFor(() => expect(result.current.report).toBeNull());
+    expect(result.current.report?.finding_count).toBe(7);
+  });
+
+  it("forgets a kept report once the lines change", async () => {
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.report).not.toBeNull());
+    rerender({ isOpen: false });
+    expect(result.current.report).not.toBeNull();
+
+    rerender({ isOpen: false, lines: [{ id: "line-9" } as LineResponse] });
+
+    expect(result.current.report).toBeNull();
+  });
+
+  it("forgets a kept report on a page turn", async () => {
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.report).not.toBeNull());
+    rerender({ isOpen: false });
+
+    rerender({ isOpen: false, partId: "part-2" });
+
+    expect(result.current.report).toBeNull();
+  });
+
+  it("reads the page again when the panel reopens", async () => {
+    const { result, rerender } = setup();
+    await waitFor(() => expect(result.current.report).not.toBeNull());
+    rerender({ isOpen: false });
+
+    rerender({ isOpen: true });
+
+    await waitFor(() => expect(getSegmentHealth).toHaveBeenCalledTimes(2));
   });
 
   it("spins the row belonging to the finding, not the page", async () => {

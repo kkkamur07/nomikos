@@ -7,10 +7,13 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
+  type Ref,
+  type RefObject,
 } from "react";
 import {
   TransformComponent,
   TransformWrapper,
+  type ReactZoomPanPinchContentRef,
   type ReactZoomPanPinchRef,
 } from "react-zoom-pan-pinch";
 import type {
@@ -32,7 +35,11 @@ import type { PageEditorCanvasSettings } from "./pageEditorSettings";
 import { segmentNumbersById, segmentsInNumberOrder } from "./segmentNumbering";
 import { resetPanVelocityTracking } from "../../utils/zoomPanVelocity";
 import { useZoomLayerHint } from "../../utils/zoomLayerHint";
-import { PageEditorCanvasIsland } from "./PageEditorCanvasIsland";
+import {
+  PageEditorCanvasIsland,
+  type DrawTool,
+} from "./PageEditorCanvasIsland";
+import { regionName } from "./regions";
 import { useSmoothWheelZoom } from "./useSmoothWheelZoom";
 
 const ZOOM_ANIMATION_MS = 220;
@@ -49,6 +56,30 @@ const FIT_PADDING_PX = 24;
 const VERTEX_DRAG_THRESHOLD_PX = 3;
 /** A press that travels this far (screen px) is a pan, not a click. */
 const PAN_CLICK_THRESHOLD_PX = 4;
+/** Animation for a programmatic "bring this segment into view" request. */
+const FOCUS_ANIMATION_MS = 200;
+
+/**
+ * The typings claim the ref carries `state`, but at runtime it is undefined.
+ * The live transform lives at `instance.transformState`.
+ */
+function currentScale(viewport: ReactZoomPanPinchRef): number {
+  const live = viewport as unknown as {
+    instance?: { transformState?: { scale?: number } };
+    state?: { scale?: number };
+  };
+  return live.instance?.transformState?.scale ?? live.state?.scale ?? 1;
+}
+
+/** Write through to an optional forwarded ref without disturbing the local one. */
+function assignRef<T>(ref: Ref<T> | undefined, value: T): void {
+  if (!ref) return;
+  if (typeof ref === "function") {
+    ref(value);
+  } else {
+    (ref as RefObject<T | null>).current = value;
+  }
+}
 
 type CanvasSurfaceProps = {
   imageUrl: string;
@@ -59,6 +90,8 @@ type CanvasSurfaceProps = {
   lines: LineResponse[];
   selectedSegmentId: string | null;
   pairedSegmentIds: Set<string>;
+  hoveredSegmentId?: string | null;
+  onHoverSegment?: (lineId: string | null) => void;
   drawingRectangle: boolean;
   drawingPolygon: boolean;
   draftStart: LinePoint | null;
@@ -75,6 +108,9 @@ type CanvasSurfaceProps = {
   onPolygonComplete: () => void;
   onSelectLine: (lineId: string) => void;
   onSelectSegment: (lineId: string) => void;
+  /** The region (block) picked on the canvas, ADR 0011. */
+  selectedRegionId?: string | null;
+  onSelectRegion?: (regionId: string) => void;
   segmentVertexEditEnabled: boolean;
   /**
    * Space is held, so the pointer belongs to the pan gesture no matter which
@@ -106,6 +142,8 @@ function CanvasSurfaceInner({
   lines,
   selectedSegmentId,
   pairedSegmentIds,
+  hoveredSegmentId,
+  onHoverSegment,
   drawingRectangle,
   drawingPolygon,
   draftStart,
@@ -123,6 +161,8 @@ function CanvasSurfaceInner({
   onPolygonComplete,
   onSelectLine,
   onSelectSegment,
+  selectedRegionId = null,
+  onSelectRegion,
   segmentVertexEditEnabled,
   suppressBaselineSegmentId,
   vertexEditPoints,
@@ -285,19 +325,67 @@ function CanvasSurfaceInner({
         }}
       >
         {settings.showLayoutBlocks &&
-          layout.blocks.map((block) => (
-            <polygon
-              key={block.id}
-              aria-label={`Block ${block.id}`}
-              points={points(block.box)}
-              fill="rgba(216, 199, 161, 0.08)"
-              stroke="#d8c7a1"
-              strokeWidth={strokeWidth(1.2)}
-            />
-          ))}
+          layout.blocks.map((block) => {
+            const regionPoints = normalizeGeometryPoints(block.box);
+            const selected = block.id === selectedRegionId;
+            const name = regionName(block, layout.blocks);
+            const labelSize = Math.max(14, canvasMax / 70);
+            const labelX = regionPoints.length
+              ? Math.min(...regionPoints.map(([x]) => x))
+              : 0;
+            const labelY = regionPoints.length
+              ? Math.min(...regionPoints.map(([, y]) => y))
+              : 0;
+            const selectable = !drawingRectangle && !drawingPolygon;
+            return (
+              <g key={block.id}>
+                <polygon
+                  role="button"
+                  tabIndex={selectable ? 0 : -1}
+                  aria-label={`Region ${name}`}
+                  aria-current={selected ? "true" : undefined}
+                  points={points(block.box)}
+                  fill={
+                    selected
+                      ? "rgba(37, 99, 235, 0.08)"
+                      : "rgba(216, 199, 161, 0.08)"
+                  }
+                  stroke={selected ? "#2563eb" : "#b8a06a"}
+                  strokeWidth={strokeWidth(selected ? 2.2 : 1.4)}
+                  strokeDasharray={`${strokeWidth(8)},${strokeWidth(4)}`}
+                  style={selectable ? { cursor: "pointer" } : undefined}
+                  onClick={(event) => {
+                    if (!selectable || panOverride) return;
+                    event.stopPropagation();
+                    onSelectRegion?.(block.id);
+                  }}
+                  onKeyDown={(event) =>
+                    activateWithKeyboard(event, () =>
+                      onSelectRegion?.(block.id),
+                    )
+                  }
+                />
+                <text
+                  aria-hidden="true"
+                  x={labelX + labelSize * 0.4}
+                  y={labelY + labelSize * 1.2}
+                  fontSize={labelSize}
+                  fontWeight={600}
+                  fill={selected ? "#1d4ed8" : "#7a6531"}
+                  stroke="rgba(255, 255, 255, 0.9)"
+                  strokeWidth={labelSize / 6}
+                  paintOrder="stroke"
+                  style={{ pointerEvents: "none", userSelect: "none" }}
+                >
+                  {name}
+                </text>
+              </g>
+            );
+          })}
         {orderedLines.map((line) => {
           const selected = line.id === selectedSegmentId;
           const paired = pairedSegmentIds.has(line.id);
+          const hovered = line.id === hoveredSegmentId;
           const fill = selected
             ? segmentFill(180, 0, 0)
             : paired
@@ -312,14 +400,17 @@ function CanvasSurfaceInner({
             selected && vertexEditPoints && vertexEditPoints.length >= 3
               ? vertexEditPoints
               : line.points;
+          const baseWidth = selected ? 2.2 : paired ? 1.8 : 1.6;
           return (
             <polygon
               key={line.id}
-              className="pe-segment-shape"
+              className={`pe-segment-shape${hovered ? " is-hovered" : ""}`}
               role="button"
               tabIndex={0}
               aria-label={`Segment ${segmentNumbers.get(line.id)}${paired ? ", paired" : ""}`}
               aria-current={selected ? "true" : undefined}
+              onMouseEnter={() => onHoverSegment?.(line.id)}
+              onMouseLeave={() => onHoverSegment?.(null)}
               onClick={(event) => {
                 event.stopPropagation();
                 if (
@@ -347,7 +438,9 @@ function CanvasSurfaceInner({
               points={points(segmentPoints)}
               fill={fill}
               stroke={strokeColor}
-              strokeWidth={strokeWidth(selected ? 2.2 : paired ? 1.8 : 1.6)}
+              strokeWidth={strokeWidth(
+                hovered ? Math.max(baseWidth, 2.4) : baseWidth,
+              )}
               style={
                 selected && segmentVertexEditEnabled
                   ? { pointerEvents: "all", cursor: "copy" }
@@ -516,7 +609,9 @@ type PageEditorCanvasProps = Omit<
 > & {
   /** Tool controls for the on-canvas island. */
   onSelectTool: () => void;
-  onPickDrawMode: (mode: "rectangle" | "polygon") => void;
+  onPickDrawMode: (mode: DrawTool) => void;
+  /** The Region tool is armed: the rectangle drag draws a region, not a Segment. */
+  drawingRegion?: boolean;
   canDelete: boolean;
   onDeleteSelected: () => void;
   selectedVertexIndex: number | null;
@@ -526,6 +621,16 @@ type PageEditorCanvasProps = Omit<
     segmentId: string,
     points: LinePoint[],
   ) => void | Promise<void>;
+  /** Exposes the internal zoom/pan viewport so a sibling pane can link to it. */
+  viewportRef?: Ref<ReactZoomPanPinchRef>;
+  /** Reports zoom/pan state after every transform, for linked viewports. */
+  onTransformed?: (state: {
+    scale: number;
+    positionX: number;
+    positionY: number;
+  }) => void;
+  /** Bring this segment into view. Handled once per nonce, then ignored. */
+  focusRequest?: { segmentId: string; nonce: number } | null;
 };
 
 export function PageEditorCanvas({
@@ -537,12 +642,20 @@ export function PageEditorCanvas({
   lines,
   selectedSegmentId,
   pairedSegmentIds,
-  drawingRectangle,
+  hoveredSegmentId,
+  onHoverSegment,
+  viewportRef,
+  onTransformed,
+  focusRequest,
+  drawingRectangle: drawingSegmentRectangle,
+  drawingRegion = false,
   drawingPolygon,
   draftStart,
   draftPolygon,
   settings,
   segmentVertexEditEnabled,
+  selectedRegionId,
+  onSelectRegion,
   onSelectTool,
   onPickDrawMode,
   canDelete,
@@ -558,6 +671,9 @@ export function PageEditorCanvas({
   onSelectSegment,
   onSegmentPointsChange,
 }: PageEditorCanvasProps) {
+  // The Region tool draws with the same drag as a rectangle Segment; only
+  // what the page does with the finished rectangle differs.
+  const drawingRectangle = drawingSegmentRectangle || drawingRegion;
   const [zoomLevel, setZoomLevel] = useState(1);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const { transforming, markTransforming } = useZoomLayerHint();
@@ -806,6 +922,52 @@ export function PageEditorCanvas({
     );
   };
 
+  /**
+   * Keep the internal viewport ref working while also exposing it to a
+   * sibling pane through `viewportRef`.
+   */
+  const handleViewportRef = (instance: ReactZoomPanPinchContentRef | null) => {
+    const viewport = instance as unknown as ReactZoomPanPinchRef | null;
+    transformRef.current = viewport;
+    assignRef(viewportRef, viewport);
+  };
+
+  /**
+   * Centre the requested segment in the visible canvas at the current scale.
+   * Keyed on the nonce so each request pans once; a missing segment or
+   * viewport is silently ignored.
+   */
+  const focusNonce = focusRequest?.nonce;
+  useEffect(() => {
+    if (!focusRequest) return;
+    const segment = lines.find((line) => line.id === focusRequest.segmentId);
+    if (!segment) return;
+    let segmentPoints = normalizeGeometryPoints(segment.points);
+    if (segmentPoints.length === 0) {
+      segmentPoints = normalizeGeometryPoints(segment.mask);
+    }
+    if (segmentPoints.length === 0) return;
+    const viewport = transformRef.current;
+    const host = hostRef.current;
+    if (!viewport || !host) return;
+    const viewWidth = host.clientWidth;
+    const viewHeight = host.clientHeight;
+    if (!viewWidth || !viewHeight) return;
+    const xs = segmentPoints.map(([x]) => x);
+    const ys = segmentPoints.map(([, y]) => y);
+    const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const scale = currentScale(viewport);
+    viewport.setTransform(
+      viewWidth / 2 - centerX * scale,
+      viewHeight / 2 - centerY * scale,
+      scale,
+      FOCUS_ANIMATION_MS,
+    );
+    // Keyed on the nonce by design: lines and refs are read, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNonce]);
+
   return (
     <div
       className={`pe-canvas-host${spaceHeld ? " pe-canvas-host--panning" : ""}${
@@ -827,7 +989,7 @@ export function PageEditorCanvas({
       }}
     >
       <TransformWrapper
-        ref={transformRef}
+        ref={handleViewportRef}
         initialScale={1}
         minScale={MIN_SCALE}
         maxScale={MAX_SCALE}
@@ -907,20 +1069,27 @@ export function PageEditorCanvas({
             panMovedRef.current = true;
           }
         }}
-        onTransformed={(ref) => {
+        onTransformed={(ref, state) => {
           setZoomLevel(ref.state.scale);
           markTransforming();
+          onTransformed?.({
+            scale: state.scale,
+            positionX: state.positionX,
+            positionY: state.positionY,
+          });
         }}
       >
         {({ resetTransform }) => (
           <>
             <PageEditorCanvasIsland
               tool={
-                drawingRectangle
-                  ? "rectangle"
-                  : drawingPolygon
-                    ? "polygon"
-                    : "none"
+                drawingRegion
+                  ? "region"
+                  : drawingSegmentRectangle
+                    ? "rectangle"
+                    : drawingPolygon
+                      ? "polygon"
+                      : "none"
               }
               onSelectTool={onSelectTool}
               onPickDrawMode={onPickDrawMode}
@@ -951,6 +1120,8 @@ export function PageEditorCanvas({
                 lines={lines}
                 selectedSegmentId={selectedSegmentId}
                 pairedSegmentIds={pairedSegmentIds}
+                hoveredSegmentId={hoveredSegmentId}
+                onHoverSegment={onHoverSegment}
                 drawingRectangle={drawingRectangle}
                 drawingPolygon={drawingPolygon}
                 draftStart={draftStart}
@@ -973,6 +1144,8 @@ export function PageEditorCanvas({
                 onPolygonComplete={onPolygonComplete}
                 onSelectLine={onSelectLine}
                 onSelectSegment={onSelectSegment}
+                selectedRegionId={selectedRegionId}
+                onSelectRegion={onSelectRegion}
                 segmentVertexEditEnabled={segmentVertexEditEnabled}
                 panOverride={spaceHeld}
                 suppressBaselineSegmentId={vertexEdit?.segmentId ?? null}

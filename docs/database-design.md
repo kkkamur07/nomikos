@@ -378,6 +378,10 @@ document part.
   `project_id`, `document_id`, and `document_part_id` are nullable.
 - `overrides` stores JSONB parameter overrides.
 - Scope foreign keys cascade when their owning resource is deleted.
+- A transcribe job sent with no `model_id` and no transcription binding on its
+  part, document or project is refused with 422; the document Workflow menu
+  then offers the catalog's transcription models. Segment jobs keep the
+  worker's default.
 
 ### 3.5 Job tables
 

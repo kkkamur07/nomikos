@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuthSession } from "../../auth/AuthProvider";
-
+import { FeedbackDialog } from "./FeedbackDialog";
+import { useFeedbackButton } from "./useFeedbackButton";
 export type BreadcrumbItem = {
   label: string;
   href?: string;
@@ -24,8 +25,10 @@ export function TopNav({
   onLogout,
 }: TopNavProps) {
   const router = useRouter();
-  const { logout } = useAuthSession();
-
+  const pathname = usePathname();
+  const { logout, isAdmin } = useAuthSession();
+  const { dialogOpen, thanks, openDialog, closeDialog, handleSent } =
+    useFeedbackButton();
   const handleLogout = () => {
     if (onLogout) {
       onLogout();
@@ -76,6 +79,20 @@ export function TopNav({
       <div className="topnav-actions">
         {actions}
         {username && <span className="topnav-user">{username}</span>}
+        {username && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={openDialog}
+          >
+            {thanks ? "Thanks" : "Feedback"}
+          </button>
+        )}
+        {isAdmin === true && (
+          <Link href="/admin" className="btn btn-ghost btn-sm">
+            Admin
+          </Link>
+        )}
         <Link href="/settings" className="btn btn-ghost btn-sm">
           Settings
         </Link>
@@ -87,6 +104,14 @@ export function TopNav({
           Log out
         </button>
       </div>
+      {username && (
+        <FeedbackDialog
+          open={dialogOpen}
+          pagePath={pathname ?? "/"}
+          onClose={closeDialog}
+          onSent={handleSent}
+        />
+      )}
     </nav>
   );
 }

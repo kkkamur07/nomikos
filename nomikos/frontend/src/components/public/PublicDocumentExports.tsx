@@ -24,7 +24,9 @@ export function PublicDocumentExports({
   const downloadFilename = (extension: string) =>
     `${exportFileStem(documentName, partIndex)}.${extension}`;
   const [open, setOpen] = useState(false);
-  const [downloading, setDownloading] = useState<"pdf" | "xml" | null>(null);
+  const [downloading, setDownloading] = useState<"pdf" | "xml" | "docx" | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -90,6 +92,33 @@ export function PublicDocumentExports({
     }
   }
 
+  async function handleDownloadDocx() {
+    setDownloading("docx");
+    try {
+      const blob = await api.getPublicDocx(
+        projectId,
+        documentId,
+        partId,
+        token,
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = globalThis.document.createElement("a");
+      anchor.href = url;
+      anchor.download = downloadFilename("docx");
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setOpen(false);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Failed to download the Word document";
+      toast.error(message);
+    } finally {
+      setDownloading(null);
+    }
+  }
+
   return (
     <div className="pub-exports">
       <button
@@ -127,6 +156,15 @@ export function PublicDocumentExports({
             onClick={() => void handleDownloadXml()}
           >
             {downloading === "xml" ? "Downloading XML…" : "PAGE XML + image"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="pub-exports__item"
+            disabled={downloading !== null}
+            onClick={() => void handleDownloadDocx()}
+          >
+            {downloading === "docx" ? "Downloading Word…" : "Word (.docx)"}
           </button>
         </div>
       )}

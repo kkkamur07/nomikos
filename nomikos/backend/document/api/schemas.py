@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from backend.document.application.part_service import (
@@ -277,12 +277,21 @@ class BlockResponse(BaseModel):
     order: int
     box: dict
     manual_geometry: bool
+    label: str | None = None
     created_at: datetime
 
 
+BlockLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)]
+
+
 class BlockCreateRequest(BaseModel):
-    order: int = Field(ge=0)
+    # Omit it and the server ranks the region by where it is on the page (ADR 0011).
+    order: int | None = Field(default=None, ge=0)
     box: dict
+    label: BlockLabel | None = None
+    # Assign every line of the page whose centre lies inside ``box`` and that is in no
+    # region yet (ADR 0011). The page is renumbered region-first either way.
+    assign_contained: bool = True
 
 
 class BlockPatchRequest(BaseModel):
@@ -299,6 +308,13 @@ class BlockPatchRequest(BaseModel):
 
     order: PatchOrder = None
     box: dict | SkipJsonSchema[None] = None
+    # Nullable column: an explicit ``null`` (or an empty string) clears the label.
+    label: BlockLabel | None = None
+
+    @field_validator("label", mode="after")
+    @classmethod
+    def empty_label_clears(cls, value: str | None) -> str | None:
+        return value or None
 
     @field_validator("order", "box", mode="before")
     @classmethod
@@ -309,7 +325,9 @@ class BlockPatchRequest(BaseModel):
 
 
 class LineCreateRequest(BaseModel):
-    order: int = Field(ge=0)
+    # Omit it and the server places the line by where it sits on the page. Sent, it is
+    # the position to insert at; either way the page is renumbered 0..n-1 (ADR 0008).
+    order: int | None = Field(default=None, ge=0)
     kind: LineGeometryKind = LineGeometryKind.polygon
     points: GeometryPoints
     block_id: UUID | None = None
@@ -428,6 +446,9 @@ class LineTranscriptionPatchRequest(BaseModel):
     # in the module without a cap - so the one route that writes a single line's
     # transcription accepted a body larger than a whole page import.
     text: str = Field(max_length=MAX_LINE_TEXT_CHARS)
+    # The text the edit started from. When sent and the stored text differs,
+    # the save is refused with 409 instead of overwriting another writer.
+    previous_text: str | None = Field(default=None, max_length=MAX_LINE_TEXT_CHARS)
 
 
 class PublicBlockResponse(BaseModel):

@@ -62,7 +62,7 @@ export type JobCompletionEvent = {
   status: JobStatus;
 };
 
-type BackgroundJobsContextValue = {
+export type BackgroundJobsContextValue = {
   jobs: TrackedBackgroundJob[];
   activeCount: number;
   panelExpanded: boolean;
@@ -90,6 +90,7 @@ type BackgroundJobsContextValue = {
 };
 
 const COMPLETED_TTL_MS = 10_000;
+const ALL_TERMINAL_DISMISS_MS = 8_000;
 
 const BackgroundJobsContext = createContext<BackgroundJobsContextValue | null>(
   null,
@@ -295,6 +296,18 @@ export function BackgroundJobsProvider({ children }: { children: ReactNode }) {
       current.filter((job) => !isTerminalJobStatus(job.status)),
     );
   }, []);
+
+  // Once nothing is left running the collapsed pill is a leftover parked over
+  // the editor: clear it after a beat. Expanding the panel, starting a new
+  // job, or any job still running cancels or never starts the timer.
+  useEffect(() => {
+    if (panelExpanded || jobs.length === 0) return;
+    if (jobs.some((job) => !isTerminalJobStatus(job.status))) return;
+    const timer = window.setTimeout(() => {
+      dismissCompleted();
+    }, ALL_TERMINAL_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [jobs, panelExpanded, dismissCompleted]);
 
   const cancelJob = useCallback(
     async (jobId: string) => {

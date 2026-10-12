@@ -20,8 +20,9 @@ lines, flags suspect detections and reads them last). See
 [ppocrv6-segmenter.md](ppocrv6-segmenter.md) for the detector, the refinement
 rules, and the validation.
 
-In the platform pickers the segmenters appear as kraken (blla-segment) and
-ppocr (ppocr-segment); kraken is preselected and there is no Default entry.
+In the platform pickers the segmenters appear as seg-v1 (blla-segment) and
+seg-v2 (ppocr-segment); each picker starts on the project's default model,
+else seg-v1, and there is no Default entry.
 
 ### Calamari HTR
 

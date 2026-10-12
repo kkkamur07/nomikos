@@ -169,6 +169,63 @@ removing `regions` from [`infrastructure/platform/vercel.json`](../../infrastruc
 Vercel-specific Python runtime, bundle-size, and dependency notes:
 [`vercel-platform-api.md`](vercel-platform-api.md).
 
+### Transactional email (Resend)
+
+Registration sends a welcome mail and each login sends a sign-in notice, both
+after the response via FastAPI `BackgroundTasks`. Without a key the platform
+sends nothing and logs instead, so this section is optional until real mail
+is wanted.
+
+1. In [resend.com](https://resend.com), verify the sending domain used in `EMAIL_FROM`.
+2. Create an API key (`re_...`) and a Coolify API token (Coolify: Keys & Tokens,
+   abilities read, write and deploy).
+3. Put the secrets in `~/.nomikos-resend.env` (chmod 600, plain `KEY=VALUE`
+   lines, never committed). Placeholder example:
+
+   ```text
+   RESEND_API_KEY=re_xxxxxxxxxxxx
+   COOLIFY_URL=https://coolify.example.com:8000
+   COOLIFY_TOKEN=1|xxxxxxxxxxxx
+   ```
+
+   `COOLIFY_URL` is the Coolify dashboard origin. Optional overrides in the
+   same file: `EMAIL_FROM`, `EMAIL_REPLY_TO`, `APP_PUBLIC_URL`,
+   `EMAIL_SIGNIN_NOTICES`, `APP_NAME`. Use `NOMIKOS_SECRETS_FILE` for another path.
+4. From your own terminal run `scripts/platform/apply_email_env.sh --check`
+   (validates the file, contacts nothing), `--dry-run` (masked plan, contacts
+   nothing), then without flags to apply. `bash tests/platform/test_apply_email_env.sh`
+   runs all three modes against a stub HTTP server, never against Coolify.
+
+Hosts: the API is the Coolify application on `root@65.21.249.167`. The ssh alias
+`nomikos` (95.217.208.209) is the inference box and needs no email variables.
+The script finds the API application in Coolify (name contains `api`, override
+with `APP_NAME`), sets the variables below through the Coolify REST API, and
+redeploys, which is required because Coolify injects variables at deploy time.
+**The redeploy rebuilds from the head of the tracked branch**, so every commit
+pushed there since the last deploy ships too: the script prints the branch and
+commit Coolify reports and waits 5 seconds for ctrl+c before it redeploys. It
+never uses ssh, and the key travels to curl on stdin, never on the command line. **Unverified against production:** nothing on the Coolify server
+has been inspected, so confirm the application and variables in Coolify after the
+first run. Manual fallback: set the variables by hand in Coolify, Projects,
+the API application, Environment Variables, then Redeploy.
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `RESEND_API_KEY` | *(unset)* | Enables sending; when unset, mail is logged, not sent |
+| `EMAIL_FROM` | `Nomikos <no-reply@nomikos.app>` | Sender identity, must use a verified domain |
+| `EMAIL_REPLY_TO` | *(unset)* | A mailbox someone reads. Named in both mails when set; when unset, the welcome mail invites no reply, the sign-in notice says to contact the project owner, and the env script does not write it |
+| `APP_PUBLIC_URL` | `https://app.nomikos.app` | The app origin (not the `nomikos.app` landing site): the "Open Nomikos" button and the hosted logo `/email/nomikos-logo.png` |
+| `EMAIL_SIGNIN_NOTICES` | `true` | Set `false` to stop sign-in notices (welcome mail still sends) |
+
+Preview the templates without a key: `python scripts/platform/preview_emails.py <out_dir>`
+renders `welcome.html`, `welcome.txt`, `signin.html`, `signin.txt`.
+
+The welcome mail carries no username (registration is unverified, so it must not
+relay caller text); the sign-in notice greets by username, which registration
+limits to one line without control characters. Logs name the user id, never the
+address: `email_sent id=<resend id> user_id=...` on each send, and
+`email_send_failed ... error=<exception class>` on a failure.
+
 ---
 
 ## 3. Optional cloud inference + platform worker (persistent host)
@@ -345,3 +402,83 @@ broken critical flow.
 | `DuplicatePreparedStatementError` | Using pooler URL without `statement_cache_size=0` - already handled in `infrastructure/db.py` |
 | Media 404 | `STORAGE_BACKEND=supabase` but bucket/key wrong |
 | SSE never connects | Expected on Vercel; polling fallback should still complete jobs |
+
+## Usage report
+
+`scripts/platform/sql/usage_report.sql` is one read-only report (SELECTs only): accounts, per-user
+activity, content totals, jobs by kind, status and model, job durations, failures, jobs per day and
+database size. Run it from your own terminal with `scripts/platform/usage_report.sh [--days N]`;
+it reads the SQL file next to it (`USAGE_SQL` overrides), asks for the SSH password once and saves
+the output to `~/nomikos-usage/report-<date>.txt`. Use `--local <dbname>` to try it against the
+local Postgres first. Read-only is enforced by the database: psql runs with
+`PGOPTIONS='-c default_transaction_read_only=on'`, so a write in the SQL fails; the keyword check
+in the script is only an early refusal. `bash tests/platform/test_usage_report.sh` checks this
+with stub `ssh` and `docker`.
+
+## Release 2026-10-11, one script
+
+`scripts/platform/release_2026_10_11.sh` applies the PR #165 release end to end. It runs as root
+on the Coolify host (`root@65.21.249.167`), uses no ssh, and must start BEFORE the merge: production
+never runs alembic, so the schema has to be in place before Coolify deploys the new API.
+
+From your laptop, then on the host:
+
+```bash
+# 1. secrets file (mode 600): RESEND_API_KEY, ADMIN_EMAIL (optional: COOLIFY_URL, COOLIFY_TOKEN,
+#    EMAIL_FROM, EMAIL_REPLY_TO, APP_PUBLIC_URL, EMAIL_SIGNIN_NOTICES, APP_NAME)
+chmod 600 ~/.nomikos-release.env && scp -p ~/.nomikos-release.env root@65.21.249.167:/root/.nomikos-release.env
+# 2. on the host: the release branch
+ssh root@65.21.249.167
+git clone --depth 1 --branch pf/integration https://github.com/kkkamur07/nomikos.git /root/nomikos-release
+# 3. look first, then run (it asks once, then waits for you to merge PR #165)
+bash /root/nomikos-release/scripts/platform/release_2026_10_11.sh --dry-run
+bash /root/nomikos-release/scripts/platform/release_2026_10_11.sh
+```
+
+The Coolify token is optional. Without `COOLIFY_URL` and `COOLIFY_TOKEN` the script never calls
+Coolify: phase 3 prints the env lines (the key masked, copy it from your secrets file) for you to
+paste under the API application > Environment Variables and waits for Enter; phase 5 cannot
+trigger a deploy on a timeout and asks you to press Redeploy, then re-run with `--from-phase 5`;
+the API container is found by "api" in its name or image, or by `api.nomikos.app` in its labels
+(`API_CONTAINER` overrides). Phase 7 still checks `RESEND_API_KEY` inside the container, so a
+forgotten paste shows up there.
+
+What it does, phase by phase (each phase is re-runnable and says "already applied" when there is
+nothing left to do; `--from-phase N` resumes after a failure, `--help` lists the exit codes):
+
+1. Preflight: checks the secrets file, finds the Postgres container, the production database (the one
+   whose catalog has `artifact_ref` `registry://greek-calamari-v1...`) and the API container, reads
+   the Coolify application, prints the plan and asks `Apply? [y/N]` (`--yes` skips the question).
+2. SQL: alembic 007 check (applies 007 by hand at 006), the catalog files, `users.is_admin` plus the
+   promotion of `ADMIN_EMAIL`, `blocks.label`, the `feedback` table, then the full-page block cleanup.
+   Stops unless `alembic_version` reads `010_feedback` afterwards. The catalog rename refuses while a
+   job on `syriac-calamari-v2` is queued or running (exit 5): wait or cancel, then run it again.
+3. Env: writes the email variables on the Coolify application through `apply_email_env.sh --no-deploy`
+   (without a token: prints them for you to paste).
+4. Merge gate: tells you to merge PR #165 and polls the GitHub API (or press Enter once merged).
+5. Deploy wait: waits for a new healthy API container that carries `010_feedback.py`; after 20 minutes
+   it offers to trigger the deploy through the Coolify API (without a token: press Redeploy yourself).
+6. Renumber: `renumber_lines.py` inside the new API container, dry run, then `--apply`.
+7. Verify: alembic version, catalog names, admin flag, feedback table, `RESEND_API_KEY` present in the
+   container, `/health` inside and on `https://api.nomikos.app`; then it shreds the secrets file
+   (`--keep-secrets` keeps it).
+
+Everything it prints also goes to `/root/nomikos-release-2026-10-11.log`, with the key and token
+masked. `bash tests/platform/test_release_2026_10_11.sh` runs it against a scratch database, a stub
+Coolify and GitHub, and a fake docker.
+
+Manual fallback, the same steps by hand (as the PR #165 body lists them), against the production
+database with `psql -v ON_ERROR_STOP=1`, before the merge:
+
+0. `alembic_version` must read `007_line_character_confidences` (at `006_public_sharing`, add `line_transcriptions.character_confidences JSONB` and stamp 007 first)
+   and the catalog must already hold the 2026-09-20 rows (`catalog/README.md`, section Order on production)
+1. `scripts/platform/catalog/2026-10-11_model_names_v2.sql` (once; it refuses a second run)
+2. `scripts/platform/sql/2026-10-11_user_is_admin.sql`, then
+   `UPDATE users SET is_admin = true WHERE lower(email) = lower('<you>');`
+3. `scripts/platform/sql/2026-10-11_block_label.sql`, `scripts/platform/sql/2026-10-11_feedback.sql`,
+   then `scripts/platform/sql/2026-10-11_drop_full_page_blocks.sql`
+4. Env variables: `scripts/platform/apply_email_env.sh` (add `--no-deploy` before the merge)
+5. After the deploy: `renumber_lines.py` in the API container, dry run, then `--apply`
+
+`scripts/platform/apply_email_env.sh` (HTTPS to Coolify) and `scripts/platform/apply_catalog_sql.sh`
+(one ssh connection) remain the laptop-side alternatives for the env and catalog steps.

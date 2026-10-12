@@ -23,6 +23,11 @@ import type { components } from "./schema";
 
 export type TokenResponse = components["schemas"]["TokenResponse"];
 export type UserResponse = components["schemas"]["UserResponse"];
+export type AdminOverview = components["schemas"]["AdminOverview"];
+export type FeedbackCreateRequest =
+  components["schemas"]["FeedbackCreateRequest"];
+export type FeedbackResponse = components["schemas"]["FeedbackResponse"];
+export type FeedbackRow = components["schemas"]["FeedbackRow"];
 export type LoginRequest = components["schemas"]["LoginRequest"];
 export type RegisterRequest = components["schemas"]["RegisterRequest"];
 export type ProjectResponse = components["schemas"]["ProjectResponse"];
@@ -143,7 +148,15 @@ type NarrowGeometry<T> = {
       : T[K];
 };
 
-type BlockResponse = NarrowGeometry<components["schemas"]["BlockResponse"]>;
+export type BlockResponse = NarrowGeometry<
+  components["schemas"]["BlockResponse"]
+>;
+export type BlockCreateRequest = NarrowGeometry<
+  components["schemas"]["BlockCreateRequest"]
+>;
+export type BlockPatchRequest = NarrowGeometry<
+  components["schemas"]["BlockPatchRequest"]
+>;
 export type LineGeometryKind = components["schemas"]["LineGeometryKind"];
 export type LineSource = components["schemas"]["LineSource"];
 export type LineResponse = Omit<
@@ -187,7 +200,7 @@ export type ResetPartLayoutRequest =
  * names and types are the generated ones; the optionality is the editor's own.
  */
 export type LayoutBlockResponse = Pick<BlockResponse, "id"> &
-  Partial<Pick<BlockResponse, "box" | "manual_geometry">>;
+  Partial<Pick<BlockResponse, "box" | "manual_geometry" | "order" | "label">>;
 export type SegmentHealthResponse =
   components["schemas"]["SegmentHealthResponse"];
 export type SegmentSuspectResponse =
@@ -565,6 +578,30 @@ export const api = {
   me: () => apiRequest<UserResponse>("/me"),
 
   /**
+   * `/me` signed with a given token and without auth recovery: a failure here
+   * must never refresh or clear the session, because the caller only uses it
+   * to decide whether to show a link.
+   */
+  meWithoutRecovery: (accessToken: string) =>
+    apiRequest<UserResponse>("/me", {
+      skipAuth: true,
+      skipDedup: true,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+
+  /** Everything the admin dashboard shows; 403 unless `users.is_admin`. */
+  adminOverview: (days: number) =>
+    apiRequest<AdminOverview>(`/admin/overview?days=${days}`),
+
+  /** Newest feedback notes with their authors; 403 unless `users.is_admin`. */
+  listFeedback: (limit = 50) =>
+    apiRequest<FeedbackRow[]>(`/admin/feedback?limit=${limit}`),
+
+  /** Send a short note from anywhere; 429 past 20 notes in an hour. */
+  sendFeedback: (body: FeedbackCreateRequest) =>
+    apiRequest<FeedbackResponse>("/feedback", { method: "POST", body }),
+
+  /**
    * The account-level **host preference** - "use my computer when it is
    * available" - plus what it resolves to right now.
    *
@@ -736,6 +773,15 @@ export const api = {
       `/projects/${projectId}/documents/${documentId}/export/text${reviewedOnlyQuery(reviewedOnly)}`,
     ),
 
+  exportDocumentDocx: (
+    projectId: string,
+    documentId: string,
+    reviewedOnly = false,
+  ) =>
+    fetchBinaryApi(
+      `/projects/${projectId}/documents/${documentId}/export/docx${reviewedOnlyQuery(reviewedOnly)}`,
+    ),
+
   enqueueDocumentSegment: (
     projectId: string,
     documentId: string,
@@ -846,6 +892,46 @@ export const api = {
       `/projects/${projectId}/documents/${documentId}/parts/${partId}/lines`,
     ),
 
+  /**
+   * A region (ADR 0011). With `assign_contained` (the server default) every
+   * unassigned line whose centre lies inside the box joins it, and the page is
+   * renumbered region-first: reload the lines after.
+   */
+  createPartBlock: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    body: BlockCreateRequest,
+  ) =>
+    apiRequest<BlockResponse>(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/blocks`,
+      { method: "POST", body },
+    ),
+
+  patchPartBlock: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    blockId: string,
+    body: BlockPatchRequest,
+  ) =>
+    apiRequest<BlockResponse>(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/blocks/${blockId}`,
+      { method: "PATCH", body },
+    ),
+
+  /** The region's lines stay on the page, in no region. */
+  deletePartBlock: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    blockId: string,
+  ) =>
+    apiRequest<void>(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/blocks/${blockId}`,
+      { method: "DELETE" },
+    ),
+
   createPartLine: (
     projectId: string,
     documentId: string,
@@ -949,6 +1035,11 @@ export const api = {
     fetchBinaryApi(
       `/projects/${projectId}/documents/${documentId}/parts/${partId}/transcription-pdf`,
       { method: "POST" },
+    ),
+
+  exportPartDocx: (projectId: string, documentId: string, partId: string) =>
+    fetchBinaryApi(
+      `/projects/${projectId}/documents/${documentId}/parts/${partId}/docx`,
     ),
 
   getPageXml: (projectId: string, documentId: string, partId: string) =>
@@ -1210,6 +1301,20 @@ export const api = {
     fetchBinaryApi(
       withShareToken(
         `/public/projects/${projectId}/documents/${documentId}/parts/${partId}/page-xml-bundle`,
+        token,
+      ),
+      { skipAuth: true },
+    ),
+
+  getPublicDocx: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    token: string | null,
+  ) =>
+    fetchBinaryApi(
+      withShareToken(
+        `/public/projects/${projectId}/documents/${documentId}/parts/${partId}/docx`,
         token,
       ),
       { skipAuth: true },

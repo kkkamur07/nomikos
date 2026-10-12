@@ -9,10 +9,10 @@ export type NumberableSegment = Pick<LineResponse, "id" | "order">;
 /**
  * The Segments of a Page in Segment number order.
  *
- * `order` alone is not a total order: the backend does not renumber on delete,
- * so stored orders carry gaps, and older Pages can hold duplicates. Ties break
- * on id so every caller walks the same sequence whatever order the API listed
- * the Segments in.
+ * The server keeps `order` dense (ADR 0008), but a Page written before that
+ * can still carry gaps and duplicates until it is renumbered, and the local
+ * copy is briefly ahead of the server after an edit. Ties break on id so every
+ * caller walks the same sequence whatever order the API listed the Segments in.
  */
 export function segmentsInNumberOrder<T extends NumberableSegment>(
   segments: T[],
@@ -48,16 +48,25 @@ export function segmentNumberFor(
 }
 
 /**
- * The `order` to persist for a newly drawn Segment: after every Segment already
- * on the Page, and never colliding with one, however gapped the stored orders
- * are. The Segment count cannot answer this: deleting a Segment leaves a hole,
- * not a shorter tail.
+ * `segments` with each Segment's `order` taken from the server's copy of it.
+ *
+ * The server owns reading order (ADR 0008): creating or deleting one Segment
+ * renumbers every Segment after it, and only the one row the request touched
+ * comes back. Only `order` is taken, so an edit still in flight on another
+ * Segment is not overwritten with the server's older geometry, and a Segment
+ * the server does not list is left as it is.
  */
-export function nextSegmentOrder(segments: NumberableSegment[]): number {
-  return (
-    segments.reduce(
-      (highest, segment) => Math.max(highest, segment.order),
-      -1,
-    ) + 1
+export function withServerOrders<T extends NumberableSegment>(
+  segments: T[],
+  serverSegments: NumberableSegment[],
+): T[] {
+  const serverOrders = new Map(
+    serverSegments.map((segment) => [segment.id, segment.order]),
   );
+  return segments.map((segment) => {
+    const order = serverOrders.get(segment.id);
+    return order === undefined || order === segment.order
+      ? segment
+      : { ...segment, order };
+  });
 }

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import infrastructure.models  # noqa: F401 — register all ORM mappers
+from backend.document.application.document_job_enqueue import NO_TRANSCRIBE_MODEL_MESSAGE
 from backend.jobs.application.inference_dispatcher import build_page_run_request
 from backend.jobs.infrastructure.job_claim_engine import (
     claim_next_pending_job,
@@ -22,9 +23,11 @@ from backend.jobs.infrastructure.worker import execute_claimed_job
 from infrastructure.db import sync_system_session
 from tests.nomikos.integration.helpers import (
     MINIMAL_PNG,
+    assert_api_error,
     documents_url,
     pair_inference_device,
     poll_job,
+    seed_transcription_model,
     user_id_for_email,
 )
 
@@ -369,6 +372,7 @@ def test_transcribe_job_is_left_pending_for_an_inference_agent(
     response = client.post(
         f"{base}/{document_id}/parts/{part_id}/transcribe",
         headers=owner_headers,
+        json={"model_id": seed_transcription_model()},
     )
     assert response.status_code == 202
     job_id = uuid.UUID(response.json()["job_id"])
@@ -407,6 +411,7 @@ def test_transcribe_job_payload_batches_every_selected_line(
     response = client.post(
         f"{base}/{document_id}/parts/{part_id}/transcribe",
         headers=owner_headers,
+        json={"model_id": seed_transcription_model()},
     )
     assert response.status_code == 202
 
@@ -418,6 +423,34 @@ def test_transcribe_job_payload_batches_every_selected_line(
     assert request.task.value == "transcribe"
     assert [line["line_id"] for line in request.params["lines"]] == [line["id"] for line in lines]
     assert [line["line_index"] for line in request.params["lines"]] == [0, 1]
+
+
+@pytest.mark.integration
+def test_transcribe_with_no_model_and_no_binding_is_refused(
+    client: TestClient,
+    owner_user: dict[str, str],
+    owner_headers: dict[str, str],
+    owner_project: dict,
+):
+    """No ``model_id`` and nothing bound on the part, document or project: refused,
+    rather than falling back to a model nobody picked, and no job row is written."""
+    pair_inference_device(user_id=user_id_for_email(owner_user["email"]), host="cloud")
+    document_id, part_id, _lines = _create_document_part_with_lines(
+        client,
+        owner_headers,
+        owner_project,
+    )
+
+    base = documents_url(owner_project["id"])
+    response = client.post(
+        f"{base}/{document_id}/parts/{part_id}/transcribe",
+        headers=owner_headers,
+    )
+
+    assert response.status_code == 422, response.text
+    assert_api_error(response, code="VALIDATION_ERROR", message=NO_TRANSCRIBE_MODEL_MESSAGE)
+    with sync_system_session() as session:
+        assert session.query(Job).filter(Job.type == JobType.transcribe).count() == 0
 
 
 # --- Opportunistic on-read sweep ---

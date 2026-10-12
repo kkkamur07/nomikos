@@ -40,6 +40,7 @@ from backend.users.api.rate_limit import (
     attributable_client_ip,
     auth_rate_limit_keys,
 )
+from backend.users.api.schemas import RegisterRequest
 
 
 async def _drain(dependency) -> None:
@@ -351,6 +352,43 @@ async def test_registration_conflicts_are_indistinguishable(kwargs, monkeypatch)
         )
 
     assert str(exc.value) == REGISTRATION_CONFLICT_MESSAGE
+
+
+# --- Registration username ---
+# The username is shown in mail and in the app, so it must be one clean line.
+
+
+@pytest.mark.parametrize(
+    "username",
+    ["friend.\n\nURGENT", "a\rb", "tab\there", "nul\x00", "bell\x07", "ls\u2028x", "   "],
+)
+def test_register_rejects_usernames_with_control_characters(username) -> None:
+    with pytest.raises(ValidationError):
+        RegisterRequest(email="ada@example.com", username=username, password="password123")
+
+
+def test_register_strips_surrounding_whitespace_from_username() -> None:
+    body = RegisterRequest(email="ada@example.com", username="  Ada Lovelace ", password="pw123456")
+    assert body.username == "Ada Lovelace"
+
+
+def test_register_route_answers_422_for_a_multiline_username() -> None:
+    from backend.users.api import auth
+    from infrastructure.db import get_db
+
+    async def no_db():
+        yield None
+
+    app = FastAPI()
+    app.include_router(auth.router)
+    app.dependency_overrides[get_db] = no_db
+    app.dependency_overrides[auth.throttle_auth_attempts] = lambda: None
+    client = TestClient(app)
+    response = client.post(
+        "/auth/register",
+        json={"email": "v@example.com", "username": "friend.\nURGENT", "password": "password123"},
+    )
+    assert response.status_code == 422
 
 
 # --- Development seed gate ---

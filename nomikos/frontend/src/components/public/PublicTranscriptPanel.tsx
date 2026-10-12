@@ -20,6 +20,8 @@ export function PublicTranscriptPanel({
   selectedLineIndex,
   onSelectLine,
 }: PublicTranscriptPanelProps) {
+  // The line number is the position in reading order, as in the editor, not
+  // `order + 1`: a page written before orders were kept dense can carry gaps.
   const partLines = linesForPart(layout?.lines, partId);
   const selectedLine =
     selectedLineIndex !== null && selectedLineIndex >= 0
@@ -43,7 +45,7 @@ export function PublicTranscriptPanel({
       {selectedLine && (
         <div className="pub-transcript__focus" aria-live="polite">
           <span className="pub-transcript__focus-label">
-            Line {selectedLine.order + 1}
+            Line {partLines.indexOf(selectedLine) + 1}
           </span>
           <p className="pub-transcript__focus-text">
             {selectedText ?? (
@@ -72,7 +74,7 @@ export function PublicTranscriptPanel({
                   aria-pressed={selected}
                   onClick={() => onSelectLine(selected ? null : index)}
                 >
-                  <span className="pub-line-index__num">{line.order + 1}</span>
+                  <span className="pub-line-index__num">{index + 1}</span>
                   <span className="pub-line-index__text">
                     {text ? previewText(text) : "-"}
                   </span>

@@ -60,12 +60,22 @@ case "$last" in
     fi
     exit 0
     ;;
+  *"select artifact_ref from inference_models"*)
+    # Production is identified by artifact_ref; the display names are free to change.
+    printf 'registry://armenian-calamari-v1?tag=stable\nregistry://blla-segment?tag=stable\nregistry://greek-calamari-v1?tag=stable\n'
+    exit 0
+    ;;
   *"select name from inference_models"*)
-    printf 'armenian-calamari-v1\ngreek-calamari-v1\nkraken\n'
+    # Names after the 2026-10-11 rename: a script that still matched names would fail.
+    printf 'armenian-v1\ngreek-v1\nseg-v1\n'
     exit 0
     ;;
   *"select name, provider, task"*)
-    echo "kraken | kraken | segment | registry://blla-segment?tag=stable"
+    if [ "$MODE" = "renamed" ]; then
+      echo "greek-v1 | calamari | transcribe | registry://greek-calamari-v1?tag=stable"
+    else
+      echo "kraken | kraken | segment | registry://blla-segment?tag=stable"
+    fi
     exit 0
     ;;
   *) exit 0 ;;
@@ -236,6 +246,19 @@ elif grep -q "bad;touch" "$LOG"; then
   fail "(i) unsafe PG_CONTAINER never reaches a remote command"
 else
   pass "(i) unsafe PG_CONTAINER exits 5 and never reaches a remote command"
+fi
+
+# (j) rows renamed to the new display names but with the old artifact_refs:
+# still found, because production is identified by artifact_ref.
+run_script renamed --rows-only
+if [ "$CODE" -ne 0 ]; then
+  fail "(j) renamed catalog is still found (got $CODE)"
+elif ! grep -q "production database: container=coolify-pg-ab12cd user=postgres db=prod_main" "$OUT"; then
+  fail "(j) renamed catalog picks prod_main by artifact_ref"
+elif ! grep -q "greek-v1" "$OUT"; then
+  fail "(j) renamed catalog shows the new display names"
+else
+  pass "(j) renamed catalog with old artifact_refs is still found"
 fi
 
 echo "passed=$PASS failed=$FAIL"

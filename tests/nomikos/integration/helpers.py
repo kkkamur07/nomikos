@@ -37,6 +37,7 @@ __all__ = [
     "prefer_local",
     "return_pooled_connections_before_leaving",
     "running_agent",
+    "seed_transcription_model",
     "service_headers",
     "stored_job",
     "stored_minimal_page_bytes",
@@ -308,6 +309,28 @@ def stored_minimal_page_bytes() -> bytes:
     from backend.document.infrastructure.media_store.encoding import encode_part_image
 
     return encode_part_image(MINIMAL_PNG)
+
+
+def seed_transcription_model() -> str:
+    """One transcription row in the catalog, for a transcribe that names its model.
+
+    A transcribe with no ``model_id`` and no binding is refused (422), so a test
+    that is about something else sends this id in the body.
+    """
+    from backend.ml.infrastructure.orm_models import InferenceModel, InferenceTask
+    from infrastructure.db import sync_system_session
+
+    with sync_system_session() as session:
+        model = InferenceModel(
+            name=f"calamari-test-{uuid.uuid4().hex[:8]}",
+            provider="calamari",
+            task=InferenceTask.transcribe,
+            artifact_ref="registry://calamari-test?tag=stable",
+            default_params={},
+        )
+        session.add(model)
+        session.commit()
+        return str(model.id)
 
 
 def documents_url(project_id: str) -> str:

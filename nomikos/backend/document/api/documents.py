@@ -61,6 +61,10 @@ from backend.document.api.schemas import (
     TranscriptionLayerResponse,
 )
 from backend.document.application.document_catalog import DocumentCatalog
+from backend.document.application.document_export_docx import (
+    DOCX_MEDIA_TYPE,
+    DocumentDocxExportService,
+)
 from backend.document.application.document_export_page_xml import DocumentPageXmlExportService
 from backend.document.application.document_export_pdf import DocumentTranscriptionPdfService
 from backend.document.application.document_export_text import DocumentTextExportService
@@ -90,6 +94,7 @@ _transcription_pdf_service = TranscriptionPdfService()
 _document_page_xml_export_service = DocumentPageXmlExportService()
 _document_pdf_export_service = DocumentTranscriptionPdfService()
 _document_text_export_service = DocumentTextExportService()
+_document_docx_export_service = DocumentDocxExportService()
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 PDF_RESPONSE: dict[int | str, dict[str, Any]] = {
     200: {
@@ -121,6 +126,12 @@ TEXT_RESPONSE: dict[int | str, dict[str, Any]] = {
         "description": "Plain-text transcription, one page after another",
     }
 }
+DOCX_RESPONSE: dict[int | str, dict[str, Any]] = {
+    200: {
+        "content": {DOCX_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+        "description": "Word transcription, one heading per page, script fonts and direction set",
+    }
+}
 REVIEWED_ONLY_DESCRIPTION = (
     "Cover only pages marked reviewed. 404 when that leaves nothing to export."
 )
@@ -133,6 +144,7 @@ def _block_response(block: Block) -> BlockResponse:
         order=block.order,
         box=block.box,
         manual_geometry=block.manual_geometry,
+        label=block.label,
         created_at=block.created_at,
     )
 
@@ -482,7 +494,15 @@ async def create_part_block(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> BlockResponse:
     block = await _layout.create_part_block(
-        db, current_user, project_id, document_id, part_id, order=body.order, box=body.box
+        db,
+        current_user,
+        project_id,
+        document_id,
+        part_id,
+        order=body.order,
+        box=body.box,
+        label=body.label or None,
+        assign_contained=body.assign_contained,
     )
     return _block_response(block)
 
@@ -769,6 +789,33 @@ async def generate_transcription_pdf(
 
 
 @router.get(
+    "/{document_id}/parts/{part_id}/docx",
+    response_class=Response,
+    responses=DOCX_RESPONSE,
+)
+async def export_part_docx(
+    project_id: UUID,
+    document_id: UUID,
+    part_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """One page's transcription as a Word file, for the page editor."""
+    export = await _document_docx_export_service.export_part_docx(
+        db,
+        current_user,
+        project_id,
+        document_id,
+        part_id,
+    )
+    return Response(
+        content=export.content,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={"Content-Disposition": attachment_disposition(export.filename)},
+    )
+
+
+@router.get(
     "/{document_id}/parts/{part_id}/page-xml",
     response_class=Response,
     responses=XML_RESPONSE,
@@ -917,6 +964,33 @@ async def export_document_text(
     )
 
 
+@router.get(
+    "/{document_id}/export/docx",
+    response_class=Response,
+    responses=DOCX_RESPONSE,
+)
+async def export_document_docx(
+    project_id: UUID,
+    document_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    reviewed_only: bool = Query(default=False, description=REVIEWED_ONLY_DESCRIPTION),
+) -> Response:
+    """The whole document's transcription as a Word file, one heading per page."""
+    export = await _document_docx_export_service.export_document_docx(
+        db,
+        current_user,
+        project_id,
+        document_id,
+        reviewed_only=reviewed_only,
+    )
+    return Response(
+        content=export.content,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={"Content-Disposition": attachment_disposition(export.filename)},
+    )
+
+
 @router.post(
     "/{document_id}/parts/{part_id}/segment",
     response_model=EnqueueJobResponse,
@@ -1015,6 +1089,7 @@ async def patch_ground_truth_line_text(
         transcription_id,
         line_id,
         text=body.text,
+        previous_text=body.previous_text,
     )
     return line_transcription_response(line_transcription)
 

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "../ui/toast";
 import { api, type JobResponse } from "../../api/client";
 import { ApiError } from "../../api/errors";
@@ -24,10 +24,22 @@ function shortId(jobId: string): string {
 }
 
 export type JobsNoticeProps = {
+  projectId: string;
+  documentId: string;
+  /**
+   * Bumped by the page when it queues jobs (the Workflow menu), so the bar
+   * re-reads this document's jobs instead of waiting for its own button.
+   */
+  refreshKey: number;
   enableTestJobs?: boolean;
 };
 
-export function JobsNotice({ enableTestJobs = false }: JobsNoticeProps) {
+export function JobsNotice({
+  projectId,
+  documentId,
+  refreshKey,
+  enableTestJobs = false,
+}: JobsNoticeProps) {
   const [trackedJobs, setTrackedJobs] = useState<TrackedJob[]>([]);
   const [enqueueing, setEnqueueing] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -40,6 +52,42 @@ export function JobsNotice({ enableTestJobs = false }: JobsNoticeProps) {
     });
     setExpanded(true);
   }, []);
+
+  // This document's unfinished jobs, from the project jobs list: the ones the
+  // Workflow menu just queued, and any started from another tab or the editor.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const page = await api.listProjectJobsPage(projectId);
+        if (cancelled) return;
+        const mine = page.items.filter(
+          (job) =>
+            job.document_id === documentId && !isTerminalJobStatus(job.status),
+        );
+        if (mine.length === 0) return;
+        setTrackedJobs((prev) => {
+          const known = new Set(prev.map((row) => row.jobId));
+          const added = mine
+            .filter((job) => !known.has(job.id))
+            .map((job) => ({
+              jobId: job.id,
+              status: job.status,
+              type: job.type,
+              error: job.error,
+              execution: jobExecution(job),
+            }));
+          return added.length > 0 ? [...prev, ...added] : prev;
+        });
+        setExpanded(true);
+      } catch {
+        // The bar is a convenience; the project jobs panel stays the record.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, documentId, refreshKey]);
 
   const activeJobIds = trackedJobs
     .filter((j) => !isTerminalJobStatus(j.status))

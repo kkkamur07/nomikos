@@ -1,6 +1,145 @@
 {
   "components": {
     "schemas": {
+      "ActivityOverview": {
+        "properties": {
+          "annotations": {
+            "items": {
+              "$ref": "#/components/schemas/AnnotationDayCount"
+            },
+            "title": "Annotations",
+            "type": "array"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobDayCount"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/DayCount"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/DayCount"
+            },
+            "title": "Pages",
+            "type": "array"
+          }
+        },
+        "required": ["jobs", "pages", "lines", "annotations"],
+        "title": "ActivityOverview",
+        "type": "object"
+      },
+      "AdminOverview": {
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ActivityOverview"
+          },
+          "client_failures": {
+            "$ref": "#/components/schemas/ClientFailuresOverview"
+          },
+          "database": {
+            "$ref": "#/components/schemas/DatabaseOverview"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "requests": {
+            "$ref": "#/components/schemas/RequestsOverview"
+          },
+          "users": {
+            "$ref": "#/components/schemas/UsersOverview"
+          }
+        },
+        "required": [
+          "days",
+          "generated_at",
+          "users",
+          "activity",
+          "models",
+          "client_failures",
+          "database",
+          "requests"
+        ],
+        "title": "AdminOverview",
+        "type": "object"
+      },
+      "AdminUserRow": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_admin": {
+            "title": "Is Admin",
+            "type": "boolean"
+          },
+          "jobs": {
+            "title": "Jobs",
+            "type": "integer"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "lines_approved": {
+            "title": "Lines Approved",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "is_admin",
+          "created_at",
+          "jobs",
+          "lines_approved"
+        ],
+        "title": "AdminUserRow",
+        "type": "object"
+      },
       "AgentVersionNotice": {
         "description": "What the platform makes of a served agent's version.\n\nPresent on every claim response. ``outdated`` is the only field a CLI has to\nbranch on; the rest are for the line it prints.",
         "properties": {
@@ -118,6 +257,26 @@
         },
         "required": ["error"],
         "title": "AgentVersionRefusalResponse",
+        "type": "object"
+      },
+      "AnnotationDayCount": {
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "corrections": {
+            "title": "Corrections",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          }
+        },
+        "required": ["day", "corrections", "approved"],
+        "title": "AnnotationDayCount",
         "type": "object"
       },
       "AnnotationHistorySnapshotResponse": {
@@ -239,18 +398,42 @@
       },
       "BlockCreateRequest": {
         "properties": {
+          "assign_contained": {
+            "default": true,
+            "title": "Assign Contained",
+            "type": "boolean"
+          },
           "box": {
             "additionalProperties": true,
             "title": "Box",
             "type": "object"
           },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
           "order": {
-            "minimum": 0.0,
-            "title": "Order",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
           }
         },
-        "required": ["order", "box"],
+        "required": ["box"],
         "title": "BlockCreateRequest",
         "type": "object"
       },
@@ -262,6 +445,18 @@
             "additionalProperties": true,
             "title": "Box",
             "type": "object"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
           },
           "order": {
             "minimum": 0.0,
@@ -288,6 +483,17 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
           },
           "manual_geometry": {
             "title": "Manual Geometry",
@@ -440,6 +646,55 @@
         "title": "ClearJobHistoryResponse",
         "type": "object"
       },
+      "ClientFailureEntry": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": ["at", "message"],
+        "title": "ClientFailureEntry",
+        "type": "object"
+      },
       "ClientFailureRequest": {
         "properties": {
           "message": {
@@ -518,6 +773,32 @@
         "title": "ClientFailureResponse",
         "type": "object"
       },
+      "ClientFailuresOverview": {
+        "properties": {
+          "per_day": {
+            "items": {
+              "$ref": "#/components/schemas/DayCount"
+            },
+            "title": "Per Day",
+            "type": "array"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/ClientFailureEntry"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": ["started_at", "per_day", "recent"],
+        "title": "ClientFailuresOverview",
+        "type": "object"
+      },
       "CopyToGroundTruthRequest": {
         "properties": {
           "line_ids": {
@@ -553,6 +834,142 @@
         },
         "required": ["copied_line_ids"],
         "title": "CopyToGroundTruthResponse",
+        "type": "object"
+      },
+      "DatabaseOverview": {
+        "properties": {
+          "active_queries": {
+            "title": "Active Queries",
+            "type": "integer"
+          },
+          "blks_hit": {
+            "title": "Blks Hit",
+            "type": "integer"
+          },
+          "blks_read": {
+            "title": "Blks Read",
+            "type": "integer"
+          },
+          "busiest_tables": {
+            "items": {
+              "$ref": "#/components/schemas/TableStats"
+            },
+            "title": "Busiest Tables",
+            "type": "array"
+          },
+          "largest_tables": {
+            "items": {
+              "$ref": "#/components/schemas/TableStats"
+            },
+            "title": "Largest Tables",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "numbackends": {
+            "title": "Numbackends",
+            "type": "integer"
+          },
+          "pool_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pool Status"
+          },
+          "seq_scan_tables": {
+            "items": {
+              "$ref": "#/components/schemas/TableStats"
+            },
+            "title": "Seq Scan Tables",
+            "type": "array"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "stats_reset": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stats Reset"
+          },
+          "tup_deleted": {
+            "title": "Tup Deleted",
+            "type": "integer"
+          },
+          "tup_fetched": {
+            "title": "Tup Fetched",
+            "type": "integer"
+          },
+          "tup_inserted": {
+            "title": "Tup Inserted",
+            "type": "integer"
+          },
+          "tup_returned": {
+            "title": "Tup Returned",
+            "type": "integer"
+          },
+          "tup_updated": {
+            "title": "Tup Updated",
+            "type": "integer"
+          },
+          "xact_commit": {
+            "title": "Xact Commit",
+            "type": "integer"
+          },
+          "xact_rollback": {
+            "title": "Xact Rollback",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size_bytes",
+          "numbackends",
+          "active_queries",
+          "xact_commit",
+          "xact_rollback",
+          "blks_hit",
+          "blks_read",
+          "tup_returned",
+          "tup_fetched",
+          "tup_inserted",
+          "tup_updated",
+          "tup_deleted",
+          "busiest_tables",
+          "seq_scan_tables",
+          "largest_tables"
+        ],
+        "title": "DatabaseOverview",
+        "type": "object"
+      },
+      "DayCount": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          }
+        },
+        "required": ["day", "count"],
+        "title": "DayCount",
         "type": "object"
       },
       "DeviceResponse": {
@@ -1210,6 +1627,103 @@
         "title": "ExportWarningsResponse",
         "type": "object"
       },
+      "FeedbackCreateRequest": {
+        "properties": {
+          "message": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "page_path": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Path"
+          }
+        },
+        "required": ["message"],
+        "title": "FeedbackCreateRequest",
+        "type": "object"
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "page_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Path"
+          }
+        },
+        "required": ["id", "created_at", "message"],
+        "title": "FeedbackResponse",
+        "type": "object"
+      },
+      "FeedbackRow": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "page_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Path"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": ["id", "created_at", "email", "username", "message"],
+        "title": "FeedbackRow",
+        "type": "object"
+      },
       "HealthResponse": {
         "properties": {
           "database": {
@@ -1407,6 +1921,30 @@
           "agent"
         ],
         "title": "JobClaimResponse",
+        "type": "object"
+      },
+      "JobDayCount": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["day", "kind", "status", "count"],
+        "title": "JobDayCount",
         "type": "object"
       },
       "JobPageResponse": {
@@ -1692,9 +2230,16 @@
             "title": "Mask"
           },
           "order": {
-            "minimum": 0.0,
-            "title": "Order",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
           },
           "points": {
             "items": {
@@ -1709,7 +2254,7 @@
             "type": "array"
           }
         },
-        "required": ["order", "points"],
+        "required": ["points"],
         "title": "LineCreateRequest",
         "type": "object"
       },
@@ -1910,6 +2455,18 @@
       },
       "LineTranscriptionPatchRequest": {
         "properties": {
+          "previous_text": {
+            "anyOf": [
+              {
+                "maxLength": 10000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Text"
+          },
           "text": {
             "maxLength": 10000,
             "title": "Text",
@@ -2252,6 +2809,66 @@
           }
         },
         "title": "ModelBindingUpdateRequest",
+        "type": "object"
+      },
+      "ModelUsage": {
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "jobs": {
+            "title": "Jobs",
+            "type": "integer"
+          },
+          "median_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Seconds"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Rate"
+          },
+          "task": {
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": ["name", "task", "jobs", "done", "failed"],
+        "title": "ModelUsage",
         "type": "object"
       },
       "PagePairingResponse": {
@@ -2834,6 +3451,17 @@
             ],
             "title": "Owner Id"
           },
+          "owner_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Username"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -3106,6 +3734,29 @@
         "title": "ReorderPartsRequest",
         "type": "object"
       },
+      "RequestsOverview": {
+        "properties": {
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/RouteMetric"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "total_requests": {
+            "title": "Total Requests",
+            "type": "integer"
+          }
+        },
+        "required": ["started_at", "total_requests", "routes"],
+        "title": "RequestsOverview",
+        "type": "object"
+      },
       "ResolvedModelBindingResponse": {
         "properties": {
           "binding": {
@@ -3122,6 +3773,44 @@
         },
         "required": ["binding", "model", "effective_params"],
         "title": "ResolvedModelBindingResponse",
+        "type": "object"
+      },
+      "RouteMetric": {
+        "properties": {
+          "avg_ms": {
+            "title": "Avg Ms",
+            "type": "number"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "max_ms": {
+            "title": "Max Ms",
+            "type": "number"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "status_class": {
+            "title": "Status Class",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "route",
+          "status_class",
+          "count",
+          "avg_ms",
+          "max_ms"
+        ],
+        "title": "RouteMetric",
         "type": "object"
       },
       "SegmentBlock": {
@@ -3606,6 +4295,54 @@
         "title": "ShareUserRequest",
         "type": "object"
       },
+      "TableStats": {
+        "properties": {
+          "deletes": {
+            "title": "Deletes",
+            "type": "integer"
+          },
+          "idx_scan": {
+            "title": "Idx Scan",
+            "type": "integer"
+          },
+          "inserts": {
+            "title": "Inserts",
+            "type": "integer"
+          },
+          "live_rows": {
+            "title": "Live Rows",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "seq_scan": {
+            "title": "Seq Scan",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          },
+          "updates": {
+            "title": "Updates",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "inserts",
+          "updates",
+          "deletes",
+          "seq_scan",
+          "idx_scan",
+          "live_rows",
+          "total_bytes"
+        ],
+        "title": "TableStats",
+        "type": "object"
+      },
       "TokenResponse": {
         "properties": {
           "access_token": {
@@ -3865,6 +4602,11 @@
             "title": "Id",
             "type": "string"
           },
+          "is_admin": {
+            "default": false,
+            "title": "Is Admin",
+            "type": "boolean"
+          },
           "prefer_local_inference": {
             "default": false,
             "title": "Prefer Local Inference",
@@ -3877,6 +4619,76 @@
         },
         "required": ["id", "email", "username", "created_at"],
         "title": "UserResponse",
+        "type": "object"
+      },
+      "UsersOverview": {
+        "properties": {
+          "active_30d": {
+            "title": "Active 30D",
+            "type": "integer"
+          },
+          "active_7d": {
+            "title": "Active 7D",
+            "type": "integer"
+          },
+          "active_in_window": {
+            "title": "Active In Window",
+            "type": "integer"
+          },
+          "admins": {
+            "title": "Admins",
+            "type": "integer"
+          },
+          "new_in_window": {
+            "title": "New In Window",
+            "type": "integer"
+          },
+          "new_per_week": {
+            "items": {
+              "$ref": "#/components/schemas/WeekCount"
+            },
+            "title": "New Per Week",
+            "type": "array"
+          },
+          "top_users": {
+            "items": {
+              "$ref": "#/components/schemas/AdminUserRow"
+            },
+            "title": "Top Users",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "admins",
+          "new_in_window",
+          "active_7d",
+          "active_30d",
+          "active_in_window",
+          "new_per_week",
+          "top_users"
+        ],
+        "title": "UsersOverview",
+        "type": "object"
+      },
+      "WeekCount": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "week": {
+            "format": "date",
+            "title": "Week",
+            "type": "string"
+          }
+        },
+        "required": ["week", "count"],
+        "title": "WeekCount",
         "type": "object"
       },
       "WelcomeResponse": {
@@ -4212,6 +5024,228 @@
         ],
         "summary": "Set Execution Preference",
         "tags": ["ml"]
+      }
+    },
+    "/admin/feedback": {
+      "get": {
+        "description": "Newest feedback notes with their authors, for the admin dashboard.",
+        "operationId": "admin_feedback_admin_feedback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FeedbackRow"
+                  },
+                  "title": "Response Admin Feedback Admin Feedback Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Feedback",
+        "tags": ["admin"]
+      }
+    },
+    "/admin/overview": {
+      "get": {
+        "description": "Everything the dashboard shows, for the last ``days`` days.\n\nPer-route request counts, client failures and the pool are this API process's\nown, since ``started_at``, and always current; the rest comes from Postgres and\nmay be up to 60 seconds old.",
+        "operationId": "admin_overview_admin_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Overview",
+        "tags": ["admin"]
       }
     },
     "/auth/login": {
@@ -5942,6 +6976,110 @@
         ],
         "summary": "Revoke Device",
         "tags": ["devices"]
+      }
+    },
+    "/feedback": {
+      "post": {
+        "operationId": "submit_feedback_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Submit Feedback",
+        "tags": ["feedback"]
       }
     },
     "/health": {
@@ -8472,6 +9610,136 @@
         "tags": ["documents"]
       }
     },
+    "/projects/{project_id}/documents/{document_id}/export/docx": {
+      "get": {
+        "description": "The whole document's transcription as a Word file, one heading per page.",
+        "operationId": "export_document_docx_projects__project_id__documents__document_id__export_docx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Cover only pages marked reviewed. 404 when that leaves nothing to export.",
+            "in": "query",
+            "name": "reviewed_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Cover only pages marked reviewed. 404 when that leaves nothing to export.",
+              "title": "Reviewed Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Word transcription, one heading per page, script fonts and direction set"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Document Docx",
+        "tags": ["documents"]
+      }
+    },
     "/projects/{project_id}/documents/{document_id}/export/page-xml": {
       "get": {
         "description": "Every page as PAGE XML next to the full-resolution image it describes.",
@@ -10546,6 +11814,134 @@
           }
         ],
         "summary": "Patch Part Block",
+        "tags": ["documents"]
+      }
+    },
+    "/projects/{project_id}/documents/{document_id}/parts/{part_id}/docx": {
+      "get": {
+        "description": "One page's transcription as a Word file, for the page editor.",
+        "operationId": "export_part_docx_projects__project_id__documents__document_id__parts__part_id__docx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Part Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Word transcription, one heading per page, script fonts and direction set"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Part Docx",
         "tags": ["documents"]
       }
     },
@@ -16412,6 +17808,139 @@
           }
         },
         "summary": "Get Published Layout",
+        "tags": ["public"]
+      }
+    },
+    "/public/projects/{project_id}/documents/{document_id}/parts/{part_id}/docx": {
+      "get": {
+        "description": "One published page's transcription as a Word file.",
+        "operationId": "get_published_docx_public_projects__project_id__documents__document_id__parts__part_id__docx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Part Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "t",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "T"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Word transcription of one published page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Get Published Docx",
         "tags": ["public"]
       }
     },

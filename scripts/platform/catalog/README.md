@@ -37,3 +37,14 @@ The 2026-09-20 file uses guarded renames
 (`update ... where ... and not exists ...`) and `do nothing` because
 production was known to hold no duplicates (checked with the look-only run
 first).
+
+## Order on production
+
+Apply the files in date order; each one expects the state the previous one left:
+
+1. `2026-09-20-ppocr-rows-and-segmenter-display-names.sql`: segmenters named
+   `kraken` and `ppocr`, the `ppocr` and `syriac-ppocr-v1` rows inserted.
+2. `2026-10-11_model_names_v2.sql`: renames to `seg-v1`, `seg-v2`, `greek-v1`,
+   `armenian-v1`, `coptic-v1`, `syriac-v2` and retires `syriac-calamari-v2`. It
+   refuses (nothing applied) unless all seven 2026-09-20 rows are present, so it
+   refuses a second run and refuses a database that never got the first file.

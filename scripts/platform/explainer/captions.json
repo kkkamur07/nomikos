@@ -1,0 +1,29 @@
+{
+  "tour": {
+    "pickers": "Model pickers show short names",
+    "numbering": "New segments are numbered by position",
+    "pane": "Transcript button hides and shows the pane",
+    "region": "Draw a region (G) and label it",
+    "workflow": "Workflow menu: Check page and Export",
+    "jobs": "Jobs show in a panel above the page",
+    "feedback": "Feedback goes straight to the team"
+  },
+  "explainer": {
+    "register": "Register with email, username and password",
+    "login": "Log in with email and password",
+    "project": "Create a project, then a document",
+    "upload": "Upload page images",
+    "segment": "Workflow: segment the new pages",
+    "queued": "Jobs run in the background, a minute per page",
+    "open_doc": "Open a transcribed document",
+    "select_line": "Click a line: its text lights up",
+    "edit_line": "Correct the text; it saves itself",
+    "pane": "Transcript button hides and shows the pane",
+    "region": "Draw a region (G), label it 4v",
+    "export": "Workflow, Export: Word for this page",
+    "share": "Share the project with a colleague",
+    "publish": "Publish: a read only public link",
+    "public": "Anyone with the link sees page and text",
+    "public_page2": "Every page shows its transcription"
+  }
+}

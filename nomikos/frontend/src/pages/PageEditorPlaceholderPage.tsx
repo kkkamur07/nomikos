@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { type LayoutPoint, type LinePoint } from "../api/client";
+import type { LayoutPoint, LinePoint } from "../api/client";
 import { invalidateAfter } from "../api/resources";
 import { useHostPreference } from "../inference";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { PageEditorCanvas } from "../components/page-editor/PageEditorCanvas";
+import type { DrawTool } from "../components/page-editor/PageEditorCanvasIsland";
+import { PageEditorRegionPanel } from "../components/page-editor/PageEditorRegionPanel";
+import { PageEditorSplitPane } from "../components/page-editor/PageEditorSplitPane";
+import {
+  confirmLeaveWithUnsavedRows,
+  PageEditorTranscriptEditor,
+} from "../components/page-editor/PageEditorTranscriptEditor";
 import {
   PageEditorPageRail,
   PageEditorPageRailTab,
@@ -35,6 +42,7 @@ import {
   usePageEditorJobQueue,
   usePageEditorRunState,
   usePairingState,
+  useRegions,
   useSegmentHealth,
 } from "../components/page-editor/hooks";
 import {
@@ -57,9 +65,7 @@ export function PageEditorPlaceholderPage() {
     partId: string;
   }>() ?? {};
 
-  const [drawMode, setDrawMode] = useState<"none" | "rectangle" | "polygon">(
-    "none",
-  );
+  const [drawMode, setDrawMode] = useState<"none" | DrawTool>("none");
   const [draftStart, setDraftStart] = useState<LayoutPoint | null>(null);
   const [draftPolygon, setDraftPolygon] = useState<LinePoint[]>([]);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -81,15 +87,21 @@ export function PageEditorPlaceholderPage() {
   const [submissionRefusal, setSubmissionRefusal] = useState<string | null>(
     null,
   );
+  const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{
+    segmentId: string;
+    nonce: number;
+  } | null>(null);
 
   // The page the editor is on. The route seeds it and mirrors it back, but the
   // editor turns pages by changing this rather than by re-entering the route,
   // so the toolbar, the page rail and the focused control survive a page turn.
-  const { activePartId: partId, goToPart } = useDocumentPaging({
-    projectId,
-    documentId,
-    routePartId,
-  });
+  const { activePartId: partId, goToPart: goToPartUnguarded } =
+    useDocumentPaging({
+      projectId,
+      documentId,
+      routePartId,
+    });
 
   const editorData = usePageEditorData(projectId, documentId, partId, () => {
     setDrawMode("none");
@@ -97,6 +109,8 @@ export function PageEditorPlaceholderPage() {
     setDraftStart(null);
     setStripDismissed(false);
     setSelectedVertexIndex(null);
+    setHoveredSegmentId(null);
+    setFocusRequest(null);
   });
   const {
     document,
@@ -133,6 +147,15 @@ export function PageEditorPlaceholderPage() {
     partIndex,
   } = editorData;
 
+  // A page turn drops the rows on screen: ask first while any holds unsaved text.
+  const goToPart = useCallback(
+    (id: string) => {
+      if (!confirmLeaveWithUnsavedRows(lines.map((line) => line.id))) return;
+      goToPartUnguarded(id);
+    },
+    [lines, goToPartUnguarded],
+  );
+
   const { previousPartId, nextPartId } = pageNeighbours(parts, partId);
   const goToPreviousPage = useCallback(() => {
     if (previousPartId) goToPart(previousPartId);
@@ -162,6 +185,7 @@ export function PageEditorPlaceholderPage() {
     documentId,
     partId,
     open: segmentHealthOpen,
+    lines,
     setLines,
   });
 
@@ -234,6 +258,18 @@ export function PageEditorPlaceholderPage() {
     runAutoSegment,
   } = layoutMutations;
 
+  const regions = useRegions({
+    projectId,
+    documentId,
+    partId,
+    layout,
+    setLayout,
+    lines,
+    setLines,
+    onRecordEdit: layoutMutations.recordRegionEdit,
+  });
+  const { selectedRegionId, setSelectedRegionId } = regions;
+
   const {
     selectedSegmentId,
     setSelectedSegmentId,
@@ -247,6 +283,8 @@ export function PageEditorPlaceholderPage() {
     selectedSegmentNumber,
     selectedTranscriptionLayer,
     pairTextLine,
+    commitLineText,
+    reloadLineText,
     saveApprovedText,
     selectTranscriptionLayer,
     saveGroundTruthText,
@@ -263,9 +301,11 @@ export function PageEditorPlaceholderPage() {
   selectedSegmentIdRef.current = selectedSegmentId;
 
   const pairedIds = useMemo(() => segmentIdsWithGroundTruth(lines), [lines]);
-  const stripVisible = Boolean(selectedSegment) && !stripDismissed;
+  const stripVisible =
+    Boolean(selectedSegment) && !stripDismissed && !canvasSettings.sideBySide;
 
   function handleSelectSegment(lineId: string) {
+    setSelectedRegionId(null);
     setSelectedLineId(null);
     setSaveMessage(null);
     setStripDismissed(false);
@@ -299,15 +339,19 @@ export function PageEditorPlaceholderPage() {
           : `Polygon: ${draftPolygon.length} point${draftPolygon.length === 1 ? "" : "s"} · click to add · double-click or Enter to finish`
         : drawMode === "rectangle"
           ? "Rectangle: drag to draw a segment · hold Space to pan"
-          : selectedSegment
-            ? selectedVertexIndex !== null
-              ? `Segment ${selectedSegmentNumber} · vertex ${selectedVertexIndex + 1} selected · Delete removes point · Esc deselects`
-              : `Segment ${selectedSegmentNumber} ${
-                  segmentHasGroundTruth(selectedSegment) ? "paired" : "unpaired"
-                } · click edge to add · click handle to select · Esc deselects`
-            : "Drag to pan · scroll to zoom · Page Up/Down for pages · select a segment to edit it";
+          : drawMode === "region"
+            ? "Region: drag around a folio or column · the segments inside join it"
+            : selectedSegment
+              ? selectedVertexIndex !== null
+                ? `Segment ${selectedSegmentNumber} · vertex ${selectedVertexIndex + 1} selected · Delete removes point · Esc deselects`
+                : `Segment ${selectedSegmentNumber} ${
+                    segmentHasGroundTruth(selectedSegment)
+                      ? "paired"
+                      : "unpaired"
+                  } · click edge to add · click handle to select · Esc deselects`
+              : "Drag to pan · scroll to zoom · Page Up/Down for pages · select a segment to edit it";
 
-  function pickDrawMode(nextMode: "rectangle" | "polygon") {
+  function pickDrawMode(nextMode: DrawTool) {
     setDrawMode((mode) => (mode === nextMode ? "none" : nextMode));
     setDraftPolygon([]);
     setDraftStart(null);
@@ -323,9 +367,81 @@ export function PageEditorPlaceholderPage() {
     setSelectedVertexIndex(null);
     setSelectedSegmentId(null);
     setSelectedLineId(null);
+    setSelectedRegionId(null);
     setApprovedTextDraft("");
     setStripDismissed(false);
-  }, [setSelectedSegmentId, setSelectedLineId, setApprovedTextDraft]);
+  }, [
+    setSelectedSegmentId,
+    setSelectedLineId,
+    setSelectedRegionId,
+    setApprovedTextDraft,
+  ]);
+
+  // G arms the Region tool and T toggles the side-by-side transcript pane.
+  // Kept here rather than in the shared shortcut hook, with the same rule
+  // that hook applies: never while typing.
+  const pickDrawModeRef = useRef(pickDrawMode);
+  pickDrawModeRef.current = pickDrawMode;
+  const canvasSettingsRef = useRef(canvasSettings);
+  canvasSettingsRef.current = canvasSettings;
+  // Set when the keyboard opens the pane, read once by the pane as it mounts
+  // so the selected row takes focus.
+  const transcriptFocusOnOpenRef = useRef(false);
+  const toggleSideBySideRef = useRef<(focusRow?: boolean) => void>(() => {});
+  toggleSideBySideRef.current = (focusRow = false) => {
+    const current = canvasSettingsRef.current;
+    transcriptFocusOnOpenRef.current = focusRow && !current.sideBySide;
+    const next = { ...current, sideBySide: !current.sideBySide };
+    setCanvasSettings(next);
+    savePageEditorSettings(next);
+  };
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "g") {
+        event.preventDefault();
+        pickDrawModeRef.current("region");
+        return;
+      }
+      if (key === "t") {
+        event.preventDefault();
+        toggleSideBySideRef.current(true);
+      }
+    }
+    // Enter on the selected canvas segment goes to its transcript row,
+    // opening the pane first. Captured: the segment stops Enter itself.
+    function onEnterCapture(event: KeyboardEvent) {
+      if (event.key !== "Enter" || event.ctrlKey || event.metaKey) return;
+      if (event.altKey || event.shiftKey) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches('.pe-segment-shape[aria-current="true"]')) return;
+      if (!canvasSettingsRef.current.sideBySide) {
+        toggleSideBySideRef.current(true);
+        return;
+      }
+      const lineId = selectedSegmentIdRef.current;
+      window.document
+        .querySelector<HTMLTextAreaElement>(
+          `.pe-transcript-row[data-line-id="${lineId}"] textarea`,
+        )
+        ?.focus();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onEnterCapture, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onEnterCapture, true);
+    };
+  }, []);
 
   function completeDraftPolygon() {
     if (draftPolygon.length >= 3) {
@@ -388,6 +504,119 @@ export function PageEditorPlaceholderPage() {
     projectId && documentId
       ? `/projects/${projectId}/documents/${documentId}`
       : "/projects";
+
+  const imageWidth = part?.width ?? 640;
+  const imageHeight = part?.height ?? 900;
+  const preferredModelLayerId =
+    selectedTranscriptionLayer?.kind === "model"
+      ? selectedTranscriptionLayer.id
+      : null;
+
+  const canvasPaneContent = (
+    <>
+      <PageEditorCanvas
+        imageUrl={part?.image_url ?? ""}
+        imageAlt={`Page ${partIndex}`}
+        imageWidth={imageWidth}
+        imageHeight={imageHeight}
+        layout={layout}
+        lines={lines}
+        selectedSegmentId={selectedSegmentId}
+        pairedSegmentIds={pairedIds}
+        hoveredSegmentId={hoveredSegmentId}
+        onHoverSegment={setHoveredSegmentId}
+        focusRequest={focusRequest}
+        settings={canvasSettings}
+        drawingRectangle={drawMode === "rectangle"}
+        drawingRegion={drawMode === "region"}
+        drawingPolygon={drawMode === "polygon"}
+        draftStart={draftStart}
+        draftPolygon={draftPolygon}
+        onDraftStart={setDraftStart}
+        onRectangleDrawn={async (end) => {
+          if (!draftStart) return;
+          const rectangle = rectanglePoints(draftStart, end);
+          if (drawMode === "region") {
+            setDraftStart(null);
+            setDrawMode("none");
+            setSelectedSegmentId(null);
+            await regions.createRegion(rectangle);
+            return;
+          }
+          await replaceWithManualLine("rectangle", rectangle);
+          setDraftStart(null);
+        }}
+        onPolygonPoint={(point) =>
+          setDraftPolygon((current) => [...current, point])
+        }
+        onPolygonComplete={completeDraftPolygon}
+        onSelectLine={(lineId) => {
+          const selectedLine = layout.lines.find((line) => line.id === lineId);
+          setSelectedLineId(lineId);
+          setSelectedSegmentId(null);
+          setSelectedVertexIndex(null);
+          setSelectedLineSnapshot({
+            baseline: selectedLine?.baseline,
+            mask: selectedLine?.mask,
+          });
+        }}
+        onSelectSegment={handleSelectSegment}
+        selectedRegionId={selectedRegionId}
+        onSelectRegion={(regionId) => {
+          setSelectedSegmentId(null);
+          setSelectedLineId(null);
+          setSelectedVertexIndex(null);
+          setSelectedRegionId(regionId);
+        }}
+        segmentVertexEditEnabled={
+          drawMode === "none" && Boolean(selectedSegmentId)
+        }
+        onSelectTool={handlePanSelect}
+        onPickDrawMode={pickDrawMode}
+        canDelete={Boolean(selectedSegmentId || selectedLineId)}
+        onDeleteSelected={() => {
+          if (selectedSegmentId) void deleteSelectedSegment();
+          if (selectedLineId) void resetSelectedLine();
+        }}
+        selectedVertexIndex={selectedVertexIndex}
+        onSelectedVertexChange={setSelectedVertexIndex}
+        commitSignal={vertexCommitSignal}
+        onSegmentPointsChange={updateSegmentPoints}
+      />
+      <PageEditorRegionPanel
+        regions={layout.blocks}
+        selectedRegionId={selectedRegionId}
+        selectedSegment={selectedSegment ?? null}
+        selectedSegmentNumber={selectedSegmentNumber}
+        onRename={(regionId, label) =>
+          void regions.renameRegion(regionId, label)
+        }
+        onDelete={(regionId) => void regions.deleteRegion(regionId)}
+        onAssign={(segmentId, regionId) =>
+          void regions.assignSegmentToRegion(segmentId, regionId)
+        }
+        onClose={() => setSelectedRegionId(null)}
+        error={regions.regionError}
+      />
+      <p
+        className={`pe-canvas-hint${runState.processingKind ? " pe-canvas-hint--processing" : ""}`}
+        id="canvas-hint"
+        role="status"
+      >
+        {canvasHint}
+      </p>
+      <div className="pe-seg-legend" aria-label="Segment pairing">
+        <div className="pe-seg-legend__item">
+          <span className="pe-seg-legend__swatch pe-seg-legend__swatch--paired" />
+          paired
+        </div>
+        <div className="pe-seg-legend__item">
+          <span className="pe-seg-legend__swatch pe-seg-legend__swatch--unpaired" />
+          unpaired
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <PageEditorShell
@@ -456,6 +685,8 @@ export function PageEditorPlaceholderPage() {
             transcriptionPdfOpen={transcriptionPdfOpen}
             onOpenTranscriptionPdf={openTranscriptionPdf}
             onCloseTranscriptionPdf={() => setTranscriptionPdfOpen(false)}
+            transcriptOpen={canvasSettings.sideBySide}
+            onToggleTranscript={() => toggleSideBySideRef.current()}
             segmentHealthOpen={segmentHealthOpen}
             onSegmentHealthOpenChange={setSegmentHealthOpen}
             segmentHealth={segmentHealth}
@@ -491,76 +722,56 @@ export function PageEditorPlaceholderPage() {
                 />
               ))}
             <div className="pe-canvas-pane">
-              <PageEditorCanvas
-                imageUrl={part.image_url}
-                imageAlt={`Page ${partIndex}`}
-                imageWidth={part.width ?? 640}
-                imageHeight={part.height ?? 900}
-                layout={layout}
-                lines={lines}
-                selectedSegmentId={selectedSegmentId}
-                pairedSegmentIds={pairedIds}
-                settings={canvasSettings}
-                drawingRectangle={drawMode === "rectangle"}
-                drawingPolygon={drawMode === "polygon"}
-                draftStart={draftStart}
-                draftPolygon={draftPolygon}
-                onDraftStart={setDraftStart}
-                onRectangleDrawn={async (end) => {
-                  if (!draftStart) return;
-                  const rectangle = rectanglePoints(draftStart, end);
-                  await replaceWithManualLine("rectangle", rectangle);
-                  setDraftStart(null);
-                }}
-                onPolygonPoint={(point) =>
-                  setDraftPolygon((current) => [...current, point])
+              {/* Always the split pane, collapsed while the transcript is
+                  closed: the canvas stays mounted, so T keeps zoom and pan. */}
+              <PageEditorSplitPane
+                collapsed={!canvasSettings.sideBySide}
+                ratio={canvasSettings.splitRatio}
+                onRatioChange={(ratio) =>
+                  handleCanvasSettingsChange({
+                    ...canvasSettings,
+                    splitRatio: ratio,
+                  })
                 }
-                onPolygonComplete={completeDraftPolygon}
-                onSelectLine={(lineId) => {
-                  const selectedLine = layout.lines.find(
-                    (line) => line.id === lineId,
-                  );
-                  setSelectedLineId(lineId);
-                  setSelectedSegmentId(null);
-                  setSelectedVertexIndex(null);
-                  setSelectedLineSnapshot({
-                    baseline: selectedLine?.baseline,
-                    mask: selectedLine?.mask,
-                  });
-                }}
-                onSelectSegment={handleSelectSegment}
-                segmentVertexEditEnabled={
-                  drawMode === "none" && Boolean(selectedSegmentId)
+                left={canvasPaneContent}
+                right={
+                  canvasSettings.sideBySide && (
+                    <PageEditorTranscriptEditor
+                      lines={lines}
+                      regions={layout.blocks}
+                      selectedSegmentId={selectedSegmentId}
+                      hoveredSegmentId={hoveredSegmentId}
+                      preferredLayerId={preferredModelLayerId}
+                      onSelectSegment={handleSelectSegment}
+                      onHoverSegment={setHoveredSegmentId}
+                      onFocusSegment={(id) =>
+                        setFocusRequest({ segmentId: id, nonce: Date.now() })
+                      }
+                      onCommitText={commitLineText}
+                      onReloadLine={reloadLineText}
+                      onReturnToCanvas={() =>
+                        window.document
+                          .querySelector<SVGElement>(
+                            '.pe-segment-shape[aria-current="true"]',
+                          )
+                          ?.focus()
+                      }
+                      takeFocusOnOpen={() => {
+                        const focusRow = transcriptFocusOnOpenRef.current;
+                        transcriptFocusOnOpenRef.current = false;
+                        return focusRow;
+                      }}
+                      scaleFontToMask={canvasSettings.transcriptFontFromMask}
+                      onClose={() =>
+                        handleCanvasSettingsChange({
+                          ...canvasSettings,
+                          sideBySide: false,
+                        })
+                      }
+                    />
+                  )
                 }
-                onSelectTool={handlePanSelect}
-                onPickDrawMode={pickDrawMode}
-                canDelete={Boolean(selectedSegmentId || selectedLineId)}
-                onDeleteSelected={() => {
-                  if (selectedSegmentId) void deleteSelectedSegment();
-                  if (selectedLineId) void resetSelectedLine();
-                }}
-                selectedVertexIndex={selectedVertexIndex}
-                onSelectedVertexChange={setSelectedVertexIndex}
-                commitSignal={vertexCommitSignal}
-                onSegmentPointsChange={updateSegmentPoints}
               />
-              <p
-                className={`pe-canvas-hint${runState.processingKind ? " pe-canvas-hint--processing" : ""}`}
-                id="canvas-hint"
-                role="status"
-              >
-                {canvasHint}
-              </p>
-              <div className="pe-seg-legend" aria-label="Segment pairing">
-                <div className="pe-seg-legend__item">
-                  <span className="pe-seg-legend__swatch pe-seg-legend__swatch--paired" />
-                  paired
-                </div>
-                <div className="pe-seg-legend__item">
-                  <span className="pe-seg-legend__swatch pe-seg-legend__swatch--unpaired" />
-                  unpaired
-                </div>
-              </div>
             </div>
             {transcriptionPdfOpen && projectId && documentId && partId && (
               <PageEditorTranscriptionPdfWrap

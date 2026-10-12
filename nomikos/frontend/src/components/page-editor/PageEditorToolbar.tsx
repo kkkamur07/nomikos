@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type {
   DocumentWithPartsResponse,
   InferenceModelResponse,
@@ -7,12 +8,25 @@ import type {
   SegmentHealthResponse,
 } from "../../api/client";
 import { PageEditorBackLink } from "./PageEditorNavHeader";
+import { FeedbackDialog } from "../layout/FeedbackDialog";
+import { useFeedbackButton } from "../layout/useFeedbackButton";
 import { PageEditorModelSelect } from "./PageEditorModelSelect";
 import { PageEditorPager } from "./PageEditorPager";
 import { PageEditorSharingMenu } from "./PageEditorSharingMenu";
 import { PageEditorPageXmlButton } from "./PageEditorPageXmlButton";
+import { PageEditorDocxButton } from "./PageEditorDocxButton";
 import { exportFileStem } from "../../utils/exportFilename";
-import { SettingsIcon } from "./EditorIcons";
+import {
+  CheckIcon,
+  FeedbackIcon,
+  MoreIcon,
+  SegmentIcon,
+  SettingsIcon,
+  TranscribeIcon,
+  TranscriptIcon,
+  WorkflowIcon,
+} from "./EditorIcons";
+import { useToolbarCollapse } from "./useToolbarCollapse";
 import { PageEditorSettingsPanel } from "./PageEditorSettingsPanel";
 import {
   PageEditorSegmentHealthPanel,
@@ -20,6 +34,7 @@ import {
 } from "./PageEditorSegmentHealthPanel";
 import { PageEditorInferenceStatus } from "./PageEditorInferenceStatus";
 import type { PageEditorCanvasSettings } from "./pageEditorSettings";
+import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
 
 type PageEditorToolbarProps = {
   projectId: string | undefined;
@@ -62,6 +77,10 @@ type PageEditorToolbarProps = {
   transcriptionPdfOpen: boolean;
   onOpenTranscriptionPdf: () => void;
   onCloseTranscriptionPdf: () => void;
+  /** The side-by-side transcript pane is open. */
+  transcriptOpen: boolean;
+  /** Opens or closes the transcript pane, the same toggle as the T key. */
+  onToggleTranscript: () => void;
   settingsOpen: boolean;
   onSettingsOpenChange: (open: boolean) => void;
   segmentHealthOpen: boolean;
@@ -85,6 +104,20 @@ type PageEditorToolbarProps = {
   hasLocalCapacity: boolean;
   hostPreferenceLoading: boolean;
 };
+
+/** A menu checkbox draws its tick through the class, not only aria-checked. */
+function checkableItem(checked: boolean): string {
+  return checked ? "pe-dd-item pe-dd-item--checked" : "pe-dd-item";
+}
+
+function toolbarButton(iconOnly: boolean): string {
+  return iconOnly ? "pe-tb-btn pe-tb-btn--icon" : "pe-tb-btn";
+}
+
+/** Focus the button that opened a popover, found inside its wrapper. */
+function focusTrigger(wrapper: HTMLElement | null) {
+  wrapper?.querySelector<HTMLElement>("button[aria-expanded]")?.focus();
+}
 
 export function PageEditorToolbar({
   projectId,
@@ -120,6 +153,8 @@ export function PageEditorToolbar({
   transcriptionPdfOpen,
   onOpenTranscriptionPdf,
   onCloseTranscriptionPdf,
+  transcriptOpen,
+  onToggleTranscript,
   settingsOpen,
   onSettingsOpenChange,
   segmentHealthOpen,
@@ -133,9 +168,24 @@ export function PageEditorToolbar({
   hasLocalCapacity,
   hostPreferenceLoading,
 }: PageEditorToolbarProps) {
+  const pathname = usePathname();
+  const { dialogOpen, thanks, openDialog, closeDialog, handleSent } =
+    useFeedbackButton();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const segmentHealthRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  // One anchor for both popovers: the Workflow (or folded More) menu and, once
+  // Check page is picked from it, the health panel.
+  const menuRef = useCallback((element: HTMLDivElement | null) => {
+    dropdownRef.current = element;
+    segmentHealthRef.current = element;
+  }, []);
+  // The bar never wraps: as room runs out the labelled buttons go icon-only,
+  // then fold into one "More" menu. What fits is measured, not guessed.
+  const collapse = useToolbarCollapse(headerRef);
+  const iconOnly = collapse >= 1;
+  const folded = collapse >= 2;
 
   useEffect(() => {
     if (!actionsOpen && !settingsOpen && !segmentHealthOpen) return;
@@ -163,8 +213,27 @@ export function PageEditorToolbar({
         onSegmentHealthOpenChange(false);
       }
     }
+    // Escape closes what is open and hands focus back to its trigger. Capture
+    // phase, so the editor's own Escape (deselect) does not also fire.
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      if (settingsOpen) {
+        onSettingsOpenChange(false);
+        focusTrigger(settingsRef.current);
+      }
+      if (actionsOpen || segmentHealthOpen) {
+        onActionsOpenChange(false);
+        onSegmentHealthOpenChange(false);
+        focusTrigger(dropdownRef.current);
+      }
+    }
     globalThis.document.addEventListener("click", handleClick);
-    return () => globalThis.document.removeEventListener("click", handleClick);
+    globalThis.document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      globalThis.document.removeEventListener("click", handleClick);
+      globalThis.document.removeEventListener("keydown", handleKeyDown, true);
+    };
   }, [
     actionsOpen,
     settingsOpen,
@@ -173,6 +242,22 @@ export function PageEditorToolbar({
     onSettingsOpenChange,
     onSegmentHealthOpenChange,
   ]);
+
+  // A popover closes once focus moves to something outside its wrapper.
+  // A null target (a click on the panel's own text) is not leaving it.
+  function closeOnFocusLeave(close: () => void) {
+    return (event: React.FocusEvent<HTMLDivElement>) => {
+      const next = event.relatedTarget as Node | null;
+      if (next && !event.currentTarget.contains(next)) close();
+    };
+  }
+  const closeMenuOnFocusLeave = closeOnFocusLeave(() => {
+    if (actionsOpen) onActionsOpenChange(false);
+    if (segmentHealthOpen) onSegmentHealthOpenChange(false);
+  });
+  const closeSettingsOnFocusLeave = closeOnFocusLeave(() => {
+    if (settingsOpen) onSettingsOpenChange(false);
+  });
 
   const segmentLabel = lines.length === 1 ? "seg" : "segs";
   const pairingPercent =
@@ -213,8 +298,178 @@ export function PageEditorToolbar({
     Boolean(selectedTranscribeModelId) &&
     (Boolean(selectedSegmentId) || lines.length > 0);
 
+  const segmentText = segmenting ? "Segmenting…" : "Segment";
+  const transcribeText = ocrRunning ? "Transcribing…" : "Transcribe";
+  const transcribeTitle = selectedTranscribeModelId
+    ? `Transcribe the ${transcribeScope} with ${selectedModelName}`
+    : "Choose a model before transcribing";
+  // The count only appears once a report has been read, so an unopened panel
+  // never implies the page is clean.
+  const findingCount =
+    segmentHealth.report && segmentHealth.report.finding_count > 0
+      ? segmentHealth.report.finding_count
+      : null;
+  const checkPageText =
+    findingCount !== null ? `Check page · ${findingCount}` : "Check page";
+  const transcriptKey = PAGE_EDITOR_SHORTCUTS.TRANSCRIPT;
+  const transcriptTitle = `${transcriptOpen ? "Hide" : "Show"} transcript pane (${transcriptKey})`;
+  const checkPageItem = (
+    <button
+      type="button"
+      role="menuitem"
+      className="pe-dd-item"
+      disabled={lines.length === 0}
+      title="Look for segmentation mistakes on this page"
+      onClick={() => {
+        onActionsOpenChange(false);
+        onSegmentHealthOpenChange(true);
+      }}
+    >
+      {checkPageText}
+    </button>
+  );
+  const healthPanel = segmentHealthOpen && (
+    <PageEditorSegmentHealthPanel
+      report={segmentHealth.report}
+      loading={segmentHealth.loading}
+      error={segmentHealth.error}
+      pending={segmentHealth.pending}
+      onApply={segmentHealth.apply}
+      onRefresh={segmentHealth.refresh}
+    />
+  );
+  const workflowItems = (
+    <>
+      <div className="pe-dd-section">Segment</div>
+      <p className="pe-dd-model">
+        Model <strong>{selectedSegmentModelName}</strong>
+      </p>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={processing}
+        onClick={() => {
+          onActionsOpenChange(false);
+          void onRunAutoSegment();
+        }}
+        className="pe-dd-item"
+      >
+        {segmenting ? "Segmenting…" : "Auto segment page"}
+      </button>
+      <div className="pe-dd-divider" />
+      <div className="pe-dd-section">Transcribe</div>
+      <p className="pe-dd-model">
+        Model <strong>{selectedModelName}</strong>
+      </p>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={
+          !selectedSegmentId || processing || !selectedTranscribeModelId
+        }
+        onClick={() => {
+          onActionsOpenChange(false);
+          void onRunSegmentOcr();
+        }}
+        className="pe-dd-item"
+      >
+        {ocrRunning ? "Transcribing…" : "Selected segment"}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={
+          processing || lines.length === 0 || !selectedTranscribeModelId
+        }
+        onClick={() => {
+          onActionsOpenChange(false);
+          void onRunPageOcr();
+        }}
+        className="pe-dd-item"
+      >
+        {ocrRunning ? "Transcribing…" : "Whole page"}
+      </button>
+      {/*
+        Export is a workflow step, not a permanent fixture of the bar.
+        PDF and XML were two of the least-pressed controls in the
+        editor holding two of its most valuable slots, next to the
+        settings gear. In the menu they sit beside Sharing, which is
+        the same act at a different fidelity.
+      */}
+      <div className="pe-dd-divider" />
+      <div className="pe-dd-section">Export</div>
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        className={checkableItem(transcriptionPdfOpen)}
+        aria-checked={transcriptionPdfOpen}
+        onClick={() => {
+          onActionsOpenChange(false);
+          if (transcriptionPdfOpen) onCloseTranscriptionPdf();
+          else onOpenTranscriptionPdf();
+        }}
+      >
+        Transcription PDF
+        <span className="pe-dd-meta">
+          {transcriptionPdfOpen ? "open" : "preview"}
+        </span>
+      </button>
+      {projectId && documentId && (
+        <PageEditorDocxButton
+          projectId={projectId}
+          documentId={documentId}
+          partId={partId}
+          className="pe-dd-item"
+          role="menuitem"
+          onActivate={() => onActionsOpenChange(false)}
+          downloadFilename={`${exportFileStem(document.name, partIndex)}.docx`}
+        />
+      )}
+      {projectId && documentId && (
+        <PageEditorPageXmlButton
+          projectId={projectId}
+          documentId={documentId}
+          partId={partId}
+          className="pe-dd-item"
+          role="menuitem"
+          onActivate={() => onActionsOpenChange(false)}
+          downloadFilename={`${exportFileStem(document.name, partIndex)}.zip`}
+        />
+      )}
+      {projectId && documentId && (
+        <PageEditorSharingMenu
+          projectId={projectId}
+          documentId={documentId}
+          workflow={document.workflow}
+          publicShareToken={document.public_share_token ?? null}
+          onWorkflowChange={onDocumentWorkflowChange}
+          disabled={processing}
+        />
+      )}
+      {/*
+        Where the work runs belongs with the menu that starts the work.
+        In the bar it announced the ordinary state permanently, which
+        teaches people to stop reading the one spot a real warning would
+        appear in. Here it is one glance away from the button that cares.
+      */}
+      <div className="pe-dd-divider" />
+      <div className="pe-dd-footer">
+        <PageEditorInferenceStatus
+          loading={hostPreferenceLoading}
+          hasLocalCapacity={hasLocalCapacity}
+          preferLocalInference={preferLocalInference}
+        />
+      </div>
+    </>
+  );
+
   return (
-    <header className="pe-toolbar" role="banner">
+    <header
+      ref={headerRef}
+      className="pe-toolbar"
+      role="banner"
+      data-collapse={collapse}
+    >
       <span className="visually-hidden">ANNOTE PAGE WORKSPACE</span>
       <span className="visually-hidden">
         Pairing progress: {pairingProgress.paired_lines}/
@@ -292,14 +547,16 @@ export function PageEditorToolbar({
             {processingLabel}
           </div>
         )}
-        <div className="pe-toolbar__stat">
-          <strong>{lines.length}</strong> {segmentLabel}
-        </div>
+        {/* One line, one group: "23 segs · 23/23" and the pairing track. */}
         <div
           className="pe-toolbar__progress"
-          title={`${pairingProgress.paired_lines} of ${pairingProgress.total_lines} lines paired`}
+          title={`${lines.length} ${segmentLabel}, ${pairingProgress.paired_lines} of ${pairingProgress.total_lines} lines paired`}
         >
           <span className="pe-toolbar__stat">
+            <strong>{lines.length}</strong> {segmentLabel}
+            <span className="pe-toolbar__stat-sep" aria-hidden="true">
+              {" · "}
+            </span>
             <strong>{pairingProgress.paired_lines}</strong>/
             {pairingProgress.total_lines}
           </span>
@@ -334,7 +591,9 @@ export function PageEditorToolbar({
         {/*
           The two runs a researcher makes all day get their own buttons. Behind
           a menu they taxed the most repeated action in the editor; the menu
-          keeps the variants that need a choice made first.
+          keeps the variants that need a choice made first. Only when the bar
+          runs out of room do they fold into "More", where the Workflow menu
+          already offers both.
         */}
         <div
           className="pe-toolbar__cluster"
@@ -349,217 +608,157 @@ export function PageEditorToolbar({
             onSelectedModelIdChange={onSelectedSegmentModelIdChange}
             disabled={processing}
           />
-          <button
-            type="button"
-            className="pe-tb-btn"
-            disabled={processing}
-            onClick={() => {
-              onActionsOpenChange(false);
-              void onRunAutoSegment();
-            }}
-            title={segmentTooltip}
-          >
-            <svg
-              className="pe-tb-btn__icon"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <rect x="2.2" y="2.6" width="11.6" height="3" rx="0.8" />
-              <rect x="2.2" y="6.9" width="11.6" height="3" rx="0.8" />
-              <path d="M2.2 12.6h7.4" />
-            </svg>
-            {segmenting ? "Segmenting…" : "Segment"}
-          </button>
-          <button
-            type="button"
-            className="pe-tb-btn"
-            disabled={!canTranscribe}
-            onClick={() => {
-              onActionsOpenChange(false);
-              if (selectedSegmentId) void onRunSegmentOcr();
-              else void onRunPageOcr();
-            }}
-            title={
-              selectedTranscribeModelId
-                ? `Transcribe the ${transcribeScope} with ${selectedModelName}`
-                : "Choose a model before transcribing"
-            }
-          >
-            <svg
-              className="pe-tb-btn__icon"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="M2.6 4.2h10.8M8 4.2v8.2M5.6 12.4h4.8" />
-            </svg>
-            {ocrRunning ? "Transcribing…" : "Transcribe"}
-            <span className="pe-tb-btn__scope">{transcribeScope}</span>
-          </button>
-        </div>
-
-        <div className="pe-toolbar__cluster pe-dropdown-wrap" ref={dropdownRef}>
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={actionsOpen}
-            onClick={() => onActionsOpenChange(!actionsOpen)}
-            className={`pe-tb-btn${actionsOpen ? " pe-tb-btn--on" : ""}`}
-          >
-            Workflow ▾
-          </button>
-          {actionsOpen && (
-            <div className="pe-dropdown" role="menu" aria-label="Workflow">
-              <div className="pe-dd-section">Segment</div>
-              <p className="pe-dd-model">
-                Model <strong>{selectedSegmentModelName}</strong>
-              </p>
+          {!folded && (
+            <>
               <button
                 type="button"
-                role="menuitem"
+                className={toolbarButton(iconOnly)}
                 disabled={processing}
                 onClick={() => {
                   onActionsOpenChange(false);
                   void onRunAutoSegment();
                 }}
-                className="pe-dd-item"
+                title={segmentTooltip}
+                aria-label={iconOnly ? segmentText : undefined}
               >
-                {segmenting ? "Segmenting…" : "Auto segment page"}
+                <SegmentIcon />
+                {!iconOnly && segmentText}
               </button>
-              <div className="pe-dd-divider" />
-              <div className="pe-dd-section">Transcribe</div>
-              <p className="pe-dd-model">
-                Model <strong>{selectedModelName}</strong>
-              </p>
               <button
                 type="button"
-                role="menuitem"
-                disabled={
-                  !selectedSegmentId || processing || !selectedTranscribeModelId
+                className={toolbarButton(iconOnly)}
+                disabled={!canTranscribe}
+                onClick={() => {
+                  onActionsOpenChange(false);
+                  if (selectedSegmentId) void onRunSegmentOcr();
+                  else void onRunPageOcr();
+                }}
+                title={transcribeTitle}
+                aria-label={
+                  iconOnly ? `${transcribeText} ${transcribeScope}` : undefined
                 }
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  void onRunSegmentOcr();
-                }}
-                className="pe-dd-item"
               >
-                {ocrRunning ? "Transcribing…" : "Selected segment"}
+                <TranscribeIcon />
+                {!iconOnly && (
+                  <>
+                    {transcribeText}
+                    <span className="pe-tb-btn__scope">{transcribeScope}</span>
+                  </>
+                )}
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={
-                  processing || lines.length === 0 || !selectedTranscribeModelId
-                }
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  void onRunPageOcr();
-                }}
-                className="pe-dd-item"
-              >
-                {ocrRunning ? "Transcribing…" : "Whole page"}
-              </button>
-              {/*
-                Export is a workflow step, not a permanent fixture of the bar.
-                PDF and XML were two of the least-pressed controls in the
-                editor holding two of its most valuable slots, next to the
-                settings gear. In the menu they sit beside Sharing, which is
-                the same act at a different fidelity.
-              */}
-              <div className="pe-dd-divider" />
-              <div className="pe-dd-section">Export</div>
-              <button
-                type="button"
-                role="menuitemcheckbox"
-                className="pe-dd-item"
-                aria-checked={transcriptionPdfOpen}
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  if (transcriptionPdfOpen) onCloseTranscriptionPdf();
-                  else onOpenTranscriptionPdf();
-                }}
-              >
-                Transcription PDF
-                <span className="pe-dd-meta">
-                  {transcriptionPdfOpen ? "open" : "preview"}
-                </span>
-              </button>
-              {projectId && documentId && (
-                <PageEditorPageXmlButton
-                  projectId={projectId}
-                  documentId={documentId}
-                  partId={partId}
-                  className="pe-dd-item"
-                  role="menuitem"
-                  onActivate={() => onActionsOpenChange(false)}
-                  downloadFilename={`${exportFileStem(document.name, partIndex)}.zip`}
-                />
-              )}
-              {projectId && documentId && (
-                <PageEditorSharingMenu
-                  projectId={projectId}
-                  documentId={documentId}
-                  workflow={document.workflow}
-                  publicShareToken={document.public_share_token ?? null}
-                  onWorkflowChange={onDocumentWorkflowChange}
-                  disabled={processing}
-                />
-              )}
-              {/*
-                Where the work runs belongs with the menu that starts the work.
-                In the bar it announced the ordinary state permanently, which
-                teaches people to stop reading the one spot a real warning would
-                appear in. Here it is one glance away from the button that cares.
-              */}
-              <div className="pe-dd-divider" />
-              <div className="pe-dd-footer">
-                <PageEditorInferenceStatus
-                  loading={hostPreferenceLoading}
-                  hasLocalCapacity={hasLocalCapacity}
-                  preferLocalInference={preferLocalInference}
-                />
-              </div>
-            </div>
+            </>
           )}
         </div>
 
-        <div className="pe-toolbar__cluster">
-          <div className="pe-dropdown-wrap" ref={segmentHealthRef}>
+        {!folded && (
+          <div
+            className="pe-toolbar__cluster pe-dropdown-wrap"
+            ref={menuRef}
+            onBlur={closeMenuOnFocusLeave}
+          >
             <button
               type="button"
-              className={`pe-tb-btn${segmentHealthOpen ? " pe-tb-btn--on" : ""}`}
-              aria-haspopup="dialog"
-              aria-expanded={segmentHealthOpen}
-              title="Look for segmentation mistakes on this page"
-              disabled={lines.length === 0}
-              onClick={() => onSegmentHealthOpenChange(!segmentHealthOpen)}
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              aria-label={iconOnly ? "Workflow" : undefined}
+              title={iconOnly ? "Workflow" : undefined}
+              onClick={() => {
+                onSegmentHealthOpenChange(false);
+                onActionsOpenChange(!actionsOpen);
+              }}
+              className={`${toolbarButton(iconOnly)}${actionsOpen ? " pe-tb-btn--on" : ""}`}
             >
-              Check page
-              {/* The count only appears once a report has been read, so an
-                  unopened panel never implies the page is clean. */}
-              {segmentHealth.report && segmentHealth.report.finding_count > 0
-                ? ` · ${segmentHealth.report.finding_count}`
-                : ""}
+              {iconOnly ? <WorkflowIcon /> : "Workflow ▾"}
             </button>
-            {segmentHealthOpen && (
-              <PageEditorSegmentHealthPanel
-                report={segmentHealth.report}
-                loading={segmentHealth.loading}
-                error={segmentHealth.error}
-                pending={segmentHealth.pending}
-                onApply={segmentHealth.apply}
-                onRefresh={segmentHealth.refresh}
-              />
+            {actionsOpen && (
+              <div className="pe-dropdown" role="menu" aria-label="Workflow">
+                {checkPageItem}
+                <div className="pe-dd-divider" />
+                {workflowItems}
+              </div>
             )}
+            {healthPanel}
           </div>
-          <div className="pe-dropdown-wrap" ref={settingsRef}>
+        )}
+
+        <div className="pe-toolbar__cluster">
+          {/* A view toggle, not an action: it stays pressed while the pane is
+              open, and it lives in the bar so a closed pane is one click
+              (or T) from coming back. */}
+          {!folded && (
+            <button
+              type="button"
+              className={`${toolbarButton(iconOnly)}${transcriptOpen ? " pe-tb-btn--on" : ""}`}
+              aria-pressed={transcriptOpen}
+              aria-keyshortcuts={transcriptKey}
+              aria-label={iconOnly ? "Transcript" : undefined}
+              title={transcriptTitle}
+              onClick={onToggleTranscript}
+            >
+              <TranscriptIcon />
+              {!iconOnly && "Transcript"}
+            </button>
+          )}
+          {folded && (
+            <div
+              className="pe-dropdown-wrap"
+              ref={menuRef}
+              onBlur={closeMenuOnFocusLeave}
+            >
+              <button
+                type="button"
+                className={`pe-tb-btn pe-tb-btn--icon${actionsOpen ? " pe-tb-btn--on" : ""}`}
+                aria-haspopup="menu"
+                aria-expanded={actionsOpen}
+                aria-label="More"
+                title="More: Segment, Transcribe, Transcript, Workflow, Check page"
+                onClick={() => {
+                  onSegmentHealthOpenChange(false);
+                  onActionsOpenChange(!actionsOpen);
+                }}
+              >
+                <MoreIcon />
+              </button>
+              {actionsOpen && (
+                <div className="pe-dropdown" role="menu" aria-label="More">
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    className={checkableItem(transcriptOpen)}
+                    aria-checked={transcriptOpen}
+                    aria-keyshortcuts={transcriptKey}
+                    title={transcriptTitle}
+                    onClick={() => {
+                      onActionsOpenChange(false);
+                      onToggleTranscript();
+                    }}
+                  >
+                    Transcript
+                    <span className="pe-dd-meta">{transcriptKey}</span>
+                  </button>
+                  {checkPageItem}
+                  <div className="pe-dd-divider" />
+                  {workflowItems}
+                </div>
+              )}
+              {healthPanel}
+            </div>
+          )}
+          {/* Icon-only: the text label cost a wrap in the counter at 1440px. */}
+          <button
+            type="button"
+            className="pe-tb-btn pe-tb-btn--icon"
+            title={thanks ? "Thanks" : "Send feedback"}
+            aria-label={thanks ? "Thanks" : "Send feedback"}
+            onClick={openDialog}
+          >
+            {thanks ? <CheckIcon /> : <FeedbackIcon />}
+          </button>
+          <div
+            className="pe-dropdown-wrap"
+            ref={settingsRef}
+            onBlur={closeSettingsOnFocusLeave}
+          >
             <button
               type="button"
               className={`pe-tb-btn pe-tb-btn--icon${settingsOpen ? " pe-tb-btn--on" : ""}`}
@@ -584,6 +783,12 @@ export function PageEditorToolbar({
           </div>
         </div>
       </div>
+      <FeedbackDialog
+        open={dialogOpen}
+        pagePath={pathname ?? "/"}
+        onClose={closeDialog}
+        onSent={handleSent}
+      />
     </header>
   );
 }

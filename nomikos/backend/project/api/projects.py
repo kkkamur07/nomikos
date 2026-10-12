@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.api.pagination import MAX_CURSOR_LENGTH, decode_cursor, paginate_rows
@@ -37,8 +38,18 @@ async def _projects_with_counts(db: AsyncSession, projects: list) -> list[Projec
     document_counts = await _document_repo.count_documents_by_project_ids(
         db, [project.id for project in projects]
     )
+    # The Shared section names whose project it is, so one lookup of the owners.
+    owner_ids = {project.owner_id for project in projects if project.owner_id is not None}
+    usernames: dict[UUID, str] = {}
+    if owner_ids:
+        rows = await db.execute(select(User.id, User.username).where(User.id.in_(owner_ids)))
+        usernames = dict(rows.all())
     return [
-        project_response(project, document_count=document_counts.get(project.id, 0))
+        project_response(
+            project,
+            document_count=document_counts.get(project.id, 0),
+            owner_username=usernames.get(project.owner_id) if project.owner_id else None,
+        )
         for project in projects
     ]
 

@@ -35,6 +35,12 @@ class User(Base):
     prefer_local_inference: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # Opens ``/admin`` (aggregate usage and database load, nothing per-document).
+    # No route writes it: promotion is an UPDATE by whoever operates the database,
+    # so an account cannot grant itself the dashboard. See migration 007.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     owned_projects: Mapped[list[Project]] = relationship("Project", back_populates="owner")
@@ -46,6 +52,25 @@ class User(Base):
     sessions: Mapped[list[AuthSession]] = relationship(
         "AuthSession", back_populates="user", cascade="all, delete-orphan"
     )
+
+
+class Feedback(Base):
+    """Short free-text note a signed-in user sends from anywhere in the app."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (Index("ix_feedback_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    message: Mapped[str] = mapped_column(String(2000), nullable=False)
+    page_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship("User")
 
 
 class AuthSession(Base):

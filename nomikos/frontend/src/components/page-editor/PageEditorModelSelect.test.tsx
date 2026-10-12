@@ -22,7 +22,7 @@ describe("PageEditorModelSelect", () => {
       <PageEditorModelSelect
         label="Seg"
         ariaLabel="Segmentation model"
-        models={[model("seg-a", "kraken"), model("seg-b", "pp-ocr")]}
+        models={[model("seg-a", "seg-v1"), model("seg-b", "seg-v2")]}
         selectedModelId="seg-a"
         onSelectedModelIdChange={() => {}}
       />,
@@ -33,8 +33,8 @@ describe("PageEditorModelSelect", () => {
       text: option.textContent,
     }));
     expect(options).toEqual([
-      { value: "seg-a", text: "kraken" },
-      { value: "seg-b", text: "pp-ocr" },
+      { value: "seg-a", text: "seg-v1" },
+      { value: "seg-b", text: "seg-v2" },
     ]);
   });
 
