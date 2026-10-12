@@ -779,7 +779,23 @@ export function PageEditorTranscriptEditor(
         role="list"
         style={{ flex: 1, minHeight: 0, height: "auto" }}
       >
-        {/* An empty page shows an empty pane: no placeholder text. */}
+        {ordered.length === 0 ? (
+          <p
+            className="pe-transcript-empty"
+            role="note"
+            style={{
+              color: "var(--text-3, #6b6b6b)",
+              padding: "24px 16px",
+              textAlign: "center",
+              fontSize: "0.9rem",
+              lineHeight: 1.5,
+              margin: 0,
+            }}
+          >
+            No segments yet. Run segmentation and transcription from the
+            Workflow menu, and the lines appear here.
+          </p>
+        ) : null}
         {ordered.map((line, index) => (
           <Fragment key={line.id}>
             {separators.has(line.id) ? (
