@@ -17,6 +17,12 @@ export type PageEditorSplitPaneProps = {
   right: React.ReactNode;
   leftLabel?: string;
   rightLabel?: string;
+  /**
+   * Hide the right pane and the handle and give the left all the width. The
+   * left pane stays the same element, so what it holds (the canvas, with its
+   * zoom and pan) is not remounted when the pane is toggled.
+   */
+  collapsed?: boolean;
 };
 
 export function PageEditorSplitPane({
@@ -26,6 +32,7 @@ export function PageEditorSplitPane({
   right,
   leftLabel = "Manuscript",
   rightLabel = "Transcript",
+  collapsed = false,
 }: PageEditorSplitPaneProps): JSX.Element {
   const clamped = clampSplitRatio(ratio);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,13 +95,14 @@ export function PageEditorSplitPane({
     >
       <div
         className="pe-split-left"
-        style={{ flexBasis: `${clamped * 100}%` }}
+        style={{ flexBasis: collapsed ? "100%" : `${clamped * 100}%` }}
         aria-label={leftLabel}
       >
         {left}
       </div>
       <div
         className="pe-split-handle"
+        hidden={collapsed}
         role="separator"
         aria-orientation="vertical"
         aria-valuenow={Math.round(clamped * 100)}
@@ -147,6 +155,7 @@ export function PageEditorSplitPane({
       <div
         className="pe-split-right"
         style={{ flex: 1 }}
+        hidden={collapsed}
         aria-label={rightLabel}
       >
         {right}

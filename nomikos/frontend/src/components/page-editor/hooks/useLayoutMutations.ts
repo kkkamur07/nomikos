@@ -10,6 +10,7 @@ import {
   api,
   type EnqueueJobResponse,
   type JobResponse,
+  type LayoutBlockResponse,
   type LayoutLineResponse,
   type LinePoint,
   type LineResponse,
@@ -37,6 +38,43 @@ import {
   mergeSavedLine,
   syncLayoutLinesFromSegments,
 } from "./utils";
+
+/**
+ * A region write on the same undo stack as the Segment edits (ADR 0011). The
+ * id is the region as it exists now: undo and redo re-create it under a new
+ * one and record that.
+ */
+type RegionBox = NonNullable<LayoutBlockResponse["box"]>;
+
+export type RegionEdit =
+  | {
+      kind: "region-create";
+      region: {
+        id: string;
+        box: RegionBox;
+        label: string | null;
+      };
+    }
+  | {
+      kind: "region-delete";
+      region: {
+        id: string;
+        box: RegionBox;
+        label: string | null;
+      };
+      /** The Segments it held, moved back into it when the delete is undone. */
+      lineIds: string[];
+    };
+
+type UndoEntry = CanvasEdit | RegionEdit;
+
+function isRegionEdit(entry: UndoEntry): entry is RegionEdit {
+  return entry.kind === "region-create" || entry.kind === "region-delete";
+}
+
+function pushEntry(stack: UndoEntry[], entry: UndoEntry): UndoEntry[] {
+  return pushEditOntoStack(stack as CanvasEdit[], entry as CanvasEdit);
+}
 
 function layoutMutationMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 403) {
@@ -128,8 +166,8 @@ export function useLayoutMutations({
   const [segmentMessage, setSegmentMessage] = useState<StatusMessage | null>(
     null,
   );
-  const undoStackRef = useRef<CanvasEdit[]>([]);
-  const redoStackRef = useRef<CanvasEdit[]>([]);
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const redoStackRef = useRef<UndoEntry[]>([]);
   const [editUndoRevision, setEditUndoRevision] = useState(0);
   const linesRef = useRef(lines);
   linesRef.current = lines;
@@ -184,8 +222,8 @@ export function useLayoutMutations({
     invalidateAfter.partContentChanged(projectId, documentId);
   }, [projectId, documentId]);
 
-  const recordEdit = useCallback((edit: CanvasEdit) => {
-    undoStackRef.current = pushEditOntoStack(undoStackRef.current, edit);
+  const recordEdit = useCallback((edit: UndoEntry) => {
+    undoStackRef.current = pushEntry(undoStackRef.current, edit);
     redoStackRef.current = [];
     setEditUndoRevision((value) => value + 1);
   }, []);
@@ -448,7 +486,7 @@ export function useLayoutMutations({
     if (!projectId || !documentId || !partId || !selectedSegmentId) return;
     if (
       !window.confirm(
-        "Delete this Segment? Its geometry and pairing on this Page will be removed.",
+        "Delete this Segment? Its geometry and pairing on this Page will be removed. Undo brings the Segment back, but its text will not come back.",
       )
     ) {
       return;
@@ -487,10 +525,85 @@ export function useLayoutMutations({
       : {};
   }
 
+  /** Region writes renumber the Page, so the layout and Segments are re-read. */
+  async function reloadAfterRegionWrite() {
+    const [nextLayout, nextLines] = await Promise.all([
+      api.getPartLayout(projectId!, documentId!, partId!),
+      api.listPartLines(projectId!, documentId!, partId!),
+    ]);
+    linesRef.current = nextLines;
+    setLayout(nextLayout);
+    setLines(nextLines);
+  }
+
+  /**
+   * Take back (or redo) a region write. Undo of a create and redo of a delete
+   * remove the region; the other two draw it again with the same box and
+   * label, and undo of a delete puts its recorded Segments back into it.
+   */
+  async function applyRegionEdit(
+    edit: RegionEdit,
+    direction: "undo" | "redo",
+  ): Promise<RegionEdit> {
+    const removes = (edit.kind === "region-create") === (direction === "undo");
+    if (removes) {
+      await api.deletePartBlock(
+        projectId!,
+        documentId!,
+        partId!,
+        edit.region.id,
+      );
+      return edit;
+    }
+    const created = await api.createPartBlock(
+      projectId!,
+      documentId!,
+      partId!,
+      {
+        box: edit.region.box,
+        label: edit.region.label,
+        assign_contained: edit.kind === "region-create",
+      },
+    );
+    const region = { ...edit.region, id: created.id };
+    if (edit.kind === "region-create") return { ...edit, region };
+    const present = new Set(linesRef.current.map((line) => line.id));
+    for (const lineId of edit.lineIds) {
+      if (!present.has(lineId)) continue;
+      await api.patchPartLine(projectId!, documentId!, partId!, lineId, {
+        block_id: created.id,
+      });
+    }
+    return { ...edit, region };
+  }
+
+  async function stepRegionEdit(edit: RegionEdit, direction: "undo" | "redo") {
+    const [from, to] =
+      direction === "undo"
+        ? [undoStackRef, redoStackRef]
+        : [redoStackRef, undoStackRef];
+    try {
+      const applied = await applyRegionEdit(edit, direction);
+      to.current = pushEntry(to.current, applied);
+      notePartContentChanged();
+      setLineError(null);
+      setEditUndoRevision((value) => value + 1);
+      await reloadAfterRegionWrite();
+    } catch (err) {
+      from.current = pushEntry(from.current, edit);
+      setLineError(layoutMutationMessage(err));
+      setEditUndoRevision((value) => value + 1);
+    }
+  }
+
   async function undoEdit() {
     const edit = undoStackRef.current.pop();
     if (!edit || !projectId || !documentId || !partId) {
       if (edit) undoStackRef.current.push(edit);
+      return;
+    }
+    if (isRegionEdit(edit)) {
+      await stepRegionEdit(edit, "undo");
       return;
     }
     const previous = linesRef.current;
@@ -500,12 +613,12 @@ export function useLayoutMutations({
         await api.patchPartLine(projectId, documentId, partId, edit.segmentId, {
           points: edit.before,
         });
-        redoStackRef.current = pushEditOntoStack(redoStackRef.current, edit);
+        redoStackRef.current = pushEntry(redoStackRef.current, edit);
       } else if (edit.kind === "create") {
         applyLocalLines(applyCanvasEditInverse(previous, edit));
         await api.deletePartLine(projectId, documentId, partId, edit.line.id);
         if (selectedSegmentId === edit.line.id) setSelectedSegmentId(null);
-        redoStackRef.current = pushEditOntoStack(redoStackRef.current, edit);
+        redoStackRef.current = pushEntry(redoStackRef.current, edit);
       } else {
         const saved = await api.createPartLine(projectId, documentId, partId, {
           order: edit.line.order,
@@ -515,10 +628,7 @@ export function useLayoutMutations({
         });
         const restored: CanvasEdit = { kind: "delete", line: saved };
         applyLocalLines(applyCanvasEditInverse(previous, restored));
-        redoStackRef.current = pushEditOntoStack(
-          redoStackRef.current,
-          restored,
-        );
+        redoStackRef.current = pushEntry(redoStackRef.current, restored);
       }
       notePartContentChanged();
       setLineError(null);
@@ -528,7 +638,7 @@ export function useLayoutMutations({
       setTextLines(pairing.text_lines);
       setPairingProgress(pairing.pairing_progress);
     } catch (err) {
-      undoStackRef.current = pushEditOntoStack(undoStackRef.current, edit);
+      undoStackRef.current = pushEntry(undoStackRef.current, edit);
       applyLocalLines(previous);
       setLineError(layoutMutationMessage(err));
       setEditUndoRevision((value) => value + 1);
@@ -541,6 +651,10 @@ export function useLayoutMutations({
       if (edit) redoStackRef.current.push(edit);
       return;
     }
+    if (isRegionEdit(edit)) {
+      await stepRegionEdit(edit, "redo");
+      return;
+    }
     const previous = linesRef.current;
     try {
       if (edit.kind === "points") {
@@ -548,7 +662,7 @@ export function useLayoutMutations({
         await api.patchPartLine(projectId, documentId, partId, edit.segmentId, {
           points: edit.after,
         });
-        undoStackRef.current = pushEditOntoStack(undoStackRef.current, edit);
+        undoStackRef.current = pushEntry(undoStackRef.current, edit);
       } else if (edit.kind === "create") {
         const saved = await api.createPartLine(projectId, documentId, partId, {
           order: edit.line.order,
@@ -558,12 +672,12 @@ export function useLayoutMutations({
         });
         const created: CanvasEdit = { kind: "create", line: saved };
         applyLocalLines(applyCanvasEdit(previous, created));
-        undoStackRef.current = pushEditOntoStack(undoStackRef.current, created);
+        undoStackRef.current = pushEntry(undoStackRef.current, created);
       } else {
         applyLocalLines(applyCanvasEdit(previous, edit));
         await api.deletePartLine(projectId, documentId, partId, edit.line.id);
         if (selectedSegmentId === edit.line.id) setSelectedSegmentId(null);
-        undoStackRef.current = pushEditOntoStack(undoStackRef.current, edit);
+        undoStackRef.current = pushEntry(undoStackRef.current, edit);
       }
       notePartContentChanged();
       setLineError(null);
@@ -573,7 +687,7 @@ export function useLayoutMutations({
       setTextLines(pairing.text_lines);
       setPairingProgress(pairing.pairing_progress);
     } catch (err) {
-      redoStackRef.current = pushEditOntoStack(redoStackRef.current, edit);
+      redoStackRef.current = pushEntry(redoStackRef.current, edit);
       applyLocalLines(previous);
       setLineError(layoutMutationMessage(err));
       setEditUndoRevision((value) => value + 1);
@@ -704,6 +818,7 @@ export function useLayoutMutations({
     deleteSelectedSegment,
     undoEdit,
     redoEdit,
+    recordRegionEdit: recordEdit,
     canUndo: undoStackRef.current.length > 0,
     canRedo: redoStackRef.current.length > 0,
     editUndoRevision,

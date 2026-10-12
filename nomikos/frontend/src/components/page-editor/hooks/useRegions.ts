@@ -13,6 +13,8 @@ import {
 } from "../../../api/client";
 import { ApiError } from "../../../api/errors";
 import { invalidateAfter } from "../../../api/resources";
+import { toast } from "../../ui/toast";
+import type { RegionEdit } from "./useLayoutMutations";
 
 type RegionsInput = {
   projectId: string | undefined;
@@ -20,7 +22,10 @@ type RegionsInput = {
   partId: string | undefined;
   layout: PartLayoutResponse;
   setLayout: Dispatch<SetStateAction<PartLayoutResponse>>;
+  lines: LineResponse[];
   setLines: Dispatch<SetStateAction<LineResponse[]>>;
+  /** Puts a region create or delete on the editor's undo stack. */
+  onRecordEdit?: (edit: RegionEdit) => void;
 };
 
 function regionErrorMessage(error: unknown): string {
@@ -44,7 +49,9 @@ export function useRegions({
   partId,
   layout,
   setLayout,
+  lines,
   setLines,
+  onRecordEdit,
 }: RegionsInput) {
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [regionError, setRegionError] = useState<string | null>(null);
@@ -73,7 +80,11 @@ export function useRegions({
         await reload();
         return true;
       } catch (error) {
-        setRegionError(regionErrorMessage(error));
+        const message = regionErrorMessage(error);
+        // The panel shows it only while a region or Segment is selected, which
+        // a first draw never is, so the toast is what makes a failure visible.
+        setRegionError(message);
+        toast.error(message);
         return false;
       }
     },
@@ -96,10 +107,14 @@ export function useRegions({
           { box: { points: box }, assign_contained: true },
         );
         createdId = created.id;
+        onRecordEdit?.({
+          kind: "region-create",
+          region: { id: created.id, box: created.box, label: null },
+        });
       });
       if (ok) setSelectedRegionId(createdId);
     },
-    [projectId, documentId, partId, run],
+    [projectId, documentId, partId, run, onRecordEdit],
   );
 
   const renameRegion = useCallback(
@@ -120,12 +135,35 @@ export function useRegions({
   const deleteRegion = useCallback(
     async (regionId: string) => {
       if (!projectId || !documentId || !partId) return;
-      const ok = await run(() =>
-        api.deletePartBlock(projectId, documentId, partId, regionId),
-      );
+      const region = layout.blocks.find((block) => block.id === regionId);
+      const lineIds = lines
+        .filter((line) => line.block_id === regionId)
+        .map((line) => line.id);
+      if (
+        lineIds.length > 0 &&
+        !window.confirm(
+          `Delete this region? Its ${lineIds.length} segment${lineIds.length === 1 ? "" : "s"} stay on the page and lose their region.`,
+        )
+      ) {
+        return;
+      }
+      const ok = await run(async () => {
+        await api.deletePartBlock(projectId, documentId, partId, regionId);
+        if (region?.box) {
+          onRecordEdit?.({
+            kind: "region-delete",
+            region: {
+              id: region.id,
+              box: region.box,
+              label: region.label ?? null,
+            },
+            lineIds,
+          });
+        }
+      });
       if (ok) setSelectedRegionId(null);
     },
-    [projectId, documentId, partId, run],
+    [projectId, documentId, partId, layout.blocks, lines, run, onRecordEdit],
   );
 
   /** Move one Segment into a region, or out of every region with null. */

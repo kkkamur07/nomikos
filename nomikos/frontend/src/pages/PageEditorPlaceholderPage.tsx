@@ -251,7 +251,9 @@ export function PageEditorPlaceholderPage() {
     partId,
     layout,
     setLayout,
+    lines,
     setLines,
+    onRecordEdit: layoutMutations.recordRegionEdit,
   });
   const { selectedRegionId, setSelectedRegionId } = regions;
 
@@ -679,17 +681,20 @@ export function PageEditorPlaceholderPage() {
                 />
               ))}
             <div className="pe-canvas-pane">
-              {canvasSettings.sideBySide ? (
-                <PageEditorSplitPane
-                  ratio={canvasSettings.splitRatio}
-                  onRatioChange={(ratio) =>
-                    handleCanvasSettingsChange({
-                      ...canvasSettings,
-                      splitRatio: ratio,
-                    })
-                  }
-                  left={canvasPaneContent}
-                  right={
+              {/* Always the split pane, collapsed while the transcript is
+                  closed: the canvas stays mounted, so T keeps zoom and pan. */}
+              <PageEditorSplitPane
+                collapsed={!canvasSettings.sideBySide}
+                ratio={canvasSettings.splitRatio}
+                onRatioChange={(ratio) =>
+                  handleCanvasSettingsChange({
+                    ...canvasSettings,
+                    splitRatio: ratio,
+                  })
+                }
+                left={canvasPaneContent}
+                right={
+                  canvasSettings.sideBySide && (
                     <PageEditorTranscriptEditor
                       lines={lines}
                       regions={layout.blocks}
@@ -710,11 +715,9 @@ export function PageEditorPlaceholderPage() {
                         })
                       }
                     />
-                  }
-                />
-              ) : (
-                canvasPaneContent
-              )}
+                  )
+                }
+              />
             </div>
             {transcriptionPdfOpen && projectId && documentId && partId && (
               <PageEditorTranscriptionPdfWrap

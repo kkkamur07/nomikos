@@ -114,6 +114,11 @@ function toolbarButton(iconOnly: boolean): string {
   return iconOnly ? "pe-tb-btn pe-tb-btn--icon" : "pe-tb-btn";
 }
 
+/** Focus the button that opened a popover, found inside its wrapper. */
+function focusTrigger(wrapper: HTMLElement | null) {
+  wrapper?.querySelector<HTMLElement>("button[aria-expanded]")?.focus();
+}
+
 export function PageEditorToolbar({
   projectId,
   documentId,
@@ -208,8 +213,27 @@ export function PageEditorToolbar({
         onSegmentHealthOpenChange(false);
       }
     }
+    // Escape closes what is open and hands focus back to its trigger. Capture
+    // phase, so the editor's own Escape (deselect) does not also fire.
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      if (settingsOpen) {
+        onSettingsOpenChange(false);
+        focusTrigger(settingsRef.current);
+      }
+      if (actionsOpen || segmentHealthOpen) {
+        onActionsOpenChange(false);
+        onSegmentHealthOpenChange(false);
+        focusTrigger(dropdownRef.current);
+      }
+    }
     globalThis.document.addEventListener("click", handleClick);
-    return () => globalThis.document.removeEventListener("click", handleClick);
+    globalThis.document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      globalThis.document.removeEventListener("click", handleClick);
+      globalThis.document.removeEventListener("keydown", handleKeyDown, true);
+    };
   }, [
     actionsOpen,
     settingsOpen,
@@ -218,6 +242,22 @@ export function PageEditorToolbar({
     onSettingsOpenChange,
     onSegmentHealthOpenChange,
   ]);
+
+  // A popover closes once focus moves to something outside its wrapper.
+  // A null target (a click on the panel's own text) is not leaving it.
+  function closeOnFocusLeave(close: () => void) {
+    return (event: React.FocusEvent<HTMLDivElement>) => {
+      const next = event.relatedTarget as Node | null;
+      if (next && !event.currentTarget.contains(next)) close();
+    };
+  }
+  const closeMenuOnFocusLeave = closeOnFocusLeave(() => {
+    if (actionsOpen) onActionsOpenChange(false);
+    if (segmentHealthOpen) onSegmentHealthOpenChange(false);
+  });
+  const closeSettingsOnFocusLeave = closeOnFocusLeave(() => {
+    if (settingsOpen) onSettingsOpenChange(false);
+  });
 
   const segmentLabel = lines.length === 1 ? "seg" : "segs";
   const pairingPercent =
@@ -252,7 +292,7 @@ export function PageEditorToolbar({
     (Boolean(selectedSegmentId) || lines.length > 0);
 
   const segmentText = segmenting ? "Segmenting…" : "Segment";
-  const segmentTitle = "Segment this page with blla-segment";
+  const segmentTitle = `Segment this page with ${selectedSegmentModelName}`;
   const transcribeText = ocrRunning ? "Transcribing…" : "Transcribe";
   const transcribeTitle = selectedTranscribeModelId
     ? `Transcribe the ${transcribeScope} with ${selectedModelName}`
@@ -606,7 +646,11 @@ export function PageEditorToolbar({
         </div>
 
         {!folded && (
-          <div className="pe-toolbar__cluster pe-dropdown-wrap" ref={menuRef}>
+          <div
+            className="pe-toolbar__cluster pe-dropdown-wrap"
+            ref={menuRef}
+            onBlur={closeMenuOnFocusLeave}
+          >
             <button
               type="button"
               aria-haspopup="menu"
@@ -651,7 +695,11 @@ export function PageEditorToolbar({
             </button>
           )}
           {folded && (
-            <div className="pe-dropdown-wrap" ref={menuRef}>
+            <div
+              className="pe-dropdown-wrap"
+              ref={menuRef}
+              onBlur={closeMenuOnFocusLeave}
+            >
               <button
                 type="button"
                 className={`pe-tb-btn pe-tb-btn--icon${actionsOpen ? " pe-tb-btn--on" : ""}`}
@@ -701,7 +749,11 @@ export function PageEditorToolbar({
           >
             {thanks ? <CheckIcon /> : <FeedbackIcon />}
           </button>
-          <div className="pe-dropdown-wrap" ref={settingsRef}>
+          <div
+            className="pe-dropdown-wrap"
+            ref={settingsRef}
+            onBlur={closeSettingsOnFocusLeave}
+          >
             <button
               type="button"
               className={`pe-tb-btn pe-tb-btn--icon${settingsOpen ? " pe-tb-btn--on" : ""}`}

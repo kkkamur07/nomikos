@@ -157,7 +157,12 @@ describe("PageEditorPlaceholderPage regions", () => {
       ),
     );
 
+    // The region holds Segments, so the delete asks first.
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: /delete region/i }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/stay on the page and lose their region/),
+    );
     await waitFor(() =>
       expect(mockedApi.deletePartBlock).toHaveBeenCalledWith(
         "project-1",

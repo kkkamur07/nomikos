@@ -201,6 +201,66 @@ describe("PageEditorCanvasIsland", () => {
   });
 });
 
+describe("PageEditorToolbar popovers and Escape", () => {
+  it("closes the settings dropdown on Escape and focuses the gear", () => {
+    const onSettingsOpenChange = vi.fn();
+    renderToolbar({ settingsOpen: true, onSettingsOpenChange });
+    const gear = screen.getByRole("button", { name: "Editor settings" });
+    const slider = screen.getAllByRole("slider")[0];
+    slider.focus();
+
+    fireEvent.keyDown(slider, { key: "Escape" });
+
+    expect(onSettingsOpenChange).toHaveBeenCalledWith(false);
+    expect(globalThis.document.activeElement).toBe(gear);
+  });
+
+  it("closes the settings dropdown when focus leaves it", () => {
+    const onSettingsOpenChange = vi.fn();
+    renderToolbar({ settingsOpen: true, onSettingsOpenChange });
+    const slider = screen.getAllByRole("slider")[0];
+    const feedback = screen.getByRole("button", { name: "Send feedback" });
+
+    fireEvent.blur(slider, { relatedTarget: feedback });
+
+    expect(onSettingsOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes the Workflow menu on Escape and focuses its trigger", () => {
+    const onActionsOpenChange = vi.fn();
+    renderToolbar({ actionsOpen: true, onActionsOpenChange });
+    const menu = screen.getByRole("menu", { name: "Workflow" });
+
+    fireEvent.keyDown(menu, { key: "Escape" });
+
+    expect(onActionsOpenChange).toHaveBeenCalledWith(false);
+    expect(globalThis.document.activeElement).toBe(
+      screen.getByRole("button", { name: /Workflow/ }),
+    );
+  });
+
+  it("closes the Check page panel on Escape", () => {
+    const onSegmentHealthOpenChange = vi.fn();
+    renderToolbar({ segmentHealthOpen: true, onSegmentHealthOpenChange });
+
+    fireEvent.keyDown(globalThis.document.body, { key: "Escape" });
+
+    expect(onSegmentHealthOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("PageEditorToolbar Segment title", () => {
+  it("names the picked segmentation model", () => {
+    renderToolbar({
+      segmentModels: [{ id: "m-2", name: "seg-v2" }] as never,
+      selectedSegmentModelId: "m-2",
+    });
+    expect(
+      screen.getByTitle("Segment this page with seg-v2"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("PageEditorToolbar fold", () => {
   // jsdom lays nothing out, so the bar's widths are faked: the content asks
   // for less room at each fold level, the way the real buttons do.
