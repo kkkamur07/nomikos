@@ -361,6 +361,8 @@ function TranscriptRow(props: TranscriptRowProps): JSX.Element {
   const baseRef = useRef(restored?.base ?? baseText);
   const inFlightRef = useRef<Promise<boolean> | null>(null);
   const pendingRef = useRef(false);
+  const errorRef = useRef(error);
+  errorRef.current = error;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const effectiveSource: TextSource =
@@ -433,6 +435,12 @@ function TranscriptRow(props: TranscriptRowProps): JSX.Element {
   // A commit asked for while a save is out is queued: it runs once with the
   // latest draft when that save returns, and only then reports its result.
   const commitNow = useCallback((): Promise<boolean> => {
+    // Sending the same text again cannot succeed while the server holds
+    // other text or no line at all; only "Reload row" moves such a row on.
+    const blocked = errorRef.current?.kind;
+    if (blocked === "conflict" || blocked === "deleted") {
+      return Promise.resolve(false);
+    }
     if (inFlightRef.current !== null) {
       pendingRef.current = true;
       return inFlightRef.current;

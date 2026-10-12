@@ -462,3 +462,27 @@ describe("row direction (F11)", () => {
     );
   });
 });
+
+describe("a row in conflict (F3)", () => {
+  it("does not resend the refused text when the row loses focus", async () => {
+    const onCommitText = vi.fn(() =>
+      Promise.reject(new ApiError("conflict", 409)),
+    );
+    render(<PageEditorTranscriptEditor {...editorProps({ onCommitText })} />);
+    const row = textarea("Segment 1 text");
+    row.focus();
+    fireEvent.change(row, { target: { value: "FROM_B" } });
+    fireEvent.keyDown(row, { key: "Enter", ctrlKey: true });
+    await settle();
+    expect(onCommitText).toHaveBeenCalledTimes(1);
+
+    // Clicking "Reload row" blurs the textarea first.
+    fireEvent.blur(row);
+    await settle();
+
+    expect(onCommitText).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Changed elsewhere.",
+    );
+  });
+});
