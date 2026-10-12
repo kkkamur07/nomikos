@@ -3026,6 +3026,8 @@ export interface components {
     LineSource: "manual" | "kraken" | "model";
     /** LineTranscriptionPatchRequest */
     LineTranscriptionPatchRequest: {
+      /** Previous Text */
+      previous_text?: string | null;
       /** Text */
       text: string;
     };

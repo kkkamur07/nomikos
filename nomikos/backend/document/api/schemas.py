@@ -440,6 +440,9 @@ class LineTranscriptionPatchRequest(BaseModel):
     # in the module without a cap - so the one route that writes a single line's
     # transcription accepted a body larger than a whole page import.
     text: str = Field(max_length=MAX_LINE_TEXT_CHARS)
+    # The text the edit started from. When sent and the stored text differs,
+    # the save is refused with 409 instead of overwriting another writer.
+    previous_text: str | None = Field(default=None, max_length=MAX_LINE_TEXT_CHARS)
 
 
 class PublicBlockResponse(BaseModel):

@@ -109,7 +109,11 @@ describe("PageEditorTranscriptEditor", () => {
     fireEvent.change(first, { target: { value: "  edited first  " } });
     fireEvent.keyDown(first, { key: "Enter" });
     await waitFor(() =>
-      expect(onCommitText).toHaveBeenCalledWith("line-a", "edited first"),
+      expect(onCommitText).toHaveBeenCalledWith(
+        "line-a",
+        "edited first",
+        "first",
+      ),
     );
     await waitFor(() =>
       expect(document.activeElement).toBe(textarea("Segment 2 text")),
@@ -130,7 +134,7 @@ describe("PageEditorTranscriptEditor", () => {
     fireEvent.change(first, { target: { value: "blur edit" } });
     fireEvent.blur(first);
     await waitFor(() =>
-      expect(onCommitText).toHaveBeenCalledWith("line-a", "blur edit"),
+      expect(onCommitText).toHaveBeenCalledWith("line-a", "blur edit", "first"),
     );
   });
 
@@ -245,7 +249,7 @@ describe("PageEditorTranscriptEditor", () => {
     fireEvent.change(first, { target: { value: "stay here" } });
     fireEvent.keyDown(first, { key: "Enter", metaKey: true });
     await waitFor(() =>
-      expect(onCommitText).toHaveBeenCalledWith("line-a", "stay here"),
+      expect(onCommitText).toHaveBeenCalledWith("line-a", "stay here", "first"),
     );
     expect(document.activeElement).toBe(first);
   });

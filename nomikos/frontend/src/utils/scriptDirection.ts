@@ -80,3 +80,22 @@ export function textDirection(
   const script = dominantScript(texts);
   return script === null ? fallback : directionOfScript(script);
 }
+
+/** A row's ``dir``: "auto" lets the browser order text without letters. */
+export type RowDirection = TextDirection | "auto";
+
+/**
+ * The direction one transcript row is laid out in. An empty row takes the
+ * fallback so the caret starts on the side the page reads from. A row with
+ * text but no letters (a folio number, "12.") is "auto": with plaintext
+ * bidi it keeps the order it was typed in instead of the page's direction,
+ * which would show "12." as ".12" on a right-to-left page.
+ */
+export function rowDirection(
+  text: string,
+  fallback: TextDirection = "ltr",
+): RowDirection {
+  if (text.trim() === "") return fallback;
+  const script = dominantScript(text);
+  return script === null ? "auto" : directionOfScript(script);
+}
