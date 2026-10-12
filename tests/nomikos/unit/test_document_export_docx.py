@@ -156,9 +156,36 @@ def test_default_font_is_noto_sans_twelve_point() -> None:
     assert normal.element.rPr.find(qn("w:szCs")).get(qn("w:val")) == "24"
 
 
-def test_a_page_with_nothing_transcribed_keeps_its_heading() -> None:
+def test_a_page_with_nothing_transcribed_keeps_its_heading_and_says_so() -> None:
     word = _word(render_docx([DocxPage(number=1, lines=["a"]), DocxPage(number=2, lines=[])]))
-    assert [p.text for p in word.paragraphs] == ["Page 1", "a", "", "Page 2"]
+    assert [p.text for p in word.paragraphs] == [
+        "Page 1",
+        "a",
+        "",
+        "Page 2",
+        "(no transcribed lines)",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_text_export_marks_a_page_with_no_transcribed_lines() -> None:
+    document = Document(id=uuid.uuid4(), project_id=uuid.uuid4(), name="Codex")
+    first, second = (
+        DocumentPart(id=uuid.uuid4(), document_id=document.id, order=order) for order in range(2)
+    )
+    selection = DocumentExportSelection(
+        document=document,
+        parts=[first, second],
+        page_numbers={first.id: 1, second.id: 2},
+    )
+    repository = _Repository({first.id: [_line(_GREEK)], second.id: [_line("  "), _line(None)]})
+    service = DocumentTextExportService(documents=repository, selector=_Selector(selection))
+
+    export = await service.export_document_text(
+        object(), object(), document.project_id, document.id
+    )
+
+    assert export.text == f"[p.1]\n{_GREEK}\n\n[p.2]\n(no transcribed lines)\n"
 
 
 def _page_breaks(content: bytes) -> int:

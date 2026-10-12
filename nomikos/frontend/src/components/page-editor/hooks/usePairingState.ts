@@ -362,7 +362,10 @@ export function usePairingState({
 
   async function applyTranscribeJob(
     job: JobResponse,
-  ): Promise<TranscribeJobResult | null> {
+  ): Promise<TranscribeJobResult | null | "cancelled"> {
+    // `waitForJob` resolves on a cancel, and a cancel from the jobs panel or
+    // another tab is not an AbortError: it is a choice, not a failure.
+    if (job.status === "cancelled") return "cancelled";
     const result = job.result as TranscribeJobResult | null;
     if (result?.transcription_id) {
       return applyTranscribeResult(result);
@@ -423,6 +426,10 @@ export function usePairingState({
         { timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS },
       );
       const result = await applyTranscribeJob(job);
+      if (result === "cancelled") {
+        setOcrMessage(statusMessage("Job cancelled"));
+        return;
+      }
       const hasAnyText =
         result === null || result.lines.some((line) => line.text?.trim());
       setOcrMessage(
@@ -478,6 +485,10 @@ export function usePairingState({
         { timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS },
       );
       const result = await applyTranscribeJob(job);
+      if (result === "cancelled") {
+        setOcrMessage(statusMessage("Job cancelled"));
+        return;
+      }
       const withText =
         result === null
           ? null

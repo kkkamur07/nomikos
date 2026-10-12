@@ -3425,6 +3425,17 @@
             ],
             "title": "Owner Id"
           },
+          "owner_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Username"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"

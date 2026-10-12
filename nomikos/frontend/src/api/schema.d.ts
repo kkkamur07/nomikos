@@ -3433,6 +3433,8 @@ export interface components {
       name: string;
       /** Owner Id */
       owner_id: string | null;
+      /** Owner Username */
+      owner_username?: string | null;
       /** Slug */
       slug: string;
       /**

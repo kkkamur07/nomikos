@@ -16,11 +16,7 @@ import {
 } from "../ui/ActionMenu";
 import { toast } from "../ui/toast";
 import { PageEditorModelSelect } from "../page-editor/PageEditorModelSelect";
-import {
-  TRANSCRIBE_MODEL_NAME,
-  batchQueuedMessage,
-  pageCountLabel,
-} from "./documentActionCopy";
+import { batchQueuedMessage, pageCountLabel } from "./documentActionCopy";
 
 type DocumentWorkflowMenuProps = {
   projectId: string;
@@ -59,6 +55,21 @@ export function DocumentWorkflowMenu({
   const [selectedSegmentModelId, setSelectedSegmentModelId] = useState<
     string | null
   >(null);
+  /**
+   * The transcription model the batch route will resolve, by catalog name:
+   * the document's binding, else the project's. Null when neither is set (or
+   * the lookup failed): the backend then refuses a model-less transcribe, so
+   * the menu offers the catalog instead and sends the chosen id.
+   */
+  const [transcribeModelName, setTranscribeModelName] = useState<string | null>(
+    null,
+  );
+  const [transcribeModels, setTranscribeModels] = useState<
+    InferenceModelResponse[]
+  >([]);
+  const [selectedTranscribeModelId, setSelectedTranscribeModelId] = useState<
+    string | null
+  >(null);
 
   // The segment catalog for the picker. A failed request leaves only
   // "Default" and does not block segmenting.
@@ -69,9 +80,30 @@ export function DocumentWorkflowMenu({
         const catalog = await api.listInferenceModels();
         if (!cancelled) {
           setSegmentModels(catalog.filter((model) => model.task === "segment"));
+          const htr = catalog.filter((model) => model.task === "transcribe");
+          setTranscribeModels(htr);
+          const remembered = readRememberedModel(projectId);
+          setSelectedTranscribeModelId(
+            htr.find((model) => model.id === remembered)?.id ??
+              htr[0]?.id ??
+              null,
+          );
         }
+        // The same order the backend resolves in for a whole document: a
+        // document binding wins over the project one. Part bindings are per
+        // page and are not named here.
+        const [documentBindings, projectBindings] = await Promise.all([
+          api.listDocumentModelBindings(projectId, documentId),
+          api.listProjectModelBindings(projectId),
+        ]);
+        const binding = [...documentBindings, ...projectBindings].find(
+          (candidate) => candidate.task === "transcribe",
+        );
+        const name =
+          catalog.find((model) => model.id === binding?.model_id)?.name ?? null;
+        if (!cancelled) setTranscribeModelName(name);
       } catch {
-        if (!cancelled) setSegmentModels([]);
+        if (!cancelled) setTranscribeModelName(null);
       }
     })();
     return () => {
@@ -83,6 +115,11 @@ export function DocumentWorkflowMenu({
   const unsegmented = counts?.unsegmented ?? 0;
   const unpaired = counts?.unpaired ?? 0;
   const busy = disabled || running || counts === null;
+  function chooseTranscribeModel(modelId: string | null) {
+    setSelectedTranscribeModelId(modelId);
+    rememberModel(projectId, modelId);
+  }
+
   const selectedSegmentModelName =
     segmentModels.find((model) => model.id === selectedSegmentModelId)?.name ??
     null;
@@ -113,7 +150,11 @@ export function DocumentWorkflowMenu({
       const result = await api.enqueueDocumentTranscribe(
         projectId,
         documentId,
-        { scope: "unpaired", model_id: null },
+        {
+          scope: "unpaired",
+          // A binding resolves on the server; otherwise the picker's choice.
+          model_id: transcribeModelName ? null : selectedTranscribeModelId,
+        },
       );
       toast.success(batchQueuedMessage(result));
       onJobsQueued();
@@ -180,13 +221,28 @@ export function DocumentWorkflowMenu({
             </ActionMenuWarning>
             <ActionMenuDivider />
             <ActionMenuSection>Transcribe</ActionMenuSection>
-            <ActionMenuCaption>
-              Model <strong>{TRANSCRIBE_MODEL_NAME}</strong>
-            </ActionMenuCaption>
+            {transcribeModelName ? (
+              <ActionMenuCaption>
+                Model <strong>{transcribeModelName}</strong>
+              </ActionMenuCaption>
+            ) : (
+              <PageEditorModelSelect
+                label="HTR"
+                ariaLabel="Transcription model"
+                models={transcribeModels}
+                selectedModelId={selectedTranscribeModelId}
+                onSelectedModelIdChange={chooseTranscribeModel}
+                disabled={busy}
+              />
+            )}
             <ActionMenuItem
               label="Transcribe unpaired pages"
               meta={String(unpaired)}
-              disabled={busy || unpaired === 0}
+              disabled={
+                busy ||
+                unpaired === 0 ||
+                (!transcribeModelName && !selectedTranscribeModelId)
+              }
               onSelect={() => void runTranscribe(close)}
             />
           </>
@@ -194,4 +250,29 @@ export function DocumentWorkflowMenu({
       }
     </ActionMenu>
   );
+}
+
+/** The last transcription model picked for a project with no binding. */
+function rememberedModelKey(projectId: string): string {
+  return `nomikos.transcribeModel.${projectId}`;
+}
+
+function readRememberedModel(projectId: string): string | null {
+  try {
+    return window.localStorage.getItem(rememberedModelKey(projectId));
+  } catch {
+    return null;
+  }
+}
+
+function rememberModel(projectId: string, modelId: string | null): void {
+  try {
+    if (modelId) {
+      window.localStorage.setItem(rememberedModelKey(projectId), modelId);
+    } else {
+      window.localStorage.removeItem(rememberedModelKey(projectId));
+    }
+  } catch {
+    // Private windows can refuse storage; the choice then lasts this visit.
+  }
 }

@@ -207,24 +207,22 @@ def test_platform_backend_ships_bundled_unicode_pdf_font() -> None:
 
 
 def test_vercel_frontend_connect_src_permits_no_loopback_origin() -> None:
-    """`connect-src` reaches the API and object storage, and nothing on the laptop.
+    """`connect-src` reaches the API, and nothing on the laptop.
 
     ADR 0002 deleted the browser-to-loopback call (#60), so the entry that used
     to permit `http://127.0.0.1:8001` permits nothing that exists. It is
     asserted absent rather than merely narrowed: a hosted HTTPS page calling
     `127.0.0.1` is the fragility the redesign removed, and a grant left behind
     is the thing a future change would build on. The storage origin is the one
-    presigned direct uploads PUT to, pinned to the project host on purpose -
-    `*.supabase.co` would make `connect-src` an exfiltration channel to any
-    Supabase project an injected script cared to name.
+    presigned direct uploads used to PUT to. That Supabase project is gone
+    (2026-09-18), so its origin is asserted absent too, and `*.supabase.co`
+    would make `connect-src` an exfiltration channel to any Supabase project an
+    injected script cared to name.
     """
     vercel = (REPO_ROOT / "nomikos" / "frontend" / "vercel.json").read_text(encoding="utf-8")
 
-    assert (
-        "connect-src 'self' https://api.nomikos.app"
-        " https://mknnoqpavpmxsyctwjdt.supabase.co;" in vercel
-    )
-    assert "*.supabase.co" not in vercel
+    assert "connect-src 'self' https://api.nomikos.app;" in vercel
+    assert "supabase.co" not in vercel
     for origin in (
         "127.0.0.1",
         "localhost",

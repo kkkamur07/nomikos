@@ -4,12 +4,23 @@ import { fileURLToPath } from "node:url";
 const platformApi = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 ).replace(/\/$/, "");
-const platformApiOrigin = new URL(platformApi).origin;
+// A relative value (same-origin API) has no origin of its own: 'self' covers it,
+// and `new URL` would otherwise throw while the config loads.
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "'self'";
+  }
+}
+const platformApiOrigin = originOf(platformApi);
 const frontendRoot = fileURLToPath(new URL(".", import.meta.url));
 
-// Kept in sync with vercel.json. Vercel serves those at the edge; the self-hosted
-// `node server.js` runtime never reads vercel.json, so the same headers are applied
-// here for the Docker deployment. The API origin comes from NEXT_PUBLIC_API_BASE_URL.
+// Two copies of the same headers, each winning in one place. On Vercel,
+// vercel.json wins: `headers()` below returns nothing there, and its CSP names
+// https://api.nomikos.app by hand. Off Vercel (Docker, `node server.js`, which
+// never reads vercel.json) these win, with the API origin taken from
+// NEXT_PUBLIC_API_BASE_URL. A change to one belongs in the other too.
 const securityHeaders = [
   {
     key: "Strict-Transport-Security",

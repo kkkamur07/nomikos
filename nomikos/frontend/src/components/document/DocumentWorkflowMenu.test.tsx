@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentWorkflowMenu } from "./DocumentWorkflowMenu";
@@ -6,6 +12,8 @@ import { DocumentWorkflowMenu } from "./DocumentWorkflowMenu";
 const listInferenceModels = vi.fn();
 const enqueueDocumentSegment = vi.fn();
 const enqueueDocumentTranscribe = vi.fn();
+const listProjectModelBindings = vi.fn();
+const listDocumentModelBindings = vi.fn();
 
 vi.mock("../../api/client", () => ({
   api: {
@@ -14,6 +22,10 @@ vi.mock("../../api/client", () => ({
       enqueueDocumentSegment(...args),
     enqueueDocumentTranscribe: (...args: unknown[]) =>
       enqueueDocumentTranscribe(...args),
+    listProjectModelBindings: (...args: unknown[]) =>
+      listProjectModelBindings(...args),
+    listDocumentModelBindings: (...args: unknown[]) =>
+      listDocumentModelBindings(...args),
   },
 }));
 
@@ -57,10 +69,14 @@ describe("DocumentWorkflowMenu segment picker", () => {
     await screen.findByRole("combobox", {
       name: "Segmentation model",
     });
-    const options = screen.getAllByRole("option").map((option) => ({
-      value: (option as HTMLOptionElement).value,
-      text: option.textContent,
-    }));
+    const options = within(
+      screen.getByRole("combobox", { name: "Segmentation model" }),
+    )
+      .getAllByRole("option")
+      .map((option) => ({
+        value: (option as HTMLOptionElement).value,
+        text: option.textContent,
+      }));
     expect(options).toEqual([
       { value: "", text: "Default" },
       { value: "seg-a", text: "blla-segment" },
@@ -131,7 +147,11 @@ describe("DocumentWorkflowMenu segment picker", () => {
     await screen.findByRole("combobox", {
       name: "Segmentation model",
     });
-    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(
+      within(
+        screen.getByRole("combobox", { name: "Segmentation model" }),
+      ).getAllByRole("option"),
+    ).toHaveLength(1);
 
     fireEvent.click(
       screen.getByRole("menuitem", { name: /segment unsegmented pages/i }),
@@ -141,6 +161,140 @@ describe("DocumentWorkflowMenu segment picker", () => {
         "project-1",
         "document-1",
         { scope: "unsegmented", model_id: null },
+      ),
+    );
+  });
+});
+
+describe("DocumentWorkflowMenu transcribe model", () => {
+  const CATALOG = [
+    ...SEGMENT_MODELS,
+    { id: "htr-greek", task: "transcribe", name: "greek-v1" },
+    { id: "htr-syriac", task: "transcribe", name: "syriac-v2" },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listInferenceModels.mockResolvedValue(CATALOG);
+    listProjectModelBindings.mockResolvedValue([]);
+    listDocumentModelBindings.mockResolvedValue([]);
+    window.localStorage.clear();
+  });
+
+  it("names the model bound to the project", async () => {
+    listProjectModelBindings.mockResolvedValue([
+      { id: "b-1", task: "transcribe", model_id: "htr-syriac" },
+      { id: "b-2", task: "segment", model_id: "seg-a" },
+    ]);
+    openMenu();
+
+    expect(await screen.findByText("syriac-v2")).toBeTruthy();
+    expect(screen.queryByText("blla-greek-v2")).toBeNull();
+  });
+
+  it("prefers the document binding over the project one", async () => {
+    listProjectModelBindings.mockResolvedValue([
+      { id: "b-1", task: "transcribe", model_id: "htr-syriac" },
+    ]);
+    listDocumentModelBindings.mockResolvedValue([
+      { id: "b-3", task: "transcribe", model_id: "htr-greek" },
+    ]);
+    openMenu();
+
+    expect(await screen.findByText("greek-v1")).toBeTruthy();
+    expect(screen.queryByText("syriac-v2")).toBeNull();
+  });
+
+  it("offers the catalog's transcription models when nothing is bound and sends the choice", async () => {
+    enqueueDocumentTranscribe.mockResolvedValue({
+      queued: 1,
+      skipped: 0,
+      jobs: [],
+    });
+    render(
+      <DocumentWorkflowMenu
+        projectId="project-1"
+        documentId="document-1"
+        counts={{ ...COUNTS, unpaired: 2 }}
+        onJobsQueued={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /workflow/i }));
+
+    const select = await screen.findByRole("combobox", {
+      name: "Transcription model",
+    });
+    await waitFor(() =>
+      expect(
+        Array.from((select as HTMLSelectElement).options).map(
+          (option) => option.text,
+        ),
+      ).toEqual(["htr", "greek-v1", "syriac-v2"]),
+    );
+    fireEvent.change(select, { target: { value: "htr-syriac" } });
+    expect(screen.queryByText("Project default")).toBeNull();
+    expect(
+      window.localStorage.getItem("nomikos.transcribeModel.project-1"),
+    ).toBe("htr-syriac");
+
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /transcribe unpaired pages/i }),
+    );
+    await waitFor(() =>
+      expect(enqueueDocumentTranscribe).toHaveBeenCalledWith(
+        "project-1",
+        "document-1",
+        { scope: "unpaired", model_id: "htr-syriac" },
+      ),
+    );
+  });
+
+  it("remembers the last choice for the project", async () => {
+    window.localStorage.setItem(
+      "nomikos.transcribeModel.project-1",
+      "htr-syriac",
+    );
+    openMenu();
+
+    const select = await screen.findByRole("combobox", {
+      name: "Transcription model",
+    });
+    await waitFor(() =>
+      expect((select as HTMLSelectElement).value).toBe("htr-syriac"),
+    );
+  });
+
+  it("shows no picker and sends no model when a binding exists", async () => {
+    listProjectModelBindings.mockResolvedValue([
+      { id: "b-1", task: "transcribe", model_id: "htr-greek" },
+    ]);
+    enqueueDocumentTranscribe.mockResolvedValue({
+      queued: 1,
+      skipped: 0,
+      jobs: [],
+    });
+    render(
+      <DocumentWorkflowMenu
+        projectId="project-1"
+        documentId="document-1"
+        counts={{ ...COUNTS, unpaired: 2 }}
+        onJobsQueued={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /workflow/i }));
+
+    expect(await screen.findByText("greek-v1")).toBeTruthy();
+    expect(
+      screen.queryByRole("combobox", { name: "Transcription model" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /transcribe unpaired pages/i }),
+    );
+    await waitFor(() =>
+      expect(enqueueDocumentTranscribe).toHaveBeenCalledWith(
+        "project-1",
+        "document-1",
+        { scope: "unpaired", model_id: null },
       ),
     );
   });
