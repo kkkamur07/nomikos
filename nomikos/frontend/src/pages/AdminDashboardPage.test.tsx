@@ -193,6 +193,18 @@ describe("AdminDashboardPage", () => {
     expect(api.adminOverview).not.toHaveBeenCalled();
     expect(screen.queryByText("Admin")).toBeNull();
   });
+
+  it("shows its loading state while the admin lookup has not answered", () => {
+    auth.isAdmin = null;
+
+    render(<AdminDashboardPage />);
+
+    expect(navigation.notFound).not.toHaveBeenCalled();
+    expect(api.adminOverview).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("status", { name: "Loading the overview" }),
+    ).toBeTruthy();
+  });
 });
 
 describe("AdminFeedbackTable", () => {

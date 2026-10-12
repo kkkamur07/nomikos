@@ -29,11 +29,14 @@ There is no API or UI for this, on purpose. Run SQL against the database.
 ## What each number means
 
 All windows are the last 7, 30 or 90 days (the selector at the top), bucketed by UTC day.
+The Postgres cards (headline, activity, users, models, database) are cached for 60 seconds per
+window in each API process, and each of their statements stops after 5 seconds; the request,
+client-failure and pool numbers are always live.
 
 ### Headline
 
-- **Users**: every account. **Active, 7 / 30 days**: distinct accounts that signed in (created
-  a browser session) in that period. **New**: accounts created in the window.
+- **Users**: every account. **Active, 7 / 30 days**: distinct accounts that used a browser
+  session (signed in, or refreshed an existing session) in that period. **New**: accounts created in the window.
 - **Jobs**: jobs created in the window, with the failed ones underneath.
 - **Client failures**: failure beacons received by this API process since it started.
 
@@ -42,7 +45,9 @@ All windows are the last 7, 30 or 90 days (the selector at the top), bucketed by
 - **Jobs by status**: jobs created per day, stacked by their current status.
 - **Corrections and approved lines**: a correction is one annotation-history snapshot (a page
   save). Approved lines are the rise in lines with approved text since the page's previous
-  snapshot. History keeps only the last few snapshots per page, so older days under-count.
+  snapshot. History keeps only the last few snapshots per page, and a page's oldest kept
+  snapshot has nothing to compare with, so its approvals are not counted: older days
+  under-count, never over-count.
 - **Pages uploaded** and **Lines created**: rows created in `document_parts` and `lines`,
   including lines made by segmentation.
 - **Jobs by kind**: the same jobs totalled by type.
@@ -83,7 +88,9 @@ the statistics were last reset (shown in the card note), not limited to the wind
 
 Per route template, method and status class: request count, average and maximum latency in ms.
 Held in this API process's memory since it started (health probes and docs excluded), so it
-resets on every restart and each replica reports only its own traffic. Nothing is written to the
+resets on every restart and each replica reports only its own traffic. The numbers are also
+per worker: with more than one uvicorn worker (`WEB_CONCURRENCY` above 1), each refresh shows
+whichever worker answered. Nothing is written to the
 database per request.
 
 ### Client failures

@@ -75,16 +75,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     let active = true;
-    // No auth recovery, and wrapped so a synchronous throw lands in the same
-    // catch: a failed lookup only hides the admin link, it never signs anyone out.
+    setIsAdmin(null);
+    // First without auth recovery, wrapped so a synchronous throw lands in the same
+    // catch. A failure is not an answer (a network blip, a 5xx, a token that expired
+    // since establish), so retry once with the normal recovery. If that fails too,
+    // `isAdmin` stays null: the link stays hidden and /admin keeps loading rather
+    // than turning a real admin away as not found.
     void Promise.resolve()
       .then(() => api.meWithoutRecovery(token))
+      .catch(() => api.me())
       .then((user) => {
         if (active) setIsAdmin(user?.is_admin === true);
       })
-      .catch(() => {
-        if (active) setIsAdmin(false);
-      });
+      .catch(() => {});
     return () => {
       active = false;
     };

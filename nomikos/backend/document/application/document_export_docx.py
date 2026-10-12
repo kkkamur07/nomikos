@@ -44,6 +44,11 @@ from backend.users.infrastructure.orm_models import User
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 _BODY_FONT_SIZE = Pt(12)
+# C0 controls other than tab, newline and carriage return (which python-docx turns into
+# w:tab and w:br), and the two Unicode non-characters XML 1.0 forbids.
+_XML_INVALID = dict.fromkeys(
+    [*(c for c in range(0x20) if c not in (0x09, 0x0A, 0x0D)), 0xFFFE, 0xFFFF]
+)
 
 
 @dataclass(frozen=True)
@@ -188,14 +193,25 @@ def _set_default_font(word: WordDocument) -> None:
     )
 
 
+def _xml_safe(text: str) -> str:
+    """Drop the characters XML cannot hold, which python-docx refuses with a ValueError.
+
+    Approved text is not sanitised on the way in, and Word puts a vertical tab on the
+    clipboard for a manual line break, so one pasted line would fail the whole export.
+    The vertical tab becomes a newline, which python-docx writes as a line break.
+    """
+    return text.replace("\x0b", "\n").translate(_XML_INVALID)
+
+
 def _add_region_heading(word: WordDocument, label: str) -> Paragraph:
     """A region's label on a line of its own, in bold: a folio name, not a heading level."""
     paragraph = word.add_paragraph()
-    paragraph.add_run(label).bold = True
+    paragraph.add_run(_xml_safe(label)).bold = True
     return paragraph
 
 
 def _add_line(word: WordDocument, text: str) -> Paragraph:
+    text = _xml_safe(text)
     script = detect_script(text)
     paragraph = word.add_paragraph()
     run = paragraph.add_run(text)

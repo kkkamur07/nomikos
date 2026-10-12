@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from backend.core.api import request_metrics
@@ -108,3 +110,19 @@ def test_client_failure_buffer_is_bounded() -> None:
         days=1, recent=request_metrics.CLIENT_FAILURE_BUFFER + 10
     )["recent"]
     assert len(recent) == request_metrics.CLIENT_FAILURE_BUFFER
+
+
+def test_background_tasks_after_the_response_are_not_charged_to_the_route() -> None:
+    app = FastAPI()
+    app.add_middleware(RequestMetricsMiddleware)
+
+    @app.post("/auth/login")
+    async def login(background: BackgroundTasks) -> dict:
+        background.add_task(time.sleep, 0.3)
+        return {"ok": True}
+
+    TestClient(app).post("/auth/login")
+
+    row = _route(request_metrics.snapshot(), "/auth/login", "2xx")
+    assert row["count"] == 1
+    assert row["max_ms"] < 250

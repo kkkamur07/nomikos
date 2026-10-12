@@ -77,8 +77,9 @@ export interface paths {
      * Admin Overview
      * @description Everything the dashboard shows, for the last ``days`` days.
      *
-     *     Per-route request counts and client failures are this API process's own,
-     *     since ``started_at``; the rest comes from Postgres.
+     *     Per-route request counts, client failures and the pool are this API process's
+     *     own, since ``started_at``, and always current; the rest comes from Postgres and
+     *     may be up to 60 seconds old.
      */
     get: operations["admin_overview_admin_overview_get"];
     put?: never;
