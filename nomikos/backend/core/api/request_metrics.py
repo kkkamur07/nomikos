@@ -152,8 +152,9 @@ class RequestMetricsMiddleware:
 
     Pure ASGI rather than ``BaseHTTPMiddleware`` so streaming responses (job
     events over SSE) pass through untouched; latency is measured to the end of
-    the response body. The route is read from ``scope["route"]`` after the
-    router has run, which Starlette fills in for the matched route.
+    the response body, so background tasks that run after it are not charged.
+    The route is read from ``scope["route"]`` after the router has run, which
+    Starlette fills in for the matched route.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -166,16 +167,13 @@ class RequestMetricsMiddleware:
 
         status_code = 500
         started = time.perf_counter()
+        recorded = False
 
-        async def send_wrapper(message: Message) -> None:
-            nonlocal status_code
-            if message["type"] == "http.response.start":
-                status_code = message["status"]
-            await send(message)
-
-        try:
-            await self.app(scope, receive, send_wrapper)
-        finally:
+        def record() -> None:
+            nonlocal recorded
+            if recorded:
+                return
+            recorded = True
             route = scope.get("route")
             template = getattr(route, "path", None) or UNMATCHED_ROUTE
             record_request(
@@ -184,3 +182,18 @@ class RequestMetricsMiddleware:
                 status_code,
                 (time.perf_counter() - started) * 1000.0,
             )
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+            # Stop the clock once the last body chunk is out: background tasks
+            # (the Resend mail after login) run after it inside the same call.
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                record()
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            record()

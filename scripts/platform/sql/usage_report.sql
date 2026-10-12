@@ -1,7 +1,9 @@
 -- Read-only production usage report. SELECTs only: no temp tables, no writes.
 -- Run through ~/nomikos-usage/usage_report.sh [--days N]; the window defaults to 30 days.
 -- Approved text = a non-blank ground_truth line_transcriptions row (as history_service counts it).
--- Logins = auth_sessions.created_at. Durations = completed_at - started_at (done jobs only).
+-- Active = a browser session used in the period: greatest(created_at, updated_at), since
+-- refresh rotates the same auth_sessions row (as the admin dashboard counts it).
+-- Durations = completed_at - started_at (done jobs only).
 -- Per-user content is credited to the project owner, as the admin dashboard does.
 \if :{?days}
 \else
@@ -18,8 +20,8 @@ SELECT
   (SELECT count(*) FROM users) AS users,
   (SELECT count(*) FROM users WHERE is_admin) AS admins,
   (SELECT count(*) FROM users WHERE created_at >= now() - make_interval(days => :days)) AS new,
-  (SELECT count(DISTINCT user_id) FROM auth_sessions WHERE created_at >= now() - interval '7 days') AS login_7d,
-  (SELECT count(DISTINCT user_id) FROM auth_sessions WHERE created_at >= now() - interval '30 days') AS login_30d;
+  (SELECT count(DISTINCT user_id) FROM auth_sessions WHERE greatest(created_at, updated_at) >= now() - interval '7 days') AS active_7d,
+  (SELECT count(DISTINCT user_id) FROM auth_sessions WHERE greatest(created_at, updated_at) >= now() - interval '30 days') AS active_30d;
 
 \echo == Per user (newest first, max 50)
 WITH owned AS (
@@ -46,12 +48,12 @@ WITH owned AS (
   WHERE created_at >= now() - make_interval(days => :days) AND user_id IS NOT NULL
   GROUP BY user_id
 ), seen AS (
-  SELECT user_id AS uid, max(created_at)::date AS last_login
+  SELECT user_id AS uid, max(greatest(created_at, updated_at))::date AS last_seen
   FROM auth_sessions GROUP BY user_id
 )
 SELECT u.email, u.created_at::date AS joined, coalesce(o.prj, 0) AS prj,
        coalesce(o.docs, 0) AS docs, coalesce(o.pages, 0) AS pages,
-       coalesce(a.lines_ok, 0) AS ok_lines, coalesce(j.jobs, 0) AS jobs, s.last_login
+       coalesce(a.lines_ok, 0) AS ok_lines, coalesce(j.jobs, 0) AS jobs, s.last_seen
 FROM users u
 LEFT JOIN owned o ON o.uid = u.id
 LEFT JOIN appr a ON a.uid = u.id

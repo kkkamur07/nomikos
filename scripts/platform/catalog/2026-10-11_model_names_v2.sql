@@ -11,10 +11,20 @@
 -- syriac-ppocr-v1->syriac-v2. Bindings on the retired syriac-calamari-v2 row
 -- move to syriac-v2 first (`model_bindings` has no unique constraint, so a
 -- plain UPDATE cannot collide), then the Calamari row is deleted.
--- `jobs.model_id` is ON DELETE SET NULL, so every job that ran on
--- syriac-calamari-v2 ends up with `model_id = NULL`; the count SELECT below
--- prints that number before the DELETE. Jobs on the six renamed rows keep
--- their UUID references and are unaffected.
+--
+-- Jobs on syriac-calamari-v2: the script refuses (RAISE, nothing applied) while
+-- any of them is pending, waiting or running, since a queued transcribe job that
+-- lost its model would fall back to the registry's syriac-calamari-v2 and run the
+-- retired model. Wait for them to finish or cancel them, then re-run. Finished
+-- jobs (done, failed, cancelled) are repointed to syriac-v2 before the DELETE, so
+-- none ends up with `model_id = NULL` (ON DELETE SET NULL); the SELECT below
+-- prints how many moved. Jobs on the six renamed rows keep their UUID references.
+--
+-- Admin dashboard models card: the six renamed rows show under their new names,
+-- with their history. syriac-calamari-v2 disappears from the card and its past
+-- jobs count under syriac-v2, so syriac-v2's job count, success rate and median
+-- time mix the Calamari and PP-OCR runs for windows that reach back before today.
+-- Nothing shows as "(no model)" because of this script.
 BEGIN;
 
 -- Guard: abort unless all 7 pre-rename rows are present. Re-running after a
@@ -41,6 +51,21 @@ BEGIN
 END
 $$;
 
+-- Guard: a queued or running job must not lose its model (see the header).
+DO $$
+DECLARE
+  active bigint;
+BEGIN
+  SELECT count(*) INTO active FROM jobs
+  WHERE status IN ('pending', 'waiting', 'running')
+    AND model_id = (SELECT id FROM inference_models WHERE name = 'syriac-calamari-v2');
+  IF active > 0 THEN
+    RAISE EXCEPTION 'catalog rename: % queued or running job(s) use syriac-calamari-v2; '
+      'let them finish or cancel them, then re-run', active;
+  END IF;
+END
+$$;
+
 UPDATE inference_models SET name = 'seg-v1' WHERE name = 'kraken';
 UPDATE inference_models SET name = 'seg-v2' WHERE name = 'ppocr';
 UPDATE inference_models SET name = 'greek-v1' WHERE name = 'greek-calamari-v1';
@@ -51,8 +76,12 @@ UPDATE inference_models SET name = 'syriac-v2' WHERE name = 'syriac-ppocr-v1';
 UPDATE model_bindings SET model_id = (SELECT id FROM inference_models WHERE name = 'syriac-v2')
 WHERE model_id = (SELECT id FROM inference_models WHERE name = 'syriac-calamari-v2');
 
-SELECT count(*) AS jobs_losing_model_reference FROM jobs
-WHERE model_id = (SELECT id FROM inference_models WHERE name = 'syriac-calamari-v2');
+WITH moved AS (
+  UPDATE jobs SET model_id = (SELECT id FROM inference_models WHERE name = 'syriac-v2')
+  WHERE model_id = (SELECT id FROM inference_models WHERE name = 'syriac-calamari-v2')
+  RETURNING 1
+)
+SELECT count(*) AS finished_jobs_moved_to_syriac_v2 FROM moved;
 
 DELETE FROM inference_models WHERE name = 'syriac-calamari-v2';
 

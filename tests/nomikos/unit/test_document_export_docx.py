@@ -262,3 +262,18 @@ async def test_text_export_prints_region_labels_on_their_own_lines() -> None:
 def test_an_unlabelled_region_has_no_heading_but_keeps_its_lines_together() -> None:
     word = _word(render_docx([DocxPage(number=1, lines=[RegionHeading("4v"), "a", "b", "c"])]))
     assert [p.text for p in word.paragraphs] == ["Page 1", "4v", "a", "b", "c"]
+
+
+def test_a_vertical_tab_becomes_a_line_break_inside_the_line() -> None:
+    word = _word(render_docx([DocxPage(number=1, lines=["abc\x0bdef"])]))
+    line = word.paragraphs[1]
+
+    assert line.text == "abc\ndef"
+    assert line.runs[0]._r.find(qn("w:br")) is not None
+
+
+def test_xml_invalid_characters_are_dropped_not_a_failed_export() -> None:
+    word = _word(
+        render_docx([DocxPage(number=1, lines=[RegionHeading("fol.\x001r"), "a\x00b\x07c￾￿d"])])
+    )
+    assert [p.text for p in word.paragraphs] == ["Page 1", "fol.1r", "abcd"]

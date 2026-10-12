@@ -16,7 +16,8 @@ Two things the schema cannot answer exactly, and what is used instead:
   with approved text at that moment), so a save counts as one correction and the rise
   in ``paired_line_count`` since the page's previous snapshot counts as newly approved
   lines. History keeps only the last few snapshots per page
-  (``HISTORY_RETENTION_LIMIT``), so older days under-count.
+  (``HISTORY_RETENTION_LIMIT``) and a page's oldest kept snapshot has nothing to
+  compare with, so its approvals are not counted: older days under-count.
 * **Who approved them.** Snapshots record no user. Approvals are credited to the
   owner of the project the page belongs to.
 """
@@ -34,19 +35,22 @@ TOP_USERS = 20
 TOP_TABLES = 10
 
 # Approval deltas per snapshot. The window function runs over every snapshot of a
-# page (the previous one may predate the window) and the outer query filters.
+# page (the previous one may predate the window) and the outer query filters. A page's
+# oldest kept snapshot has no predecessor (history is pruned), so it counts as a
+# correction with no approvals rather than crediting every line it holds as new;
+# ``greatest`` ignores the NULL ``lag`` and yields 0.
 _APPROVAL_DELTAS = """
     SELECT s.part_id, s.created_at,
            greatest(
                s.paired_line_count
-               - coalesce(
-                   lag(s.paired_line_count) OVER (PARTITION BY s.part_id ORDER BY s.created_at),
-                   0
-               ),
+               - lag(s.paired_line_count) OVER (PARTITION BY s.part_id ORDER BY s.created_at),
                0
            ) AS approved
     FROM annotation_history_snapshots s
 """
+
+# A browser session is rotated in place on refresh, so ``updated_at`` is its last use.
+_SESSION_LAST_USED = "greatest(created_at, updated_at)"
 
 _USERS_SQL = text(
     f"""
@@ -66,7 +70,7 @@ _USERS_SQL = text(
         GROUP BY user_id
     ),
     last_seen AS (
-        SELECT user_id, max(greatest(created_at, updated_at)) AS last_seen
+        SELECT user_id, max({_SESSION_LAST_USED}) AS last_seen
         FROM auth_sessions
         GROUP BY user_id
     )
@@ -75,11 +79,11 @@ _USERS_SQL = text(
         (SELECT count(*) FROM users WHERE is_admin) AS admins,
         (SELECT count(*) FROM users WHERE created_at >= :since) AS new_in_window,
         (SELECT count(DISTINCT user_id) FROM auth_sessions
-            WHERE created_at >= now() - interval '7 days') AS active_7d,
+            WHERE {_SESSION_LAST_USED} >= now() - interval '7 days') AS active_7d,
         (SELECT count(DISTINCT user_id) FROM auth_sessions
-            WHERE created_at >= now() - interval '30 days') AS active_30d,
+            WHERE {_SESSION_LAST_USED} >= now() - interval '30 days') AS active_30d,
         (SELECT count(DISTINCT user_id) FROM auth_sessions
-            WHERE created_at >= :since) AS active_in_window,
+            WHERE {_SESSION_LAST_USED} >= :since) AS active_in_window,
         (SELECT coalesce(json_agg(w ORDER BY w.week), '[]'::json) FROM (
             SELECT date_trunc('week', created_at AT TIME ZONE 'UTC')::date AS week,
                    count(*) AS count

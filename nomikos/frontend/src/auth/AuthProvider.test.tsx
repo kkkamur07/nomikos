@@ -125,7 +125,12 @@ describe("AuthProvider session lifecycle", () => {
   it("establish stores the token and authenticates the session", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(null, { status: 401 })),
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        // The admin lookup that follows establish, answered as a live token would be.
+        if (url.endsWith("/me")) return jsonResponse({ is_admin: false });
+        return new Response(null, { status: 401 });
+      }),
     );
     await renderControls();
 
@@ -187,5 +192,77 @@ describe("AuthProvider session lifecycle", () => {
     expect(screen.getByText("anonymous")).toBeInTheDocument();
     // ...and the failure is still reported rather than silently swallowed.
     expect(logoutError).toHaveBeenCalled();
+  });
+});
+
+function AdminFlag() {
+  const { status, isAdmin, establish } = useAuthSession();
+  return (
+    <>
+      <output>{status}</output>
+      <output aria-label="is admin">{String(isAdmin)}</output>
+      <button onClick={() => establish("granted-token")}>establish</button>
+    </>
+  );
+}
+
+// A failed `/me` is not an answer: reading it as "not an admin" sent a real admin
+// to the not-found page for the rest of the session.
+describe("AuthProvider admin lookup", () => {
+  beforeEach(() => {
+    clearAccessToken();
+  });
+
+  function meCalls(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls.filter(([url]) =>
+      (typeof url === "string" ? url : url.toString()).endsWith("/me"),
+    );
+  }
+
+  async function establishWith(fetchMock: ReturnType<typeof vi.fn>) {
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AuthProvider>
+        <AdminFlag />
+      </AuthProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("anonymous")).toBeInTheDocument(),
+    );
+    screen.getByRole("button", { name: "establish" }).click();
+  }
+
+  it("retries a failed /me once and then knows the account is an admin", async () => {
+    let meAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/me")) {
+        meAttempts += 1;
+        return meAttempts === 1
+          ? new Response(null, { status: 503 })
+          : jsonResponse({ id: "u-1", is_admin: true });
+      }
+      return new Response(null, { status: 401 });
+    });
+    await establishWith(fetchMock);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("is admin")).toHaveTextContent("true"),
+    );
+    expect(meCalls(fetchMock)).toHaveLength(2);
+  });
+
+  it("stays unknown, not false, when /me keeps failing", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/me")) return new Response(null, { status: 503 });
+      return new Response(null, { status: 401 });
+    });
+    await establishWith(fetchMock);
+
+    await waitFor(() => expect(meCalls(fetchMock)).toHaveLength(2));
+    // Let the second failure settle before reading the flag.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByLabelText("is admin")).toHaveTextContent("null");
   });
 });

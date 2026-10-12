@@ -6,11 +6,17 @@
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin boolean NOT NULL DEFAULT false;
 
--- Only if this database has an alembic_version table: keep alembic's bookkeeping in step
--- so a later `alembic upgrade head` does not add the column a second time. The WHERE
--- makes it a no-op unless the database was at 006 before the ALTER above.
--- UPDATE alembic_version SET version_num = '007_user_is_admin'
--- WHERE version_num = '006_public_sharing';
+-- Keep alembic's bookkeeping in step, so a later `alembic upgrade head` does not
+-- add the column a second time. Skipped without an alembic_version table,
+-- and a no-op unless the database was at 006_public_sharing before the statements above.
+DO $$
+BEGIN
+  IF to_regclass('alembic_version') IS NOT NULL THEN
+    UPDATE alembic_version SET version_num = '007_user_is_admin'
+    WHERE version_num = '006_public_sharing';
+  END IF;
+END
+$$;
 
 -- Promote one account to admin (run separately, after the block above):
 -- UPDATE users SET is_admin = true WHERE lower(email) = lower('someone@example.com');

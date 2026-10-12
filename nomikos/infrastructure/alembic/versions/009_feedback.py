@@ -40,6 +40,26 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_feedback_user_created", "feedback", ["user_id", "created_at"])
+    _grant_runtime_privileges()
+
+
+def _grant_runtime_privileges() -> None:
+    """Grant the API role explicitly, as 003 does: 002's default privileges only
+    cover tables created by the role that ran 002."""
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nomikos_api') THEN
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE feedback TO nomikos_api;
+          END IF;
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nomikos_migrator') THEN
+            GRANT ALL PRIVILEGES ON TABLE feedback TO nomikos_migrator;
+          END IF;
+        END
+        $$;
+        """
+    )
 
 
 def downgrade() -> None:

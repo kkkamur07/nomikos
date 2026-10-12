@@ -5097,7 +5097,7 @@
     },
     "/admin/overview": {
       "get": {
-        "description": "Everything the dashboard shows, for the last ``days`` days.\n\nPer-route request counts and client failures are this API process's own,\nsince ``started_at``; the rest comes from Postgres.",
+        "description": "Everything the dashboard shows, for the last ``days`` days.\n\nPer-route request counts, client failures and the pool are this API process's\nown, since ``started_at``, and always current; the rest comes from Postgres and\nmay be up to 60 seconds old.",
         "operationId": "admin_overview_admin_overview_get",
         "parameters": [
           {

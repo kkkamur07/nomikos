@@ -8,12 +8,14 @@ See ADR "Admin dashboard and request metrics".
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.api import request_metrics
@@ -23,6 +25,18 @@ from backend.users.infrastructure.orm_models import User
 from infrastructure.db import engine, get_db
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+#: How long one window's Postgres cards are reused, so reloading the dashboard or
+#: flipping the 7/30/90 selector does not rescan ``lines`` and the history table.
+OVERVIEW_CACHE_SECONDS = 60.0
+#: Ceiling for each overview statement; a slow dashboard must not hold a connection.
+OVERVIEW_STATEMENT_TIMEOUT = "5s"
+
+_overview_cache: dict[int, tuple[float, dict[str, Any]]] = {}
+
+
+def clear_overview_cache() -> None:
+    _overview_cache.clear()
 
 
 class WeekCount(BaseModel):
@@ -165,6 +179,25 @@ def _pool_status() -> str | None:
     return status() if callable(status) else None
 
 
+async def _postgres_cards(db: AsyncSession, *, days: int) -> dict[str, Any]:
+    """The four cards that query Postgres, cached per ``days`` in this process."""
+    now = time.monotonic()
+    cached = _overview_cache.get(days)
+    if cached is not None and now - cached[0] < OVERVIEW_CACHE_SECONDS:
+        return cached[1]
+    # LOCAL: ends with this request's transaction, so the pooled connection
+    # goes back without it.
+    await db.execute(text(f"SET LOCAL statement_timeout = '{OVERVIEW_STATEMENT_TIMEOUT}'"))
+    cards = {
+        "users": await admin_stats_service.users_stats(db, days=days),
+        "activity": await admin_stats_service.activity_stats(db, days=days),
+        "models": await admin_stats_service.model_stats(db, days=days),
+        "database": await admin_stats_service.database_stats(db),
+    }
+    _overview_cache[days] = (now, cards)
+    return cards
+
+
 @router.get("/overview", response_model=AdminOverview)
 async def admin_overview(
     _admin: Annotated[User, Depends(require_admin)],
@@ -173,18 +206,20 @@ async def admin_overview(
 ) -> AdminOverview:
     """Everything the dashboard shows, for the last ``days`` days.
 
-    Per-route request counts and client failures are this API process's own,
-    since ``started_at``; the rest comes from Postgres.
+    Per-route request counts, client failures and the pool are this API process's
+    own, since ``started_at``, and always current; the rest comes from Postgres and
+    may be up to 60 seconds old.
     """
+    cards = await _postgres_cards(db, days=days)
     return AdminOverview.model_validate(
         {
             "days": days,
             "generated_at": admin_stats_service.window_start(0),
-            "users": await admin_stats_service.users_stats(db, days=days),
-            "activity": await admin_stats_service.activity_stats(db, days=days),
-            "models": await admin_stats_service.model_stats(db, days=days),
+            "users": cards["users"],
+            "activity": cards["activity"],
+            "models": cards["models"],
             "client_failures": request_metrics.client_failures_snapshot(days=days),
-            "database": await admin_stats_service.database_stats(db, pool_status=_pool_status()),
+            "database": {**cards["database"], "pool_status": _pool_status()},
             "requests": request_metrics.snapshot(),
         }
     )
