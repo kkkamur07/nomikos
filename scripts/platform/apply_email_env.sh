@@ -53,10 +53,13 @@
 # EMAIL_SIGNIN_NOTICES, and EMAIL_REPLY_TO only when given. Read by
 # nomikos/backend/core/settings/email.py.
 #
-# Usage: apply_email_env.sh [--check | --dry-run]
-#   --check    validate the secrets file only (presence, mode, key prefix) and
-#              list which keys are present, masked; contacts nothing.
-#   --dry-run  print the plan with masked values; contacts nothing.
+# Usage: apply_email_env.sh [--check | --dry-run] [--no-deploy]
+#   --check      validate the secrets file only (presence, mode, key prefix) and
+#                list which keys are present, masked; contacts nothing.
+#   --dry-run    print the plan with masked values; contacts nothing.
+#   --no-deploy  set the variables but skip step 4 (no redeploy). For a release
+#                where the merge to the tracked branch deploys anyway
+#                (release_2026_10_11.sh calls it this way).
 #
 # Fallback (token route not possible): open the Coolify dashboard, then
 #   Projects > (production project) > (API application) > Environment Variables,
@@ -67,12 +70,15 @@ set -euo pipefail
 die() { echo "error: $*" >&2; exit 1; }
 
 MODE=run
-case "${1:-}" in
-  "") ;;
-  --check) MODE=check ;;
-  --dry-run) MODE=dry ;;
-  *) echo "usage: $0 [--check | --dry-run]" >&2; exit 2 ;;
-esac
+DEPLOY=1
+for arg in "$@"; do
+  case "$arg" in
+    --check) MODE=check ;;
+    --dry-run) MODE=dry ;;
+    --no-deploy) DEPLOY=0 ;;
+    *) echo "usage: $0 [--check | --dry-run] [--no-deploy]" >&2; exit 2 ;;
+  esac
+done
 
 SECRETS_FILE="${NOMIKOS_SECRETS_FILE:-$HOME/.nomikos-resend.env}"
 
@@ -147,8 +153,12 @@ if [ "$MODE" = dry ]; then
     esac
   done
   [ -n "$EMAIL_REPLY_TO" ] || echo "       (EMAIL_REPLY_TO unset: not written, the mails show no reply address)"
-  echo "  3. GET   $COOLIFY_URL/api/v1/deploy?uuid=<uuid>&force=true"
-  echo "     (redeploy: rebuilds from the head of the tracked branch, after a 5 second ctrl+c window)"
+  if [ "$DEPLOY" = 1 ]; then
+    echo "  3. GET   $COOLIFY_URL/api/v1/deploy?uuid=<uuid>&force=true"
+    echo "     (redeploy: rebuilds from the head of the tracked branch, after a 5 second ctrl+c window)"
+  else
+    echo "  (--no-deploy: no redeploy; the variables reach the container on the next deploy)"
+  fi
   exit 0
 fi
 
@@ -218,6 +228,12 @@ print(json.dumps({"key": os.environ["K"], "value": os.environ["V"], "is_preview"
     fi
     echo "  set $k"
   done
+fi
+
+if [ "$DEPLOY" = 0 ]; then
+  echo "--no-deploy: not redeploying. The variables reach the container on the next deploy"
+  echo "of ${APP_LABEL} (branch ${GIT_BRANCH:-unknown})."
+  exit 0
 fi
 
 echo

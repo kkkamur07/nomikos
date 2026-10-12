@@ -165,5 +165,21 @@ then
   FAILS=$((FAILS + 1))
 fi
 
+echo "== --dry-run --no-deploy"
+run drynd --dry-run --no-deploy
+check "--dry-run --no-deploy exits 0" [ "$(cat "$WORK/drynd.rc")" = 0 ]
+check "--dry-run --no-deploy plans no redeploy" bash -c "! grep -q 'api/v1/deploy' '$WORK/drynd.out'"
+
+echo "== full run with --no-deploy"
+: > "$WORK/requests.log"
+run nodeploy --no-deploy
+check "--no-deploy exits 0" [ "$(cat "$WORK/nodeploy.rc")" = 0 ]
+check "--no-deploy prints no secret" no_secret nodeploy
+check "--no-deploy sends GET applications then PATCH envs/bulk only" [ "$(python3 -c '
+import json, sys
+print(" ".join(json.loads(l)["method"] + ":" + json.loads(l)["path"] for l in open(sys.argv[1]) if l.strip()))
+' "$WORK/requests.log")" = "GET:/api/v1/applications PATCH:/api/v1/applications/app-uuid-1/envs/bulk" ]
+check "--no-deploy rejects an unknown flag" bash -c "NOMIKOS_SECRETS_FILE='$SECRETS' bash '$SCRIPT' --bogus >/dev/null 2>&1; [ \$? = 2 ]"
+
 echo
 if [ "$FAILS" = 0 ]; then echo "PASS: apply_email_env.sh"; else echo "FAILED: $FAILS group(s)"; exit 1; fi
