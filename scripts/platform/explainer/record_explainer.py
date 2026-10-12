@@ -3,11 +3,11 @@
 
 Two videos, picked with ``--video``:
 
-* ``tour``: a 1 to 2 minute tour of what changed in the latest round, logged
-  in as the dev user on the seeded Grec 1360 document.
-* ``explainer``: the 3 to 5 minute walk through a new user meets: register,
-  project, document, upload, a segmentation job, the editor, exports,
-  sharing and the public read only page.
+* ``tour``: a tour of under a minute of what changed in the latest round,
+  logged in as the dev user on the seeded Grec 1360 document.
+* ``explainer``: the walk through a new user meets, under two minutes:
+  register, project, document, upload, a segmentation job, the editor on a
+  transcribed document, an export, sharing and the public read only page.
 
 Captions come from ``captions.json`` next to this file and are burned into
 the picture: a fixed caption bar is injected into the page, so the recording
@@ -17,7 +17,8 @@ does not draw the cursor. The webm is converted to mp4 with ffmpeg and a
 
 Everything that depends on the stack comes from environment variables, see
 README.md. The script is re-runnable: it removes what an earlier run left
-behind (Eleni's project, the 4v region) through the API before recording.
+behind (Eleni's project, the 4v region, open jobs) through the API before
+recording.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -65,7 +68,7 @@ IMAGES = os.environ.get(
 ).split(",")
 OUT_DIR = Path(os.environ.get("NOMIKOS_VIDEO_OUT", str(HERE / "out")))
 FFMPEG = os.environ.get("FFMPEG", "/opt/homebrew/bin/ffmpeg")
-SLOW_MO = int(os.environ.get("NOMIKOS_SLOW_MO", "400"))
+SLOW_MO = int(os.environ.get("NOMIKOS_SLOW_MO", "150"))
 VIEWPORT = {"width": 1440, "height": 900}
 MIN_HOLD = 2.5
 
@@ -211,6 +214,71 @@ def line_ids(token: str, seed: Seed) -> set[str]:
     return {line["id"] for line in api("GET", part_base(seed) + "/layout", token)["lines"]}
 
 
+def upload_image(token: str, path: str, filename: str, data: bytes) -> dict:
+    boundary = uuid.uuid4().hex
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        "Content-Type: image/webp\r\n\r\n"
+    )
+    body = head.encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(API_URL + path, data=body, method="POST")  # noqa: S310 - scheme checked above
+    req.add_header("content-type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - scheme checked above
+        return json.loads(resp.read())
+
+
+def ground_truth(line: dict) -> str | None:
+    texts = [
+        t["text"] for t in line["line_transcriptions"] if t["transcription_kind"] == "ground_truth"
+    ]
+    return texts[0] if texts else None
+
+
+def seed_parts(token: str, seed: Seed) -> list[dict]:
+    detail = api("GET", seed.document_path, token)
+    return sorted(detail["parts"], key=lambda p: p.get("order", 0))
+
+
+def first_line_text(token: str, seed: Seed, index: int) -> str:
+    """The start of the first transcribed line on seeded page ``index``, which
+    the public page must show."""
+    part = seed_parts(token, seed)[index]
+    layout = api("GET", f"{seed.document_path}/parts/{part['id']}/layout", token)
+    texts = [ground_truth(line) for line in sorted(layout["lines"], key=lambda x: x["order"])]
+    text = next(t for t in texts if t)
+    return text.strip()[:12]
+
+
+def copy_seed_document(dev_token: str, seed: Seed, token: str, project_id: str) -> str:
+    """Copy the seeded document, its page images, lines and ground truth text,
+    into ``project_id`` as the user behind ``token``. Real seeded data, read
+    and written through the public API."""
+    doc = api("POST", f"/projects/{project_id}/documents", token, {"name": SEED_DOCUMENT})
+    doc_path = f"/projects/{project_id}/documents/{doc['id']}"
+    for part in seed_parts(dev_token, seed):
+        req = urllib.request.Request(API_URL + part["image_url"])  # noqa: S310 - scheme checked above
+        req.add_header("authorization", f"Bearer {dev_token}")
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - scheme checked above
+            data = resp.read()
+        new = upload_image(token, doc_path + "/parts", f"page-{part['order'] + 1}.webp", data)
+        layout = api("GET", f"{seed.document_path}/parts/{part['id']}/layout", dev_token)
+        lines = [
+            {
+                "order": line["order"],
+                "points": line["points"],
+                "baseline": line["baseline"],
+                "mask": line["mask"],
+                "kind": line["kind"],
+                "approved_text": ground_truth(line),
+            }
+            for line in layout["lines"]
+        ]
+        api("PUT", f"{doc_path}/parts/{new['id']}/lines", token, {"lines": lines})
+    return doc["id"]
+
+
 def reset_user_projects(token: str) -> None:
     for project in items(api("GET", "/projects", token)):
         if project["name"] == PROJECT_NAME:
@@ -266,7 +334,7 @@ class Recorder:
     def now(self) -> float:
         return time.monotonic() - self.t0
 
-    def caption(self, key: str, dwell: float = 0.6) -> None:
+    def caption(self, key: str, dwell: float = 0.3) -> None:
         text = self.captions[key]
         need(len(text) < 90, f"caption {key!r} is {len(text)} characters")
         if self.log:
@@ -290,7 +358,7 @@ class Recorder:
             box = target.bounding_box()
             need(box, "element has no box")
             x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-        self.page.mouse.move(x, y, steps=20)
+        self.page.mouse.move(x, y, steps=12)
         return x, y
 
     def click(self, target: Locator | tuple[float, float]) -> None:
@@ -300,12 +368,12 @@ class Recorder:
     def drag(self, start: tuple[float, float], end: tuple[float, float]) -> None:
         self.point(start)
         self.page.mouse.down()
-        self.page.mouse.move(end[0], end[1], steps=25)
+        self.page.mouse.move(end[0], end[1], steps=15)
         self.page.mouse.up()
 
     def type(self, target: Locator, text: str) -> None:
         self.click(target)
-        self.page.keyboard.type(text, delay=60)
+        self.page.keyboard.type(text, delay=25)
 
     def goto(self, path: str) -> None:
         self.page.goto(BASE_URL + path)
@@ -340,12 +408,11 @@ def warm_up(browser, seed: Seed) -> None:
         f"/projects/{seed.project_id}",
         seed.document_path,
         seed.editor_path,
-        "/admin",
         f"/public/projects/{zero}/documents/{zero}?t=warm-up",
     ):
         page.goto(BASE_URL + path)
         page.wait_for_load_state("load")
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1000)
     ctx.close()
 
 
@@ -374,11 +441,6 @@ def wait_editor(page: Page) -> None:
     dismiss_note(page)
 
 
-def fit_page(r: Recorder) -> None:
-    r.click(r.page.get_by_role("button", name="Fit page to view"))
-    r.page.wait_for_timeout(600)
-
-
 def page_image_box(page: Page) -> dict:
     """The box around every Segment on the canvas, in viewport pixels."""
     boxes = page.locator("polygon[aria-label^='Segment ']").evaluate_all(
@@ -392,7 +454,17 @@ def page_image_box(page: Page) -> dict:
     }
 
 
-def draw_region(r: Recorder, label_caption: str) -> None:
+def fit_view(page: Page) -> None:
+    page.get_by_role("button", name="Fit page to view").click()
+    page.wait_for_timeout(500)
+
+
+def toggle_transcript(r: Recorder) -> None:
+    """The Transcript button in the top bar (its title says Hide or Show)."""
+    r.click(r.page.locator("button[title$='transcript pane (T)']").first)
+
+
+def draw_region(r: Recorder) -> None:
     page = r.page
     box = page_image_box(page)
     r.click(page.get_by_role("button", name="Region (G)"))
@@ -400,10 +472,9 @@ def draw_region(r: Recorder, label_caption: str) -> None:
     r.drag((box["x0"] - pad, box["top"] - pad), (box["x1"] + pad, box["bottom"] + pad))
     label = page.get_by_label("Region label")
     label.wait_for(timeout=10000)
-    r.caption(label_caption)
     r.type(label, "4v")
     page.keyboard.press("Enter")
-    r.hold(1.5)
+    r.hold(0.8)
 
 
 def download(r: Recorder, target: Locator) -> None:
@@ -435,33 +506,15 @@ def record_tour(
     page.wait_for_url("**/projects")
     r.goto(seed.editor_path)
     wait_editor(page)
-    fit_page(r)
-    r.caption("intro", dwell=2.0)
+    fit_view(page)
 
     r.caption("pickers")
-    r.point(page.get_by_label("HTR transcription model"))
     page.get_by_label("HTR transcription model").select_option(label="greek-v1")
-    r.hold(1.2)
-    r.point(page.get_by_label("Segmentation model"))
+    r.point(page.get_by_label("HTR transcription model"))
     page.get_by_label("Segmentation model").select_option(label="seg-v1")
-    r.hold(1.2)
+    r.point(page.get_by_label("Segmentation model"))
 
-    r.caption("jobs")
-    r.click(page.get_by_role("button", name="Transcribe"))
-    pill = page.get_by_role("button", name="background job", exact=False)
-    pill.wait_for(timeout=20000)
-    r.click(pill)
-    panel = page.get_by_role("dialog", name="Background jobs")
-    panel.wait_for(timeout=20000)
-    r.hold(2.0)
-    r.caption("jobs_cancel")
-    r.click(panel.get_by_role("button", name="Cancel"))
-    r.hold(2.0)
-    minimize = page.get_by_role("button", name="Minimize jobs panel")
-    if minimize.count() and minimize.is_visible():
-        r.click(minimize)
-
-    r.caption("numbering_draw")
+    r.caption("numbering")
     box = page_image_box(page)
     r.click(page.get_by_role("button", name="Rectangle segment (B)"))
     count_before = page.locator("polygon[aria-label^='Segment ']").count()
@@ -472,80 +525,51 @@ def record_tour(
         f"document.querySelectorAll(\"polygon[aria-label^='Segment ']\").length > {count_before}",
         timeout=15000,
     )
-    r.caption("numbering_number", dwell=2.0)
-    r.caption("numbering_delete")
+    r.hold(1.2)
     r.click(page.get_by_role("button", name="Select and pan (Esc)"))
     r.click(((x0 + x1) / 2, y + 11))
-    r.hold(0.8)
     r.click(page.get_by_role("button", name="Delete selected (⌫)"))
     page.wait_for_function(
         f"document.querySelectorAll(\"polygon[aria-label^='Segment ']\").length === {count_before}",
         timeout=15000,
     )
-    r.hold(1.5)
 
     r.caption("pane")
-    r.click(page.get_by_label("Segment 4 text"))
+    toggle_transcript(r)
     r.hold(1.0)
-    r.caption("pane_close")
-    r.click(page.get_by_role("button", name="Hide transcript pane"))
-    r.hold(2.0)
-    r.caption("pane_toggle")
-    r.click(page.get_by_role("button", name="Show transcript pane", exact=False))
-    r.hold(1.5)
-    fit_page(r)
+    toggle_transcript(r)
 
-    r.caption("region_draw")
-    draw_region(r, "region_label")
+    r.caption("region")
+    fit_view(r.page)
+    draw_region(r)
 
-    r.caption("editor_export")
+    r.caption("workflow")
     r.click(page.get_by_role("button", name="Workflow"))
+    r.point(page.get_by_role("menuitem", name="Check page", exact=False).first)
     r.point(page.locator("[aria-label='Download Word document']"))
-    r.hold(2.0)
+    r.hold(0.8)
     page.keyboard.press("Escape")
-    r.click((700, 820))
+
+    r.caption("jobs")
+    r.click(page.get_by_role("button", name="Transcribe").first)
+    pill = page.get_by_role("button", name="background job", exact=False)
+    pill.wait_for(timeout=20000)
+    r.click(pill)
+    page.get_by_role("dialog", name="Background jobs").wait_for(timeout=20000)
+    r.hold(3.0)
 
     r.caption("feedback")
-    r.click(page.get_by_role("button", name="Send feedback"))
-    box_fb = page.get_by_placeholder("What should we improve?")
-    r.type(box_fb, "Region labels are great.")
-    r.hold(1.0)
-    r.click(page.get_by_role("button", name="Cancel"))
-
-    r.caption("doc_download")
-    r.click(page.get_by_role("link", name="Back to document"))
-    page.get_by_role("button", name="Download").wait_for()
-    r.click(page.get_by_role("button", name="Download"))
-    r.point(page.locator("[aria-label='Word (.docx), whole chapter']"))
-    r.hold(1.0)
-    r.point(page.get_by_text("Plain text", exact=False).first)
-    r.hold(1.0)
-    r.point(page.locator("[aria-label='Transcription PDF, whole chapter']"))
-    r.hold(1.0)
-    page.keyboard.press("Escape")
-    r.click((1300, 700))
-
-    r.caption("admin")
-    r.click(page.get_by_role("link", name="Admin"))
-    page.wait_for_url("**/admin")
-    page.wait_for_timeout(1500)
-    r.hold(2.0)
-    page.mouse.wheel(0, 500)
-    r.hold(2.0)
-
-    r.caption("outro")
-    r.click(page.get_by_role("link", name="nomikos home"))
-    page.wait_for_url("**/projects")
-    page.get_by_text(SEED_PROJECT, exact=True).first.wait_for(timeout=30000)
-    r.hold(3.5)
+    r.point(page.get_by_role("button", name="Send feedback"))
+    r.hold(MIN_HOLD)
 
     video = page.video
     ctx.close()
-    # Belt and braces: the numbering demo deletes its Segment on screen, but a
-    # run that stopped half way must not leave it in the seeded page.
+    # The numbering demo deletes its Segment on screen, but a run that stopped
+    # half way must not leave it in the seeded page; the job is cancelled too.
     for line_id in line_ids(token, seed) - lines_before:
         api("DELETE", f"{part_base(seed)}/lines/{line_id}", token)
-    lead = max(r.log[0][0] - 0.4, 0)
+    cancel_open_jobs(token)
+    lead = max(r.log[0][0] - 0.3, 0)
     log = [(t - lead, c) for t, c in r.log]
     return [Path(video.path())], log, [(lead, None, 0)]
 
@@ -557,7 +581,6 @@ def record_explainer(browser, captions: dict[str, str], work: Path):
     dev_token = login(DEV_EMAIL, DEV_PASSWORD)
     need(dev_token, "dev login failed")
     seed = find_seed(dev_token)
-    reset_seed_part(dev_token, seed)
     cancel_open_jobs(dev_token)
     ensure_user(SECOND_EMAIL, SECOND_NAME, SECOND_PASSWORD)
     user_token = login(USER_EMAIL, USER_PASSWORD)
@@ -573,216 +596,160 @@ def record_explainer(browser, captions: dict[str, str], work: Path):
     if user_token is None:
         r.goto("/register")
         page.locator("#email").wait_for()
-        r.caption("intro", dwell=2.0)
         r.caption("register")
         r.type(page.locator("#email"), USER_EMAIL)
         r.type(page.locator("#username"), USER_NAME)
         r.type(page.locator("#password"), USER_PASSWORD)
-        r.caption("register_submit")
         r.click(page.get_by_role("button", name="Create account"))
         page.wait_for_url("**/projects", timeout=30000)
         page.get_by_role("button", name="New project").wait_for()
-        r.hold(1.5)
+        user_token = login(USER_EMAIL, USER_PASSWORD)
+        need(user_token, "the new user cannot log in")
     else:
-        r.goto("/login")
-        page.locator("input[type=email]").wait_for()
-        r.caption("intro", dwell=2.0)
         ui_login(r, USER_EMAIL, USER_PASSWORD, caption="login")
-    share_project(dev_token, seed.project_id, USER_EMAIL)
 
-    # 2. Project.
-    r.caption("project_new")
+    # 2. Project and document.
+    r.caption("project")
     r.click(page.get_by_role("button", name="New project"))
-    name_box = page.locator("dialog input, [role=dialog] input").first
-    r.type(name_box, PROJECT_NAME)
+    r.type(page.locator("dialog input, [role=dialog] input").first, PROJECT_NAME)
     r.click(page.get_by_role("button", name="Create"))
     page.get_by_text(PROJECT_NAME, exact=True).first.wait_for(timeout=30000)
-    r.hold(2.0)
     if not page.get_by_role("button", name="New document").is_visible():
         r.click(page.get_by_role("button", name="Open").nth(_row_index(page, PROJECT_NAME)))
     page.get_by_role("button", name="New document").wait_for(timeout=30000)
     project_url = page.url
-    r.caption("project_created")
-
-    # 3. Document.
-    r.caption("doc_new")
+    project_id = next(
+        p["id"] for p in items(api("GET", "/projects", user_token)) if p["name"] == PROJECT_NAME
+    )
+    # The narrator's transcribed document: the seeded Grec 1360 pages with their
+    # ground truth, copied into her project while the camera shows the upload.
+    pool = ThreadPoolExecutor(max_workers=1)
+    copied = pool.submit(copy_seed_document, dev_token, seed, user_token, project_id)
     r.click(page.get_by_role("button", name="New document"))
-    name_box = page.locator("dialog input, [role=dialog] input").first
-    r.type(name_box, DOCUMENT_NAME)
+    r.type(page.locator("dialog input, [role=dialog] input").first, DOCUMENT_NAME)
     r.click(page.get_by_role("button", name="Create"))
     page.get_by_text(DOCUMENT_NAME, exact=True).first.wait_for(timeout=30000)
-    r.hold(2.0)
     if not page.get_by_role("button", name="Upload pages").is_visible():
         r.click(page.get_by_role("button", name="Open").nth(_row_index(page, DOCUMENT_NAME)))
     page.get_by_role("button", name="Upload pages").wait_for(timeout=30000)
-    doc_url = page.url
-    r.caption("doc_created")
 
-    # 4. Upload.
+    # 3. Upload.
     r.caption("upload")
     with page.expect_file_chooser() as chooser:
         r.click(page.get_by_role("button", name="Upload pages"))
     chooser.value.set_files([str(IMAGE_DIR / name) for name in IMAGES])
     page.locator(f"[aria-label='Open part {len(IMAGES)} in editor']").wait_for(timeout=120000)
-    page.wait_for_timeout(1500)
-    r.caption("uploaded", dwell=1.5)
+    r.hold(0.8)
 
-    # 5. A segmentation job. No worker runs locally, so it stays queued.
-    r.caption("workflow")
+    # 4. A segmentation job. No worker runs locally, so it stays queued.
+    r.caption("segment")
     r.click(page.get_by_role("button", name="Workflow"))
     picker = page.get_by_label("Segmentation model")
-    r.point(picker)
     picker.select_option(label="seg-v1")
-    r.hold(1.0)
-    r.caption("segment")
+    r.point(picker)
     r.click(page.get_by_text("Segment unsegmented pages").first)
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(800)
     page.keyboard.press("Escape")
-    r.caption("queued", dwell=2.0)
     r.click(page.get_by_role("link", name=PROJECT_NAME))
     queued = page.get_by_text("Segmentation", exact=True).first
     queued.wait_for(timeout=30000)
-    r.caption("queued_more", dwell=0.5)
+    r.caption("queued", dwell=0.2)
     r.point(queued)
-    r.hold(1.5)
 
-    # 6. The editor, on the seeded document that was shared with this user.
-    r.caption("switch")
-    r.click(page.get_by_role("link", name="Projects"))
-    page.get_by_text(SEED_PROJECT).first.wait_for()
-    r.caption("shared_project")
-    r.point(page.get_by_text(SEED_PROJECT).first)
-    r.hold(1.0)
-    r.click(page.get_by_role("button", name="Open").nth(_row_index(page, SEED_PROJECT)))
-    page.get_by_text(SEED_DOCUMENT).first.wait_for()
+    # 5. The editor, on her transcribed copy of Grec 1360.
+    copied.result(timeout=120)
+    pool.shutdown()
+    page.reload()
+    page.get_by_text(SEED_DOCUMENT, exact=True).first.wait_for(timeout=30000)
     r.caption("open_doc")
     r.click(page.get_by_role("button", name="Open").nth(_row_index(page, SEED_DOCUMENT)))
     page.locator("[aria-label='Open part 1 in editor']").wait_for()
+    doc_url = page.url
     r.click(page.locator("[aria-label='Open part 1 in editor']"))
     wait_editor(page)
-    r.caption("editor", dwell=1.5)
-
-    r.caption("fit")
-    r.click(page.get_by_role("button", name="Zoom in"))
-    r.click(page.get_by_role("button", name="Zoom in"))
-    r.hold(1.0)
-    fit_page(r)
+    fit_view(page)
 
     r.caption("select_line")
     r.click(page.locator("polygon[aria-label^='Segment 5,']"))
-    r.hold(1.5)
     r.caption("edit_line")
     text_box = page.get_by_label("Segment 5 text")
     r.click(text_box)
     page.keyboard.press("End")
     last = text_box.input_value()[-1:]
     page.keyboard.press("Backspace")
-    r.hold(0.8)
-    page.keyboard.type(last, delay=200)
-    r.hold(1.0)
+    r.hold(0.5)
+    page.keyboard.type(last, delay=150)
     page.keyboard.press("Escape")
 
-    r.caption("region_tool")
-    draw_region(r, "region_label")
+    r.caption("pane")
+    toggle_transcript(r)
+    r.hold(1.0)
+    toggle_transcript(r)
+
+    r.caption("region")
+    fit_view(r.page)
+    draw_region(r)
     r.click(page.get_by_role("button", name="Select and pan (Esc)"))
 
-    r.caption("settings")
-    r.click(page.get_by_role("button", name="Editor settings"))
-    toggle = page.get_by_label("Side by side text panel")
-    r.point(toggle)
-    r.caption("settings_off")
-    r.click(toggle)
-    r.hold(2.0)
-    r.caption("settings_on")
-    r.click(toggle)
-    r.hold(1.5)
-    r.click(page.get_by_role("button", name="Editor settings"))
-
-    # 7. Exports.
-    r.caption("export_page")
+    # 6. One export.
+    r.caption("export")
     r.click(page.get_by_role("button", name="Workflow"))
-    download(r, page.locator("[aria-label='Download Word document']"))
-    r.hold(1.5)
-    r.caption("export_doc")
-    r.click(page.get_by_role("link", name="Back to document"))
-    page.get_by_role("button", name="Download").wait_for()
-    r.click(page.get_by_role("button", name="Download"))
-    r.caption("export_doc_more")
-    download(r, page.locator("[aria-label='Word (.docx), whole chapter']"))
-    r.hold(1.0)
-    r.click(page.get_by_role("button", name="Download"))
-    download(r, page.get_by_text("Plain text", exact=False).first)
-    r.hold(1.0)
-    r.click(page.get_by_role("button", name="Download"))
-    r.point(page.locator("[aria-label='Transcription PDF, whole chapter']"))
-    r.hold(1.5)
-    page.keyboard.press("Escape")
+    word = page.locator("[aria-label='Download Word document']")
+    r.point(word)
+    r.hold(1.2)
+    download(r, word)
+    r.hold(0.8)
 
-    # 8. Sharing the user's own project with a colleague.
+    # 7. Sharing the project with a colleague.
     r.goto(project_url.removeprefix(BASE_URL))
     page.get_by_role("button", name="Share", exact=True).wait_for()
-    r.caption("share_project")
+    r.caption("share")
     r.click(page.get_by_role("button", name="Share", exact=True))
-    share_box = page.get_by_placeholder("Email or username")
-    r.caption("share_add")
-    r.type(share_box, SECOND_EMAIL)
+    r.type(page.get_by_placeholder("Email or username"), SECOND_EMAIL)
     r.click(page.locator("form.entity-panel__share-form button[type=submit]"))
     people = page.get_by_label("Collaborators")
     people.wait_for(timeout=15000)
-    r.caption("share_done", dwell=0.5)
     r.point(people)
-    r.hold(2.5)
+    r.hold(1.0)
 
-    # 9. Publishing the new document and opening the public page.
+    # 8. Publishing the transcribed document and opening the public page.
     r.goto(doc_url.removeprefix(BASE_URL))
     page.get_by_role("button", name="Publish").wait_for()
     r.caption("publish")
     r.click(page.get_by_role("button", name="Publish"))
     r.click(page.get_by_text("Publish document (").first)
-    r.caption("publish_confirm")
     r.click(page.get_by_text("Publish document", exact=True).last)
     link_box = page.get_by_label("Public document link")
     link_box.wait_for(timeout=20000)
-    r.caption("publish_link")
     r.point(link_box)
-    r.hold(1.5)
+    r.hold(0.8)
     public_url = link_box.input_value()
     split_at = r.now()
 
     ctx2, page2 = new_context(browser, work / "explainer-public")
     r2 = Recorder(page2, captions)
     page2.goto(public_url)
-    page2.get_by_text(DOCUMENT_NAME).first.wait_for(timeout=60000)
-    page2.wait_for_timeout(1500)
-    r2.caption("public_view", dwell=2.0)
+    page2.get_by_text(SEED_DOCUMENT).first.wait_for(timeout=60000)
+    page2.get_by_text(first_line_text(dev_token, seed, 0)).first.wait_for(timeout=60000)
+    page2.wait_for_timeout(500)
+    r2.caption("public", dwell=1.0)
     r2.click(page2.get_by_text("Page 2", exact=True).first)
-    r2.caption("public_view_more", dwell=1.0)
-    r2.point(page2.get_by_text("Export", exact=True).first)
-    r2.hold(1.5)
-    public_start = max(r2.log[0][0] - 1.0, 0)
+    page2.get_by_text(first_line_text(dev_token, seed, 1)).first.wait_for(timeout=60000)
+    r2.caption("public_page2", dwell=MIN_HOLD)
+    public_start = max(r2.log[0][0] - 0.8, 0)
     public_end = r2.now()
     video2 = page2.video
     ctx2.close()
-
-    resume_at = r.now()
-    r.caption("outro")
-    r.click(page.get_by_role("link", name="Projects").first)
-    page.wait_for_url("**/projects")
-    page.get_by_text(PROJECT_NAME, exact=True).first.wait_for(timeout=30000)
-    r.hold(3.5)
     video1 = page.video
     ctx.close()
 
-    # The final cut: this context up to the public link, the fresh context's
-    # public page, then this context again from the outro. The lead-in before
-    # the first caption is trimmed.
-    lead = max(r.log[0][0] - 0.4, 0)
+    # The final cut: this context up to the public link, then the fresh
+    # context's public page. The lead-in before the first caption is trimmed.
+    lead = max(r.log[0][0] - 0.3, 0)
     first = split_at - lead
     log = [(t - lead, c) for t, c in r.log if t <= split_at]
     log += [(first + t - public_start, c) for t, c in r2.log]
-    shift = first + public_end - public_start - resume_at
-    log += [(t + shift, c) for t, c in r.log if t >= resume_at]
-    segments = [(lead, split_at, 0), (public_start, public_end, 1), (resume_at, None, 0)]
+    segments = [(lead, split_at, 0), (public_start, public_end, 1)]
     return [Path(video1.path()), Path(video2.path())], log, segments
 
 
