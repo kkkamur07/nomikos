@@ -3,7 +3,9 @@
 Before ADR 0008 a drawn line was stored at ``max(order) + 1`` and a deleted one left its
 number behind, so existing pages carry gaps, duplicates and lines numbered after lines
 they sit above. This keeps each page's current sequence, ``(order, created_at, id)``,
-and only closes the gaps and breaks the ties; it does not move any line. A line drawn
+regrouped region-first as the API numbers it (ADR 0011: the lines of each block in block
+order, then the lines in no block), and otherwise only closes the gaps and breaks the
+ties; it does not move a line within its region. A line drawn
 under the old rule stays last on its page: delete it and draw it again to place it.
 
 Dry run by default: it prints every part whose numbering would change and writes
@@ -35,7 +37,11 @@ ensure_nomikos_on_path()
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.engine import Connection  # noqa: E402
 
-from backend.document.application.reading_order import LineShape, renumber  # noqa: E402
+from backend.document.application.reading_order import (  # noqa: E402
+    LineShape,
+    block_ranks,
+    renumber,
+)
 
 
 def _part_ids(conn: Connection, *, document_id: UUID | None, part_id: UUID | None) -> list[UUID]:
@@ -54,11 +60,19 @@ def _part_ids(conn: Connection, *, document_id: UUID | None, part_id: UUID | Non
 def _changes(conn: Connection, part_id: UUID) -> list[tuple[UUID, int, int]]:
     """``(line_id, old_order, new_order)`` for every line whose order would change."""
     rows = conn.execute(
-        text('select id, "order" from lines where part_id = :p order by "order", created_at, id'),
+        text(
+            'select id, "order", block_id from lines where part_id = :p '
+            'order by "order", created_at, id'
+        ),
         {"p": part_id},
     ).all()
-    lines = [LineShape(id=row[0], order=row[1]) for row in rows]
-    orders = renumber(lines)
+    lines = [LineShape(id=row[0], order=row[1], block_id=row[2]) for row in rows]
+    # The same ranks the API uses, from blocks listed as the repository lists them.
+    blocks = conn.execute(
+        text('select id from blocks where part_id = :p order by "order", created_at'),
+        {"p": part_id},
+    ).all()
+    orders = renumber(lines, block_ranks(LineShape(id=row[0]) for row in blocks))
     return [
         (line.id, line.order, orders[line.id]) for line in lines if line.order != orders[line.id]
     ]

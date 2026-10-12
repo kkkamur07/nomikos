@@ -279,7 +279,8 @@ BlockLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=
 
 
 class BlockCreateRequest(BaseModel):
-    order: int = Field(ge=0)
+    # Omit it and the server ranks the region by where it is on the page (ADR 0011).
+    order: int | None = Field(default=None, ge=0)
     box: dict
     label: BlockLabel | None = None
     # Assign every line of the page whose centre lies inside ``box`` and that is in no

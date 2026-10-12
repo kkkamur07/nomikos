@@ -456,21 +456,20 @@ def test_refined_builder_rtl_reads_the_right_column_first() -> None:
     ]
 
 
-def test_refined_builder_leaves_a_spanning_header_unblocked() -> None:
+def test_refined_builder_puts_a_spanning_header_in_a_region_of_its_own() -> None:
     quads = [_quad(0, 50, 1900, 90)]
     quads.extend(_quad(100, y, 800, y + 30) for y in (200, 300, 400))
     quads.extend(_quad(1100, y, 1800, y + 30) for y in (200, 300, 400))
     response = _refined_response(quads, 2000, 600, "ltr")
 
-    assert len(response.blocks) == 2
-    unblocked = [line for line in response.lines if line.block_external_id is None]
-    assert len(unblocked) == 1
-    assert max(point[0] for point in unblocked[0].points) == 1900.0
-    assert {line.block_external_id for line in response.lines} == {
-        None,
-        "ppocr-det-region-1",
-        "ppocr-det-region-2",
-    }
+    assert len(response.blocks) == 3
+    header = next(line for line in response.lines if max(p[0] for p in line.points) == 1900.0)
+    others = {line.block_external_id for line in response.lines if line is not header}
+    assert header.block_external_id is not None
+    assert header.block_external_id not in others
+    # Regions are numbered by their first line's reading position.
+    first_seen = list(dict.fromkeys(line.block_external_id for line in response.lines))
+    assert [block.external_id for block in response.blocks] == first_seen
 
 
 def test_refined_builder_single_column_yields_one_bounding_block() -> None:

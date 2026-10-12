@@ -57,6 +57,48 @@ def line_in_box(points: Sequence[Sequence[float]] | None, box: dict | None) -> b
     return contains(box_polygon(box), *centre)
 
 
+def _bounds(box: dict | None) -> tuple[float, float, float, float] | None:
+    points = box_polygon(box)
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def reads_before(first: dict | None, second: dict | None, *, rtl: bool = False) -> bool:
+    """Whether region ``first`` is read before region ``second``, by where they are.
+
+    Regions that do not overlap vertically read top to bottom, by their top edge.
+    Regions side by side (a spread, two columns) read left to right, or right to left
+    on a right-to-left page.
+    """
+    a, b = _bounds(first), _bounds(second)
+    if a is None or b is None:
+        return False
+    if a[3] <= b[1] or b[3] <= a[1]:
+        return a[1] < b[1]
+    if rtl:
+        return a[2] > b[2]
+    return a[0] < b[0]
+
+
+def region_position(existing_boxes: Sequence[dict | None], box: dict | None, *, rtl: bool) -> int:
+    """Where a new region goes among ``existing_boxes`` (in page order), by position.
+
+    Before the first existing region it reads before; after all of them otherwise.
+    """
+    return next(
+        (index for index, other in enumerate(existing_boxes) if reads_before(box, other, rtl=rtl)),
+        len(existing_boxes),
+    )
+
+
+def region_containing(points: Sequence[Sequence[float]] | None, blocks: Sequence[B]) -> B | None:
+    """The first of ``blocks`` (in page order) whose box holds the line's centroid."""
+    return next((block for block in blocks if line_in_box(points, block.box)), None)  # type: ignore[attr-defined]
+
+
 @dataclass(frozen=True)
 class RegionHeading:
     """The label a region is printed under in a text export (docx, plain text)."""

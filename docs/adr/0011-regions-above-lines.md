@@ -41,6 +41,20 @@ It is used, not replaced.
   lines in no region. A page with no blocks exports exactly as before.
 - **Any source.** Regions from a segmenter run, from the editor's Region tool or from a
   hand-written row behave the same; nothing checks where a block came from.
+- **Revised 2026-10-11 (backend critique).** A segmenter's only block covering at least
+  90 percent of the image's width and height (blla's whole-page block) is the page, not a
+  region: `apply_sync` stores its lines with no block, and
+  `scripts/platform/sql/2026-10-11_drop_full_page_blocks.sql` removes the ones already
+  stored. A line created without `block_id` joins the region whose box contains its
+  centroid, and the editor's undo and redo resend a restored line's region. A region
+  created without `order` is ranked by position: top to bottom by its top edge when it does
+  not overlap the others vertically, else left to right, or right to left when the page's
+  transcribed text is in a right-to-left script (Syriac); a page with no text yet reads
+  left to right. The editor no longer sends an order; an explicit one is kept. PP-OCR puts
+  each band of column-spanning lines (a title, a footer) in a block of its own, and numbers
+  its blocks by their first line's reading position, so a title stays first. A PATCH that
+  carries no geometry field (only `block_id` or `order`) leaves `manual_geometry` and
+  `source` alone.
 
 ## Consequences
 

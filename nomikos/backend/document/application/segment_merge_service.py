@@ -30,6 +30,7 @@ from backend.document.application.reading_order import (
     merge_reading_order,
     renumber,
 )
+from backend.document.application.regions import box_polygon, region_containing
 from backend.document.infrastructure.orm_models import (
     Block,
     DocumentPart,
@@ -64,6 +65,10 @@ class SegmentMergeSummary:
 # that is half inside a kept one is not a new line either way. A kept numeral sitting
 # inside a fresh text line's polygon covers a small fraction of it and does not trip this.
 _COVERED_FRACTION = 0.5
+
+# A segmenter's only block covering at least this fraction of the image's width and
+# height is the page, not a region (blla wraps every line in one such block).
+_FULL_PAGE_FRACTION = 0.9
 
 
 class SegmentMergeService:
@@ -109,6 +114,10 @@ class SegmentMergeService:
 
         blocks_by_external_id: dict[str, Block] = {}
         for block_data in canonical_segment.blocks:
+            if len(canonical_segment.blocks) == 1 and _covers_page(block_data.box, part):
+                # Not a region: its lines are stored with no block (ADR 0011), so drawing
+                # a region or a line on the page works as on a page never segmented.
+                continue
             block = Block(
                 part_id=part.id,
                 order=block_data.order,
@@ -118,6 +127,16 @@ class SegmentMergeService:
             session.add(block)
             blocks_by_external_id[block_data.external_id] = block
         session.flush()
+
+        # A kept line whose block was just deleted joins the fresh region it sits in, so
+        # it is placed among that region's lines rather than after every region.
+        kept_block_ids = {block.id for block in kept_blocks}
+        fresh_blocks = sorted(blocks_by_external_id.values(), key=lambda block: block.order)
+        for line in kept_lines:
+            if line.block_id is not None and line.block_id in kept_block_ids:
+                continue
+            container = region_containing(line.points, fresh_blocks)
+            line.block_id = container.id if container is not None else None
 
         kept_geometry = _polygons(line.points for line in kept_lines)
         model_lines: list[Line] = []
@@ -228,6 +247,22 @@ class SegmentMergeService:
         if part is None:
             raise NotFoundError("Part not found")
         return part
+
+
+def _covers_page(box: dict, part: DocumentPart) -> bool:
+    """Whether ``box`` spans at least ``_FULL_PAGE_FRACTION`` of the image both ways.
+
+    A part with no recorded size cannot be measured, and its block is kept.
+    """
+    points = box_polygon(box)
+    if not points or not part.width or not part.height:
+        return False
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return (
+        max(xs) - min(xs) >= _FULL_PAGE_FRACTION * part.width
+        and max(ys) - min(ys) >= _FULL_PAGE_FRACTION * part.height
+    )
 
 
 def _polygons(point_lists) -> list[Polygon]:

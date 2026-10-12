@@ -53,7 +53,18 @@ Wiring, all under the existing `lock_part` row lock:
   create or delete because the endpoint returns only the row it wrote.
 
 Existing pages are fixed once with `scripts/platform/renumber_lines.py` (dry run by default,
-`--apply` writes), which closes gaps and breaks ties without moving any line.
+`--apply` writes), which closes gaps and breaks ties without moving any line within its
+region; it ranks the part's blocks as the API does, so a page not yet region-first is
+regrouped now rather than on its next write.
+
+Revised 2026-10-11 after the backend critique. The beside rule only applies to a new line
+that is a margin note: when a line of its own column lies within one line height of it (the
+larger of its height and that line's), the column decides, and a beside neighbour wins only
+when it is no further off sideways than the new line itself is tall. So a main-column line
+next to a tall gloss, or in a column 15 px from the next one, stays in its column. On a
+re-segment, a kept line whose block was deleted first joins the fresh region that contains
+its centroid and is then placed inside that region, so approved lines are no longer moved
+to the end of the page.
 
 ## Consequences
 

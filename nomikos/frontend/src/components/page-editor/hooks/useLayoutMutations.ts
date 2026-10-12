@@ -476,6 +476,17 @@ export function useLayoutMutations({
     }
   }
 
+  /**
+   * The region a restored Segment goes back into, when that region still
+   * exists; otherwise nothing, and the server files it by where it sits.
+   */
+  function regionOf(line: { block_id?: string | null }) {
+    const blockId = line.block_id;
+    return blockId && layout.blocks.some((block) => block.id === blockId)
+      ? { block_id: blockId }
+      : {};
+  }
+
   async function undoEdit() {
     const edit = undoStackRef.current.pop();
     if (!edit || !projectId || !documentId || !partId) {
@@ -500,6 +511,7 @@ export function useLayoutMutations({
           order: edit.line.order,
           kind: edit.line.kind,
           points: edit.line.points,
+          ...regionOf(edit.line),
         });
         const restored: CanvasEdit = { kind: "delete", line: saved };
         applyLocalLines(applyCanvasEditInverse(previous, restored));
@@ -542,6 +554,7 @@ export function useLayoutMutations({
           order: edit.line.order,
           kind: edit.line.kind,
           points: edit.line.points,
+          ...regionOf(edit.line),
         });
         const created: CanvasEdit = { kind: "create", line: saved };
         applyLocalLines(applyCanvasEdit(previous, created));

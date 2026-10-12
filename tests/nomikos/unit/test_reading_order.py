@@ -22,6 +22,7 @@ from backend.document.infrastructure.orm_models import (
     DocumentPart,
     Line,
     LineGeometryKind,
+    LineSource,
 )
 
 
@@ -499,3 +500,174 @@ async def test_a_line_drawn_inside_a_region_is_numbered_within_it():
     (created,) = [item for item in session.added if isinstance(item, Line)]
     assert created.order == 3
     assert sorted(line.order for line in repository.lines) == list(range(7))
+
+
+# --- Critique round (F1, F4, F7, F8) ---
+
+
+def _centred(name: str, x0: float, x1: float, centre: float, height: float = 30) -> LineShape:
+    """A line of ``height`` centred on ``centre``, baseline a third below the centre."""
+    top, bottom = centre - height / 2, centre + height / 2
+    return LineShape(
+        id=name,
+        points=_box(x0, top, x1, bottom),
+        baseline={"points": [[x0, centre + height / 3], [x1, centre + height / 3]]},
+    )
+
+
+def _rows(prefix: str, x0: float, x1: float, count: int) -> list[LineShape]:
+    return [_centred(f"{prefix}{i}", x0, x1, 100 + 50 * i) for i in range(count)]
+
+
+def test_a_main_line_below_a_tall_margin_note_stays_in_its_column():
+    # A gloss 180px tall, 10px right of the column, numbered after line 3 and spanning
+    # lines 3 to 6. A main-column line drawn between lines 5 and 6 belongs before line
+    # 6, not right after the gloss (ahead of line 4).
+    page = _rows("a", 100, 500, 10)
+    gloss = _centred("gloss", 510, 560, 330, height=180)
+    page = [*page[:4], gloss, *page[4:]]
+    index = insertion_index(page, _centred("new", 100, 500, 375))
+    assert page[index].id == "a6"
+
+
+def test_a_line_in_a_tight_left_column_does_not_jump_to_the_right_column():
+    # Two columns with a 15px gutter. A new left line between a5 and a6 goes before a6,
+    # not after b6 in the right column.
+    page = _rows("a", 100, 300, 10) + _rows("b", 315, 515, 10)
+    index = insertion_index(page, _centred("new", 100, 300, 375))
+    assert page[index].id == "a6"
+
+
+def _region_page(count: int = 4) -> tuple[DocumentPart, list[Line], Block]:
+    """A segmented page: every line already in one region (not full page)."""
+    part, lines = _page(count)
+    block = Block(id=uuid.uuid4(), part_id=part.id, order=0, box={"points": _box(50, 50, 950, 400)})
+    for line in lines:
+        line.block_id = block.id
+    return part, lines, block
+
+
+@pytest.mark.asyncio
+async def test_a_line_drawn_without_a_region_inherits_the_region_it_sits_in():
+    part, lines, block = _region_page(4)
+    repository = _Repository(list(lines), [block])
+    # Between l1 (150-190) and l2 (200-240); the editor sends no block_id.
+    created = await _create(part, repository, _box(110, 192, 880, 198))
+
+    assert created.block_id == block.id
+    assert created.order == 2
+    assert [line.order for line in lines] == [0, 1, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_a_line_drawn_outside_every_region_stays_unblocked():
+    part, lines, block = _region_page(2)
+    repository = _Repository(list(lines), [block])
+    created = await _create(part, repository, _box(100, 600, 900, 640))
+
+    assert created.block_id is None
+    assert created.order == 2
+
+
+class _ScriptSession(_Session):
+    """A session that answers the page-script query with ``texts``."""
+
+    def __init__(self, repository: _Repository, texts: list[str]) -> None:
+        super().__init__(repository)
+        self._texts = texts
+
+    async def scalars(self, _statement):
+        return list(self._texts)
+
+
+async def _draw_region(part, repository, box, texts=()) -> Block:
+    service = LayoutService(documents=repository, access=_Access(part))
+    return await service.create_part_block(
+        _ScriptSession(repository, list(texts)),
+        object(),
+        uuid.uuid4(),
+        part.document_id,
+        part.id,
+        order=None,
+        box={"points": box},
+    )
+
+
+@pytest.mark.asyncio
+async def test_regions_without_an_order_rank_left_to_right_whatever_order_they_are_drawn():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    recto = await _draw_region(part, repository, _box(700, 0, 1450, 400))
+    verso = await _draw_region(part, repository, _box(0, 0, 700, 400))
+
+    assert (verso.order, recto.order) == (0, 1)
+    verso_lines = [line for line in lines if line.points[0][0] == 50]
+    assert [line.order for line in verso_lines] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_regions_without_an_order_rank_right_to_left_on_a_syriac_page():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    syriac = ["ܐܒܓܕ"]
+    verso = await _draw_region(part, repository, _box(0, 0, 700, 400), syriac)
+    recto = await _draw_region(part, repository, _box(700, 0, 1450, 400), syriac)
+
+    assert (recto.order, verso.order) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_stacked_regions_without_an_order_rank_top_to_bottom():
+    part, lines = _page(6)
+    repository = _Repository(list(lines))
+    lower = await _draw_region(part, repository, _box(50, 245, 950, 400))
+    upper = await _draw_region(part, repository, _box(50, 50, 950, 245))
+
+    assert (upper.order, lower.order) == (0, 1)
+    assert [line.order for line in lines] == list(range(6))
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_region_order_is_kept():
+    part, lines = _spread()
+    repository = _Repository(list(lines))
+    recto = await _create_block(part, repository, _box(700, 0, 1450, 400), order=0)
+    verso = await _create_block(part, repository, _box(0, 0, 700, 400), order=1)
+
+    assert (recto.order, verso.order) == (0, 1)
+
+
+async def _patch(part, repository, line, **updates) -> None:
+    service = LayoutService(documents=repository, access=_Access(part))
+    await service.patch_part_line(
+        _Session(repository), object(), uuid.uuid4(), part.document_id, part.id, line.id, **updates
+    )
+
+
+@pytest.mark.asyncio
+async def test_filing_a_model_line_into_a_region_keeps_it_a_model_line():
+    part, lines, block = _region_page(3)
+    for line in lines:
+        line.block_id = None
+        line.source = LineSource.kraken
+        line.manual_geometry = False
+    repository = _Repository(list(lines), [block])
+
+    await _patch(part, repository, lines[1], block_id=block.id)
+
+    assert lines[1].block_id == block.id
+    assert lines[1].manual_geometry is False
+    assert lines[1].source == LineSource.kraken
+
+
+@pytest.mark.asyncio
+async def test_moving_a_line_still_marks_it_hand_drawn():
+    part, lines, block = _region_page(2)
+    lines[0].source = LineSource.kraken
+    lines[0].manual_geometry = False
+    repository = _Repository(list(lines), [block])
+
+    await _patch(part, repository, lines[0], points=_box(100, 90, 900, 140))
+
+    assert lines[0].manual_geometry is True
+    assert lines[0].source == LineSource.manual

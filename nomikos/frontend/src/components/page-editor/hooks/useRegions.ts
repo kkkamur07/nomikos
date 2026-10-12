@@ -80,28 +80,26 @@ export function useRegions({
     [reload],
   );
 
-  /** Draw a region; the Segments inside it that have no region join it. */
+  /**
+   * Draw a region; the Segments inside it that have no region join it. No
+   * `order`: the server ranks it by where it sits on the Page.
+   */
   const createRegion = useCallback(
     async (box: LinePoint[]) => {
       if (!projectId || !documentId || !partId) return;
-      const order =
-        layout.blocks.reduce(
-          (highest, block) => Math.max(highest, block.order ?? -1),
-          -1,
-        ) + 1;
       let createdId: string | null = null;
       const ok = await run(async () => {
         const created = await api.createPartBlock(
           projectId,
           documentId,
           partId,
-          { order, box: { points: box }, assign_contained: true },
+          { box: { points: box }, assign_contained: true },
         );
         createdId = created.id;
       });
       if (ok) setSelectedRegionId(createdId);
     },
-    [projectId, documentId, partId, layout.blocks, run],
+    [projectId, documentId, partId, run],
   );
 
   const renameRegion = useCallback(
