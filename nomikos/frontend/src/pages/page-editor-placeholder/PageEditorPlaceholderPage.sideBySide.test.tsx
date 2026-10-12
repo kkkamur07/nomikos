@@ -140,6 +140,30 @@ describe("PageEditorPlaceholderPage side by side", () => {
     );
   });
 
+  it("keeps the canvas and its zoom when T toggles the pane", async () => {
+    seedSideBySide(false);
+    seedEditor();
+    renderPageEditor();
+    const canvas = await screen.findByLabelText("Page geometry canvas");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    const zoomLabel = () =>
+      screen
+        .getByRole("button", { name: /^Zoom \d+%/ })
+        .getAttribute("aria-label");
+    await waitFor(() => expect(zoomLabel()).not.toMatch(/^Zoom 100%/));
+    const zoomed = zoomLabel();
+
+    fireEvent.keyDown(window, { key: "t" });
+    await screen.findByLabelText("Segment 1 text");
+    fireEvent.keyDown(window, { key: "t" });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Segment 1 text")).toBeNull(),
+    );
+
+    expect(screen.getByLabelText("Page geometry canvas")).toBe(canvas);
+    expect(zoomLabel()).toBe(zoomed);
+  });
+
   it("mirrors hovering a transcript row onto the same canvas segment", async () => {
     seedSideBySide(true);
     seedEditor();
@@ -345,7 +369,7 @@ describe("PageEditorPlaceholderPage side by side", () => {
     const { container } = renderPageEditor();
 
     expect(await screen.findByLabelText("Page geometry canvas")).toBeTruthy();
-    expect(container.querySelector(".pe-split")).toBeNull();
+    expect(container.querySelector(".pe-split-right:not([hidden])")).toBeNull();
     expect(container.querySelector(".pe-transcript")).toBeNull();
   });
 
@@ -362,7 +386,9 @@ describe("PageEditorPlaceholderPage side by side", () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector(".pe-split")).toBeNull();
+      expect(
+        container.querySelector(".pe-split-right:not([hidden])"),
+      ).toBeNull();
     });
     expect(container.querySelector(".pe-transcript")).toBeNull();
     expect(
@@ -401,7 +427,9 @@ describe("PageEditorPlaceholderPage side by side", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Transcript" }));
     await waitFor(() => {
-      expect(container.querySelector(".pe-split")).toBeNull();
+      expect(
+        container.querySelector(".pe-split-right:not([hidden])"),
+      ).toBeNull();
     });
   });
 
@@ -416,7 +444,9 @@ describe("PageEditorPlaceholderPage side by side", () => {
 
     fireEvent.keyDown(window, { key: "t" });
     await waitFor(() => {
-      expect(container.querySelector(".pe-split")).toBeNull();
+      expect(
+        container.querySelector(".pe-split-right:not([hidden])"),
+      ).toBeNull();
     });
 
     fireEvent.keyDown(window, { key: "T" });

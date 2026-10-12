@@ -1998,3 +1998,10 @@
 .pe-segment-shape.is-hovered {
   filter: brightness(1.2);
 }
+
+/* The split pane stays mounted with the transcript closed (the canvas keeps
+   its zoom); the pane's own display: flex would otherwise beat [hidden]. */
+.pe-split-right[hidden],
+.pe-split-handle[hidden] {
+  display: none;
+}
