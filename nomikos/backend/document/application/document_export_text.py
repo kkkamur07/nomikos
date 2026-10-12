@@ -30,6 +30,10 @@ from backend.document.infrastructure.document_repository import DocumentReposito
 from backend.document.infrastructure.orm_models import Line, TranscriptionKind
 from backend.users.infrastructure.orm_models import User
 
+# Under the heading of a page that has no transcribed line, in every document export,
+# so "not transcribed yet" cannot be mistaken for a blank folio.
+NO_LINES_PLACEHOLDER = "(no transcribed lines)"
+
 
 @dataclass(frozen=True)
 class DocumentTextExport:
@@ -63,10 +67,10 @@ class DocumentTextExportService:
         for part in selection.parts:
             lines = await self._documents.list_part_lines(session, part.id)
             blocks = await self._documents.list_part_blocks(session, part.id)
-            body = [
-                item.label if isinstance(item, RegionHeading) else item
-                for item in region_text(blocks, lines, _ground_truth_text)
-            ]
+            items = region_text(blocks, lines, _ground_truth_text)
+            body = [item.label if isinstance(item, RegionHeading) else item for item in items]
+            if all(isinstance(item, RegionHeading) for item in items):
+                body.append(NO_LINES_PLACEHOLDER)
             # A page with nothing transcribed still gets its marker. The marker is the
             # thing that makes the numbering readable, and a silently absent page 7
             # would read as a document that has no page 7.

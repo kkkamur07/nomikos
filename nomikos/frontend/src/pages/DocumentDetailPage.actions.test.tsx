@@ -45,6 +45,11 @@ vi.mock("../api/client", async (importOriginal) => {
       updatePartsPublished: vi.fn(),
       getDocumentWorkflowCounts: vi.fn(),
       listInferenceModels: vi.fn(),
+      listProjectModelBindings: vi.fn().mockResolvedValue([]),
+      listDocumentModelBindings: vi.fn().mockResolvedValue([]),
+      listProjectJobsPage: vi
+        .fn()
+        .mockResolvedValue({ items: [], next_cursor: null }),
       enqueueDocumentSegment: vi.fn(),
       enqueueDocumentTranscribe: vi.fn(),
       exportDocumentPageXml: vi.fn(),
@@ -237,9 +242,8 @@ describe("DocumentDetailPage action toolbar", () => {
       within(menu).getByRole("combobox", { name: "Segmentation model" }),
     ).toBeTruthy();
     expect(within(menu).getByRole("option", { name: "Default" })).toBeTruthy();
-    expect(within(menu).getByText(/Model/)).toHaveTextContent(
-      "Model blla-greek-v2",
-    );
+    // Nothing is bound, so the menu names no model rather than guessing one.
+    expect(await within(menu).findByText("Project default")).toBeTruthy();
     expect(
       within(menu).getByText(/Re-segmenting discards unapproved machine text/),
     ).toBeTruthy();

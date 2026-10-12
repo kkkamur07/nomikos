@@ -86,6 +86,8 @@ export function DocumentDetailPage() {
     string | null
   >(null);
   const [titlePanelOpen, setTitlePanelOpen] = useState(false);
+  // Bumped when the Workflow menu queues jobs, so the Jobs bar re-reads them.
+  const [jobsQueuedCount, setJobsQueuedCount] = useState(0);
 
   const signedIn = hasAccessToken();
   useEffect(() => {
@@ -474,6 +476,7 @@ export function DocumentDetailPage() {
               // count of pages still waiting for one.
               invalidateAfter.documentPartsChanged(projectId, documentId);
               void reloadWorkflowCounts();
+              setJobsQueuedCount((count) => count + 1);
             }}
             onOpenSettings={() => setTitlePanelOpen(true)}
             onDeleteDocument={handleDeleteDocument}
@@ -522,7 +525,14 @@ export function DocumentDetailPage() {
               />
             )}
 
-          {document && <JobsNotice enableTestJobs={ENABLE_TEST_JOBS} />}
+          {document && projectId && documentId && (
+            <JobsNotice
+              projectId={projectId}
+              documentId={documentId}
+              refreshKey={jobsQueuedCount}
+              enableTestJobs={ENABLE_TEST_JOBS}
+            />
+          )}
 
           {dragActive && (
             <div className="drop-overlay" role="presentation">

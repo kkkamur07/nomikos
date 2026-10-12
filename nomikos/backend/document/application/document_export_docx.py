@@ -34,7 +34,10 @@ from backend.document.application.document_export_selection import (
     DocumentExportSelector,
     document_download_name,
 )
-from backend.document.application.document_export_text import _ground_truth_text
+from backend.document.application.document_export_text import (
+    NO_LINES_PLACEHOLDER,
+    _ground_truth_text,
+)
 from backend.document.application.document_service import DocumentService
 from backend.document.application.regions import RegionHeading, region_text
 from backend.document.application.script_detection import Script, detect_script, is_rtl
@@ -172,6 +175,8 @@ def render_docx(pages: list[DocxPage]) -> bytes:
         # A page with nothing transcribed still gets its heading, for the reason the
         # text export keeps its marker: a missing "Page 7" reads as a missing page.
         word.add_heading(f"Page {page.number}", level=2)
+        if all(isinstance(item, RegionHeading) for item in page.lines):
+            word.add_paragraph(NO_LINES_PLACEHOLDER)
         for item in page.lines:
             if isinstance(item, RegionHeading):
                 _add_region_heading(word, item.label)

@@ -90,6 +90,8 @@ export type InferenceModelResponse =
 export type InferenceTask = components["schemas"]["InferenceTask"];
 export type ResolvedModelBindingResponse =
   components["schemas"]["ResolvedModelBindingResponse"];
+export type ModelBindingResponse =
+  components["schemas"]["ModelBindingResponse"];
 export type EnqueueTestJobRequest =
   components["schemas"]["EnqueueTestJobRequest"];
 export type EnqueueTestJobResponse =
@@ -1128,6 +1130,14 @@ export const api = {
 
   listInferenceModels: () =>
     apiRequest<InferenceModelResponse[]>("/inference/models"),
+
+  listProjectModelBindings: (projectId: string) =>
+    apiRequest<ModelBindingResponse[]>(`/projects/${projectId}/model-bindings`),
+
+  listDocumentModelBindings: (projectId: string, documentId: string) =>
+    apiRequest<ModelBindingResponse[]>(
+      `/projects/${projectId}/documents/${documentId}/model-bindings`,
+    ),
 
   resolvePartModelBinding: (
     projectId: string,

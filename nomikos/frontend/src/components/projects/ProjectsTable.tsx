@@ -102,7 +102,7 @@ export function ProjectsTable({
                   </td>
                   <td className="col-muted">
                     {showOwner
-                      ? (project.owner_id?.slice(0, 8) ?? "-")
+                      ? (project.owner_username ?? "-")
                       : project.document_count}
                   </td>
                   <td

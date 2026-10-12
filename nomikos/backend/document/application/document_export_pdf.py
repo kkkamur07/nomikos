@@ -35,6 +35,7 @@ from backend.document.application.document_export_selection import (
     DocumentExportSelector,
     document_download_name,
 )
+from backend.document.application.document_export_text import NO_LINES_PLACEHOLDER
 from backend.document.application.document_service import DocumentService
 from backend.document.application.regions import box_polygon
 from backend.document.application.script_detection import Script
@@ -101,6 +102,17 @@ def draw_region_headings(pdf: _TranscriptionPdf, *, height: int, regions: list[_
 _REGION_HEADING_RGB = (90, 90, 110)
 
 
+def draw_no_lines_note(pdf: _TranscriptionPdf, *, height: int) -> None:
+    """Small grey text in the top-left corner of a page with no transcribed line."""
+    size = max(12, round(height / 90))
+    pdf.set_font(pdf.family_for(Script.latin), size=size)
+    pdf.set_fallback_fonts([])
+    pdf.set_text_shaping(use_shaping_engine=True, direction="ltr")
+    pdf.set_text_color(*_REGION_HEADING_RGB)
+    pdf.set_xy(size, size)
+    pdf.cell(text=NO_LINES_PLACEHOLDER)
+
+
 class DocumentTranscriptionPdfService(TranscriptionPdfService):
     def __init__(
         self,
@@ -153,4 +165,6 @@ class DocumentTranscriptionPdfService(TranscriptionPdfService):
             # leaf, and each page's line coordinates are in that page's own pixel grid.
             draw_page(pdf, width=page.width, height=page.height, lines=page.lines)
             draw_region_headings(pdf, height=page.height, regions=page.regions)
+            if not page.lines:
+                draw_no_lines_note(pdf, height=page.height)
         return pdf.finish()

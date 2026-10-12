@@ -206,6 +206,23 @@ describe("usePairingState OCR", () => {
     expect(setSubmissionRefusal).not.toHaveBeenCalledWith(expect.any(String));
   });
 
+  it("reports a job cancelled elsewhere as cancelled, not as a failure", async () => {
+    const { view, trackJobAndWait, setPairingError } = setup();
+    trackJobAndWait.mockResolvedValue({
+      id: "cancelled-job-1",
+      status: "cancelled",
+      result: null,
+    });
+    listTranscriptions.mockResolvedValue([]);
+
+    await act(async () => {
+      await view.result.current.runPageOcr();
+    });
+
+    expect(setPairingError).not.toHaveBeenCalledWith(expect.any(String));
+    expect(view.result.current.ocrMessage?.text).toBe("Job cancelled");
+  });
+
   it("does not name a host in the message it reports", async () => {
     const { view } = setup();
 

@@ -6,6 +6,8 @@ import { DocumentWorkflowMenu } from "./DocumentWorkflowMenu";
 const listInferenceModels = vi.fn();
 const enqueueDocumentSegment = vi.fn();
 const enqueueDocumentTranscribe = vi.fn();
+const listProjectModelBindings = vi.fn();
+const listDocumentModelBindings = vi.fn();
 
 vi.mock("../../api/client", () => ({
   api: {
@@ -14,6 +16,10 @@ vi.mock("../../api/client", () => ({
       enqueueDocumentSegment(...args),
     enqueueDocumentTranscribe: (...args: unknown[]) =>
       enqueueDocumentTranscribe(...args),
+    listProjectModelBindings: (...args: unknown[]) =>
+      listProjectModelBindings(...args),
+    listDocumentModelBindings: (...args: unknown[]) =>
+      listDocumentModelBindings(...args),
   },
 }));
 
@@ -143,5 +149,53 @@ describe("DocumentWorkflowMenu segment picker", () => {
         { scope: "unsegmented", model_id: null },
       ),
     );
+  });
+});
+
+describe("DocumentWorkflowMenu transcribe model", () => {
+  const CATALOG = [
+    ...SEGMENT_MODELS,
+    { id: "htr-greek", task: "transcribe", name: "greek-v1" },
+    { id: "htr-syriac", task: "transcribe", name: "syriac-v2" },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listInferenceModels.mockResolvedValue(CATALOG);
+    listProjectModelBindings.mockResolvedValue([]);
+    listDocumentModelBindings.mockResolvedValue([]);
+  });
+
+  it("names the model bound to the project", async () => {
+    listProjectModelBindings.mockResolvedValue([
+      { id: "b-1", task: "transcribe", model_id: "htr-syriac" },
+      { id: "b-2", task: "segment", model_id: "seg-a" },
+    ]);
+    openMenu();
+
+    expect(await screen.findByText("syriac-v2")).toBeTruthy();
+    expect(screen.queryByText("blla-greek-v2")).toBeNull();
+  });
+
+  it("prefers the document binding over the project one", async () => {
+    listProjectModelBindings.mockResolvedValue([
+      { id: "b-1", task: "transcribe", model_id: "htr-syriac" },
+    ]);
+    listDocumentModelBindings.mockResolvedValue([
+      { id: "b-3", task: "transcribe", model_id: "htr-greek" },
+    ]);
+    openMenu();
+
+    expect(await screen.findByText("greek-v1")).toBeTruthy();
+    expect(screen.queryByText("syriac-v2")).toBeNull();
+  });
+
+  it("says Project default and names no model when nothing is bound", async () => {
+    openMenu();
+
+    await waitFor(() => expect(listProjectModelBindings).toHaveBeenCalled());
+    expect(await screen.findByText("Project default")).toBeTruthy();
+    expect(screen.queryByText("blla-greek-v2")).toBeNull();
+    expect(screen.queryByText("greek-v1")).toBeNull();
   });
 });

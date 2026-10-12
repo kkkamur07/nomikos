@@ -16,11 +16,7 @@ import {
 } from "../ui/ActionMenu";
 import { toast } from "../ui/toast";
 import { PageEditorModelSelect } from "../page-editor/PageEditorModelSelect";
-import {
-  TRANSCRIBE_MODEL_NAME,
-  batchQueuedMessage,
-  pageCountLabel,
-} from "./documentActionCopy";
+import { batchQueuedMessage, pageCountLabel } from "./documentActionCopy";
 
 type DocumentWorkflowMenuProps = {
   projectId: string;
@@ -59,6 +55,14 @@ export function DocumentWorkflowMenu({
   const [selectedSegmentModelId, setSelectedSegmentModelId] = useState<
     string | null
   >(null);
+  /**
+   * The transcription model the batch route will resolve, by catalog name:
+   * the document's binding, else the project's. Null when neither is set or
+   * the lookup failed, which the menu says as "Project default".
+   */
+  const [transcribeModelName, setTranscribeModelName] = useState<string | null>(
+    null,
+  );
 
   // The segment catalog for the picker. A failed request leaves only
   // "Default" and does not block segmenting.
@@ -70,8 +74,21 @@ export function DocumentWorkflowMenu({
         if (!cancelled) {
           setSegmentModels(catalog.filter((model) => model.task === "segment"));
         }
+        // The same order the backend resolves in for a whole document: a
+        // document binding wins over the project one. Part bindings are per
+        // page and are not named here.
+        const [documentBindings, projectBindings] = await Promise.all([
+          api.listDocumentModelBindings(projectId, documentId),
+          api.listProjectModelBindings(projectId),
+        ]);
+        const binding = [...documentBindings, ...projectBindings].find(
+          (candidate) => candidate.task === "transcribe",
+        );
+        const name =
+          catalog.find((model) => model.id === binding?.model_id)?.name ?? null;
+        if (!cancelled) setTranscribeModelName(name);
       } catch {
-        if (!cancelled) setSegmentModels([]);
+        if (!cancelled) setTranscribeModelName(null);
       }
     })();
     return () => {
@@ -181,7 +198,13 @@ export function DocumentWorkflowMenu({
             <ActionMenuDivider />
             <ActionMenuSection>Transcribe</ActionMenuSection>
             <ActionMenuCaption>
-              Model <strong>{TRANSCRIBE_MODEL_NAME}</strong>
+              {transcribeModelName ? (
+                <>
+                  Model <strong>{transcribeModelName}</strong>
+                </>
+              ) : (
+                "Project default"
+              )}
             </ActionMenuCaption>
             <ActionMenuItem
               label="Transcribe unpaired pages"
