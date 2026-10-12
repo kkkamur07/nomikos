@@ -181,5 +181,21 @@ print(" ".join(json.loads(l)["method"] + ":" + json.loads(l)["path"] for l in op
 ' "$WORK/requests.log")" = "GET:/api/v1/applications PATCH:/api/v1/applications/app-uuid-1/envs/bulk" ]
 check "--no-deploy rejects an unknown flag" bash -c "NOMIKOS_SECRETS_FILE='$SECRETS' bash '$SCRIPT' --bogus >/dev/null 2>&1; [ \$? = 2 ]"
 
+echo "== GNU stat on PATH (stat -f is file system status there)"
+mkdir "$WORK/fakebin"
+cat > "$WORK/fakebin/stat" <<'SH'
+#!/bin/sh
+if [ "$1" = "-f" ]; then
+  printf '  File: "x"\n    ID: 0 Namelen: 255 Type: ext2/ext3\nBlock size: 4096\n'
+  exit 0
+fi
+if [ "$1" = "-c" ] && [ "$2" = "%a" ]; then echo 600; exit 0; fi
+exit 1
+SH
+chmod +x "$WORK/fakebin/stat"
+PATH="$WORK/fakebin:$PATH" run gnustat --check
+check "GNU-style stat: mode check passes" [ "$(cat "$WORK/gnustat.rc")" = 0 ]
+check "GNU-style stat: no mode error" bash -c "! grep -q 'is mode' '$WORK/gnustat.err'"
+
 echo
 if [ "$FAILS" = 0 ]; then echo "PASS: apply_email_env.sh"; else echo "FAILED: $FAILS group(s)"; exit 1; fi
