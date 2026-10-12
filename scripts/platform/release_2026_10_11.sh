@@ -19,13 +19,19 @@
 # Secrets: ${NOMIKOS_SECRETS_FILE:-/root/.nomikos-release.env}, mode 600, KEY=VALUE
 # lines, parsed line by line, never sourced:
 #   RESEND_API_KEY=re_...      required
-#   COOLIFY_URL=https://...    required (Coolify dashboard origin)
-#   COOLIFY_TOKEN=...          required (read, write, deploy abilities)
 #   ADMIN_EMAIL=you@...        required (account promoted to admin)
+#   COOLIFY_URL=https://...    optional (Coolify dashboard origin)
+#   COOLIFY_TOKEN=...          optional (read, write, deploy abilities)
 #   EMAIL_FROM, EMAIL_REPLY_TO, APP_PUBLIC_URL, EMAIL_SIGNIN_NOTICES, APP_NAME  optional
 # The key and token are never printed; the log is masked as well.
 #
-# Env overrides: PG_CONTAINER, PG_DATABASE, PG_USER, API_CONTAINER, API_MATCH,
+# Without COOLIFY_URL and COOLIFY_TOKEN the script never calls Coolify: phase 3
+# prints the env lines for you to paste in the Coolify UI and waits for Enter,
+# phase 5 cannot trigger a deploy on a timeout (it says to press Redeploy and
+# exits 8), and the API container is found by "api" in its name or image, or
+# by API_HOST (default api.nomikos.app) in its labels (the Traefik Host rule).
+#
+# Env overrides: PG_CONTAINER, PG_DATABASE, PG_USER, API_CONTAINER, API_MATCH, API_HOST,
 # DOCKER_BIN, GITHUB_API_URL, PUBLIC_HEALTH_URL, RELEASE_LOG, MERGE_POLL_SECONDS,
 # DEPLOY_POLL_SECONDS, MERGE_TIMEOUT_SECONDS, DEPLOY_TIMEOUT_SECONDS.
 # RELEASE_ALLOW_NONROOT=1 skips the root check (tests only).
@@ -55,6 +61,11 @@ Usage: bash scripts/platform/release_2026_10_11.sh [flags]
 
 Run as root on the Coolify host. Applies release 2026-10-11 (PR #165): SQL,
 Coolify env vars, waits for the merge and the deploy, renumbers lines, verifies.
+
+Secrets file (mode 600): RESEND_API_KEY and ADMIN_EMAIL are required.
+COOLIFY_URL and COOLIFY_TOKEN are optional: without them Coolify is never
+called, phase 3 prints the env lines to paste in the Coolify UI, and a deploy
+timeout in phase 5 asks you to press Redeploy instead of triggering it.
 
 Flags:
   --dry-run          preflight and read-only checks only; GET requests only, writes nothing
@@ -184,15 +195,15 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$SECRETS_FILE"
 [ -n "$RESEND_API_KEY" ] || die 2 "RESEND_API_KEY is missing from $SECRETS_FILE"
-[ -n "$COOLIFY_TOKEN" ] || die 2 "COOLIFY_TOKEN is missing from $SECRETS_FILE"
-[ -n "$COOLIFY_URL" ] || die 2 "COOLIFY_URL is missing from $SECRETS_FILE"
 [ -n "$ADMIN_EMAIL" ] || die 2 "ADMIN_EMAIL is missing from $SECRETS_FILE"
 case "$RESEND_API_KEY" in re_*) ;; *) die 2 "RESEND_API_KEY must start with re_" ;; esac
 case "$ADMIN_EMAIL" in *[[:space:]]*|*\'*|*\\*) die 2 "ADMIN_EMAIL looks wrong" ;; *@*) ;; *) die 2 "ADMIN_EMAIL looks wrong" ;; esac
 COOLIFY_URL="${COOLIFY_URL%/}"
 ENV_KEYS="RESEND_API_KEY EMAIL_FROM APP_PUBLIC_URL EMAIL_SIGNIN_NOTICES"
 [ -z "$EMAIL_REPLY_TO" ] || ENV_KEYS="$ENV_KEYS EMAIL_REPLY_TO"
-echo "secrets: $SECRETS_FILE (mode $PERM), key re_****, token ****, admin $ADMIN_EMAIL"
+HAVE_COOLIFY=0
+if [ -n "$COOLIFY_TOKEN" ] && [ -n "$COOLIFY_URL" ]; then HAVE_COOLIFY=1; fi
+echo "secrets: $SECRETS_FILE (mode $PERM), key re_****, token $([ "$HAVE_COOLIFY" = 1 ] && echo '****' || echo none), admin $ADMIN_EMAIL"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -206,6 +217,8 @@ coolify() {
     -X "$1" -H 'Accept: application/json' -o "$RESP" -w '%{http_code}' "$COOLIFY_URL$2") || CODE=000
 }
 
+APP_UUID="" APP_LABEL="" GIT_BRANCH="" GIT_COMMIT=""
+if [ "$HAVE_COOLIFY" = 1 ]; then
 coolify GET /api/v1/applications
 case "$CODE" in 2*) ;; *) die 2 "Coolify: listing applications failed (HTTP $CODE); check COOLIFY_URL and the token" ;; esac
 MATCHES=$(APP_NAME="$APP_NAME" python3 -c '
@@ -219,10 +232,13 @@ COUNT=$(printf '%s\n' "$MATCHES" | grep -c . || true)
 [ "$COUNT" = 1 ] || die 2 "Coolify: expected one application whose name contains \"$APP_NAME\", found $COUNT; set APP_NAME in the secrets file"
 IFS=$'\t' read -r APP_UUID APP_LABEL GIT_BRANCH GIT_COMMIT <<<"$MATCHES" || true
 check_safe_name "Coolify application uuid" "$APP_UUID"
+else
+  echo "Coolify: no token, the env variables are printed for you to paste (phase 3) and the deploy is not triggered (phase 5)"
+fi
 
 # Postgres: the container, the superuser, and the database that holds the
 # production catalog. Identified by artifact_ref, which the rename leaves alone.
-DOCKER_PS_FORMAT='{{.ID}}	{{.Names}}	{{.Image}}'
+DOCKER_PS_FORMAT='{{.ID}}	{{.Names}}	{{.Image}}	{{.Labels}}'
 if [ -n "${PG_CONTAINER:-}" ]; then
   PG_CANDIDATES="$PG_CONTAINER"
 else
@@ -275,11 +291,15 @@ admin_state() {
 }
 
 # API container: name or image carries the Coolify application uuid (or API_MATCH).
-API_MATCH="${API_MATCH:-$APP_UUID}"
+# Without a token: "api" in the name or image, or API_HOST in the labels (the
+# Traefik Host rule Coolify writes), never Postgres or a coolify* container.
+API_HOST="${API_HOST:-api.nomikos.app}"
+if [ "$HAVE_COOLIFY" = 1 ]; then API_MATCH="${API_MATCH:-$APP_UUID}"; else API_MATCH="${API_MATCH:-api}"; fi
 api_candidates() { # newest first: "created id name"
-  local pat=$1
+  local pat=$1 host=""
+  [ "$HAVE_COOLIFY" = 1 ] || host="$API_HOST"
   dk ps --no-trunc --format "$DOCKER_PS_FORMAT" |
-    awk -F'\t' -v m="$pat" -v pg="$PG_C" '$2 != pg && (index($2, m) || index($3, m)) {print $2}' |
+    awk -F'\t' -v m="$pat" -v h="$host" -v pg="$PG_C" '$2 != pg && $2 !~ /^coolify/ && (index($2, m) || index($3, m) || (h != "" && index($4, h))) {print $2}' |
     while read -r name; do
       echo "$(dk inspect -f '{{.Created}}|{{.Id}}' "$name" | tr '|' ' ') $name"
     done | sort -r
@@ -287,7 +307,7 @@ api_candidates() { # newest first: "created id name"
 api_list() {
   local out
   out=$(api_candidates "$API_MATCH")
-  if [ -z "$out" ] && [ "$API_MATCH" = "$APP_UUID" ]; then out=$(api_candidates api); fi
+  if [ -z "$out" ] && [ "$HAVE_COOLIFY" = 1 ] && [ "$API_MATCH" = "$APP_UUID" ]; then out=$(api_candidates api); fi
   printf '%s\n' "$out" | grep . || true
 }
 has_new_code() { dk exec "$1" test -f "$NEW_CODE_MARKER" >/dev/null 2>&1; }
@@ -311,7 +331,7 @@ if [ -n "${API_CONTAINER:-}" ]; then
   API_C="$API_CONTAINER"
 else
   LIST=$(api_list)
-  [ -n "$LIST" ] || die 2 "no API container found (name or image containing $API_MATCH or \"api\"); set API_CONTAINER"
+  [ -n "$LIST" ] || die 2 "no API container found (name or image containing $API_MATCH$([ "$HAVE_COOLIFY" = 1 ] || echo ", or labels containing $API_HOST")); set API_CONTAINER"
   if [ "$(printf '%s\n' "$LIST" | grep -c .)" -gt 1 ]; then
     echo "several API containers, using the newest:"; printf '%s\n' "$LIST" | sed 's/^/  /'
   fi
@@ -370,7 +390,8 @@ have = {e.get("key"): e.get("value") for e in data if isinstance(e, dict) and no
 sys.exit(0 if all(have.get(k) == os.environ[k] for k in os.environ["KEYS"].split()) else 1)
 ' "$RESP"
 }
-if env_matches; then ENV_STATE="already applied"; else ENV_STATE="will write"; fi
+if [ "$HAVE_COOLIFY" != 1 ]; then ENV_STATE="manual, no token"
+elif env_matches; then ENV_STATE="already applied"; else ENV_STATE="will write"; fi
 
 GH_STATE=unknown
 gh_merged() { # prints true | false | ratelimited | unavailable
@@ -391,7 +412,11 @@ plan_step "alembic_version" "$VER"
 plan_step "inference_models" "$NAMES"
 plan_step "ADMIN_EMAIL $ADMIN_EMAIL" "$ADMIN"
 plan_step "API container" "$API_C (created $API_CREATED, new code: $([ "$API_HAS_NEW" = 1 ] && echo yes || echo no))"
-plan_step "Coolify application" "$APP_LABEL ($APP_UUID), branch ${GIT_BRANCH:-?}, commit ${GIT_COMMIT:-?}"
+if [ "$HAVE_COOLIFY" = 1 ]; then
+  plan_step "Coolify application" "$APP_LABEL ($APP_UUID), branch ${GIT_BRANCH:-?}, commit ${GIT_COMMIT:-?}"
+else
+  plan_step "Coolify application" "not read (no token)"
+fi
 plan_step "PR #165 merged" "$GH_STATE"
 echo
 echo "SQL steps (phase 2)"
@@ -404,7 +429,11 @@ plan_step "4 blocks.label (stamps 009)" "$S4"
 plan_step "5 feedback table (stamps 010)" "$S5"
 plan_step "6 drop full-page blocks" "$S6"
 echo
-echo "Env keys on $APP_LABEL (phase 3, no deploy): $ENV_STATE"
+if [ "$HAVE_COOLIFY" = 1 ]; then
+  echo "Env keys on $APP_LABEL (phase 3, no deploy): $ENV_STATE"
+else
+  echo "Env keys (phase 3): manual, no token"
+fi
 for k in $ENV_KEYS; do
   case "$k" in RESEND_API_KEY) plan_step "  $k" "re_****" ;; *) plan_step "  $k" "${!k}" ;; esac
 done
@@ -530,7 +559,21 @@ fi
 # ---------------------------------------------------------------- phase 3
 if [ "$FROM_PHASE" -le 3 ]; then
   heading 3 "env (Coolify, no deploy)"
-  if env_matches; then
+  if [ "$HAVE_COOLIFY" != 1 ]; then
+    echo "No Coolify token. In Coolify open the API application > Environment Variables and set:"
+    for k in $ENV_KEYS; do
+      case "$k" in
+        RESEND_API_KEY) echo "  $k=re_**** (copy it from your secrets file)" ;;
+        *) echo "  $k=${!k}" ;;
+      esac
+    done
+    echo "They reach the container with the merge deploy; phase 7 checks RESEND_API_KEY inside it."
+    if [ "$YES" != 1 ] && [ -t 0 ]; then
+      echo "Paste them in Coolify now, then press Enter"
+      read -r _ || true
+    fi
+    echo "env: manual (no token)"
+  elif env_matches; then
     echo "env: already applied ($ENV_KEYS)"
   else
     NOMIKOS_SECRETS_FILE="$SECRETS_FILE" bash "$HERE/apply_email_env.sh" --no-deploy || die 6 "setting the env variables failed"
@@ -600,6 +643,7 @@ if [ "$FROM_PHASE" -le 5 ]; then
     echo "deploy: done ($API_C)"
   else
     echo "no new healthy API container after $DEPLOY_TIMEOUT_SECONDS s."
+    [ "$HAVE_COOLIFY" = 1 ] || die 8 "no Coolify token: trigger the deploy in Coolify (Redeploy) and re-run with --from-phase 5"
     trigger=0
     if [ "$YES" = 1 ]; then trigger=1
     else

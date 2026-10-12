@@ -175,9 +175,12 @@ is_api() { case "$1" in appuuid1-old|appuuid1-new) return 0 ;; *) return 1 ;; es
 deployed() { [ -f "$FAKE_STATE/deployed" ]; }
 case "${1:-}" in
   ps)
-    printf 'pgid\tnomikos-db-1\tpostgres:16-alpine\n'
-    printf 'oldid\tappuuid1-old\tappuuid1:oldsha\n'
-    deployed && printf 'newid\tappuuid1-new\tappuuid1:newsha\n'
+    # Coolify names containers by uuid; only the Traefik label names the host.
+    rule='traefik.http.routers.http-0-appuuid1.rule=Host(`api.nomikos.app`)'
+    printf 'pgid\tnomikos-db-1\tpostgres:16-alpine\tcom.docker.compose.project=nomikos\n'
+    printf 'cfid\tcoolify-proxy\ttraefik:v3\ttraefik.http.routers.api.rule=Host(`api.nomikos.app`)\n'
+    printf 'oldid\tappuuid1-old\tappuuid1:oldsha\tcoolify.managed=true,%s\n' "$rule"
+    deployed && printf 'newid\tappuuid1-new\tappuuid1:newsha\tcoolify.managed=true,%s\n' "$rule"
     exit 0 ;;
   inspect)
     name="${*: -1}"
@@ -310,6 +313,26 @@ echo "== merge gate on a GitHub rate limit"
 GITHUB_OVERRIDE="http://127.0.0.1:$PORT/repos/ratelimited/pulls/165" run ratelimit --yes --keep-secrets --from-phase 4
 check "403 prints the rate limit message" grep -q "GitHub rate limit reached" "$WORK/ratelimit.out"
 check "403 with no Enter available exits 7 (rc $(rc ratelimit))" [ "$(rc ratelimit)" = 7 ]
+
+echo "== no Coolify token (env pasted by hand)"
+NOTOKEN="$WORK/release-notoken.env"
+printf '%s\n' "# no COOLIFY_URL, no COOLIFY_TOKEN" "RESEND_API_KEY=$FAKE_KEY" "ADMIN_EMAIL=$ADMIN_EMAIL" > "$NOTOKEN"
+chmod 600 "$NOTOKEN"
+coolify_requests() { grep -c '/api/v1/' "$WORK/requests.log" || true; }
+BEFORE_COOLIFY=$(coolify_requests)
+SECRETS_OVERRIDE="$NOTOKEN" run notoken_dry --dry-run
+check "no token --dry-run exits 0 (rc $(rc notoken_dry))" [ "$(rc notoken_dry)" = 0 ]
+check "no token --dry-run plans the manual env mode" grep -q "Env keys (phase 3): manual, no token" "$WORK/notoken_dry.out"
+check "no token --dry-run says Coolify is not called" grep -q "Coolify: no token, the env variables are printed for you to paste" "$WORK/notoken_dry.out"
+check "no token finds the API container by its Traefik label" grep -q "API container *appuuid1-new" "$WORK/notoken_dry.out"
+SECRETS_OVERRIDE="$NOTOKEN" run notoken --from-phase 3 --yes --keep-secrets
+check "no token --from-phase 3 exits 0 (rc $(rc notoken))" [ "$(rc notoken)" = 0 ]
+check "no token makes no Coolify request" [ "$(coolify_requests)" = "$BEFORE_COOLIFY" ]
+check "no token prints the paste block with the key masked" grep -q "RESEND_API_KEY=re_\*\*\*\* (copy it from your secrets file)" "$WORK/notoken.out"
+check "no token paste block lists APP_PUBLIC_URL" grep -q "^  APP_PUBLIC_URL=https://app.nomikos.app" "$WORK/notoken.out"
+check "no token prints no secret" no_secret notoken
+check "no token keeps the secrets file" [ -f "$NOTOKEN" ]
+[ "$(rc notoken)" = 0 ] || show notoken
 
 echo "== secrets file removed without --keep-secrets"
 cp -p "$SECRETS" "$WORK/release-copy.env"
