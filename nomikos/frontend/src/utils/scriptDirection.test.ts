@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   directionOfScript,
   dominantScript,
+  rowDirection,
   scriptOfCodePoint,
   textDirection,
 } from "./scriptDirection";
@@ -37,5 +38,22 @@ describe("scriptDirection", () => {
   it("falls back for text without letters", () => {
     expect(textDirection("", "rtl")).toBe("rtl");
     expect(textDirection("123")).toBe("ltr");
+  });
+});
+
+describe("rowDirection", () => {
+  it("lets a row of digits and punctuation keep its own order", () => {
+    expect(rowDirection("12.", "rtl")).toBe("auto");
+    expect(rowDirection("[3]", "ltr")).toBe("auto");
+  });
+
+  it("takes the page direction for an empty row", () => {
+    expect(rowDirection("", "rtl")).toBe("rtl");
+    expect(rowDirection("   ", "ltr")).toBe("ltr");
+  });
+
+  it("follows the letters of a row that has some", () => {
+    expect(rowDirection("ܫܠܡܐ 12", "ltr")).toBe("rtl");
+    expect(rowDirection("folio 12", "rtl")).toBe("ltr");
   });
 });

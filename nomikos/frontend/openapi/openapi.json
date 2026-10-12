@@ -2455,6 +2455,18 @@
       },
       "LineTranscriptionPatchRequest": {
         "properties": {
+          "previous_text": {
+            "anyOf": [
+              {
+                "maxLength": 10000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Text"
+          },
           "text": {
             "maxLength": 10000,
             "title": "Text",

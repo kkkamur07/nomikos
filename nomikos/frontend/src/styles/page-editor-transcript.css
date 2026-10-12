@@ -86,6 +86,17 @@
   font-family: "Noto Naskh Arabic", "Geeza Pro", "Times New Roman", serif;
 }
 
+/* Digits and punctuation only: keep the typed order on any page direction. */
+.pe-transcript-input[dir="auto"] {
+  unicode-bidi: plaintext;
+}
+
+.pe-transcript-input[data-script="armenian"] {
+  font-family:
+    "Noto Serif Armenian", "Noto Sans Armenian", "Sylfaen", "Arial Unicode MS",
+    serif;
+}
+
 .pe-transcript-input[data-script="coptic"] {
   font-family: "Noto Sans Coptic", "Antinoou", "Segoe UI Historic", serif;
 }
@@ -121,4 +132,15 @@
   color: #b40000;
   font-size: 0.8125rem;
   line-height: 1.4;
+}
+
+.pe-transcript-reload {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }

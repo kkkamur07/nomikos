@@ -1,8 +1,9 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DOCUMENT,
+  documentWithPages,
   flushPageEditorEffects,
   line,
   mockedApi,
@@ -62,6 +63,8 @@ function transcriptRow(container: HTMLElement, lineId: string): HTMLElement {
 describe("PageEditorPlaceholderPage side by side", () => {
   beforeEach(() => {
     localStorage.clear();
+    // Unsaved row drafts persist per tab; one test's draft must not seed the next.
+    sessionStorage.clear();
     resetPageEditorApiMocks();
   });
 
@@ -190,7 +193,7 @@ describe("PageEditorPlaceholderPage side by side", () => {
         "doc-1",
         "ground-truth-1",
         "line-1",
-        { text: "first words edited" },
+        { text: "first words edited", previous_text: "first words" },
       );
     });
     await waitFor(() => {
@@ -218,7 +221,7 @@ describe("PageEditorPlaceholderPage side by side", () => {
         "doc-1",
         "ground-truth-1",
         "line-2",
-        { text: "second edited" },
+        { text: "second edited", previous_text: "second words" },
       );
     });
     await waitFor(() => {
@@ -432,5 +435,102 @@ describe("PageEditorPlaceholderPage side by side", () => {
     expect(
       container.querySelector(".pe-split-right .pe-transcript"),
     ).not.toBeNull();
+  });
+
+  it("focuses the selected row when T opens the pane", async () => {
+    seedSideBySide(false);
+    seedEditor();
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    fireEvent.click(screen.getByRole("button", { name: /^Segment 2/ }));
+
+    fireEvent.keyDown(window, { key: "t" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("Segment 2 text"),
+      );
+    });
+  });
+
+  it("goes from the selected canvas segment to its row on Enter", async () => {
+    seedSideBySide(false);
+    seedEditor();
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    const segment = screen.getByRole("button", { name: /^Segment 2/ });
+    fireEvent.click(segment);
+    await waitFor(() => {
+      expect(segment.getAttribute("aria-current")).toBe("true");
+    });
+
+    fireEvent.keyDown(segment, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("Segment 2 text"),
+      );
+    });
+  });
+
+  it("returns focus to the selected segment on Escape from a clean row", async () => {
+    seedSideBySide(true);
+    seedEditor();
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    const row = screen.getByLabelText("Segment 2 text");
+    row.focus();
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole("button", { name: /^Segment 2/ })
+          .getAttribute("aria-current"),
+      ).toBe("true");
+    });
+
+    fireEvent.keyDown(row, { key: "Escape" });
+
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /^Segment 2/ }),
+    );
+  });
+
+  it("asks before a page turn drops an unsaved row and stays when told to", async () => {
+    seedSideBySide(true);
+    mockedApi.getDocument.mockResolvedValue(documentWithPages(2));
+    mockedApi.listPartLines.mockResolvedValue(twoLines());
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+    const row = screen.getByLabelText("Segment 1 text") as HTMLTextAreaElement;
+    fireEvent.change(row, { target: { value: "not saved yet" } });
+
+    fireEvent.keyDown(window, { key: "PageDown" });
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      /p\.1$/,
+    );
+    expect(row.value).toBe("not saved yet");
+    confirm.mockRestore();
+  });
+
+  it("turns the page without asking when no row holds unsaved text", async () => {
+    seedSideBySide(true);
+    mockedApi.getDocument.mockResolvedValue(documentWithPages(2));
+    mockedApi.listPartLines.mockResolvedValue(twoLines());
+    const confirm = vi.spyOn(window, "confirm");
+    renderPageEditor();
+    await screen.findByLabelText("Page geometry canvas");
+
+    fireEvent.keyDown(window, { key: "PageDown" });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+        /p\.2$/,
+      );
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });

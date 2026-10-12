@@ -253,6 +253,7 @@ class TranscriptionService:
         line_id: UUID,
         *,
         text: str,
+        previous_text: str | None = None,
     ) -> LineTranscription:
         context = await self._access.require_document(session, user, project_id, document_id)
         document = context.document
@@ -279,6 +280,12 @@ class TranscriptionService:
             )
         )
         line_transcription = result.scalar_one_or_none()
+        # The client names the text its edit started from. Anything else stored
+        # now was written by someone else since, and saving over it would drop
+        # their work without telling either side. No stored row reads as "".
+        stored_text = line_transcription.text if line_transcription is not None else ""
+        if previous_text is not None and previous_text != stored_text:
+            raise ConflictError("This line's text was changed elsewhere")
         if line_transcription is None:
             line_transcription = LineTranscription(
                 line_id=line_id,

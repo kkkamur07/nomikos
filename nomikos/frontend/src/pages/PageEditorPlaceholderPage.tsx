@@ -8,7 +8,10 @@ import { PageEditorCanvas } from "../components/page-editor/PageEditorCanvas";
 import type { DrawTool } from "../components/page-editor/PageEditorCanvasIsland";
 import { PageEditorRegionPanel } from "../components/page-editor/PageEditorRegionPanel";
 import { PageEditorSplitPane } from "../components/page-editor/PageEditorSplitPane";
-import { PageEditorTranscriptEditor } from "../components/page-editor/PageEditorTranscriptEditor";
+import {
+  confirmLeaveWithUnsavedRows,
+  PageEditorTranscriptEditor,
+} from "../components/page-editor/PageEditorTranscriptEditor";
 import {
   PageEditorPageRail,
   PageEditorPageRailTab,
@@ -93,11 +96,12 @@ export function PageEditorPlaceholderPage() {
   // The page the editor is on. The route seeds it and mirrors it back, but the
   // editor turns pages by changing this rather than by re-entering the route,
   // so the toolbar, the page rail and the focused control survive a page turn.
-  const { activePartId: partId, goToPart } = useDocumentPaging({
-    projectId,
-    documentId,
-    routePartId,
-  });
+  const { activePartId: partId, goToPart: goToPartUnguarded } =
+    useDocumentPaging({
+      projectId,
+      documentId,
+      routePartId,
+    });
 
   const editorData = usePageEditorData(projectId, documentId, partId, () => {
     setDrawMode("none");
@@ -142,6 +146,15 @@ export function PageEditorPlaceholderPage() {
     parts,
     partIndex,
   } = editorData;
+
+  // A page turn drops the rows on screen: ask first while any holds unsaved text.
+  const goToPart = useCallback(
+    (id: string) => {
+      if (!confirmLeaveWithUnsavedRows(lines.map((line) => line.id))) return;
+      goToPartUnguarded(id);
+    },
+    [lines, goToPartUnguarded],
+  );
 
   const { previousPartId, nextPartId } = pageNeighbours(parts, partId);
   const goToPreviousPage = useCallback(() => {
@@ -269,6 +282,7 @@ export function PageEditorPlaceholderPage() {
     selectedTranscriptionLayer,
     pairTextLine,
     commitLineText,
+    reloadLineText,
     saveApprovedText,
     selectTranscriptionLayer,
     saveGroundTruthText,
@@ -368,9 +382,13 @@ export function PageEditorPlaceholderPage() {
   pickDrawModeRef.current = pickDrawMode;
   const canvasSettingsRef = useRef(canvasSettings);
   canvasSettingsRef.current = canvasSettings;
-  const toggleSideBySideRef = useRef(() => {});
-  toggleSideBySideRef.current = () => {
+  // Set when the keyboard opens the pane, read once by the pane as it mounts
+  // so the selected row takes focus.
+  const transcriptFocusOnOpenRef = useRef(false);
+  const toggleSideBySideRef = useRef<(focusRow?: boolean) => void>(() => {});
+  toggleSideBySideRef.current = (focusRow = false) => {
     const current = canvasSettingsRef.current;
+    transcriptFocusOnOpenRef.current = focusRow && !current.sideBySide;
     const next = { ...current, sideBySide: !current.sideBySide };
     setCanvasSettings(next);
     savePageEditorSettings(next);
@@ -393,11 +411,34 @@ export function PageEditorPlaceholderPage() {
       }
       if (key === "t") {
         event.preventDefault();
-        toggleSideBySideRef.current();
+        toggleSideBySideRef.current(true);
       }
     }
+    // Enter on the selected canvas segment goes to its transcript row,
+    // opening the pane first. Captured: the segment stops Enter itself.
+    function onEnterCapture(event: KeyboardEvent) {
+      if (event.key !== "Enter" || event.ctrlKey || event.metaKey) return;
+      if (event.altKey || event.shiftKey) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.matches('.pe-segment-shape[aria-current="true"]')) return;
+      if (!canvasSettingsRef.current.sideBySide) {
+        toggleSideBySideRef.current(true);
+        return;
+      }
+      const lineId = selectedSegmentIdRef.current;
+      window.document
+        .querySelector<HTMLTextAreaElement>(
+          `.pe-transcript-row[data-line-id="${lineId}"] textarea`,
+        )
+        ?.focus();
+    }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onEnterCapture, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onEnterCapture, true);
+    };
   }, []);
 
   function completeDraftPolygon() {
@@ -702,6 +743,19 @@ export function PageEditorPlaceholderPage() {
                         setFocusRequest({ segmentId: id, nonce: Date.now() })
                       }
                       onCommitText={commitLineText}
+                      onReloadLine={reloadLineText}
+                      onReturnToCanvas={() =>
+                        window.document
+                          .querySelector<SVGElement>(
+                            '.pe-segment-shape[aria-current="true"]',
+                          )
+                          ?.focus()
+                      }
+                      takeFocusOnOpen={() => {
+                        const focusRow = transcriptFocusOnOpenRef.current;
+                        transcriptFocusOnOpenRef.current = false;
+                        return focusRow;
+                      }}
                       scaleFontToMask={canvasSettings.transcriptFontFromMask}
                       onClose={() =>
                         handleCanvasSettingsChange({
