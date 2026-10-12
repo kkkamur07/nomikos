@@ -17,15 +17,18 @@ export NOMIKOS_BASE_URL=http://localhost:3160      # frontend
 export NOMIKOS_API_URL=http://localhost:8160       # API
 export NOMIKOS_VIDEO_OUT=/some/folder              # default: ./out next to the script (gitignore it or pick a scratch folder)
 PY=/Users/krishuagarwal/.pyenv/versions/3.11.10/bin/python   # any Python with Playwright and Chromium
-$PY scripts/platform/explainer/record_explainer.py --video tour
-$PY scripts/platform/explainer/record_explainer.py --video explainer
+$PY scripts/platform/explainer/record_explainer.py --video tour          # dry run: lists what it would remove
+$PY scripts/platform/explainer/record_explainer.py --video tour --yes    # clean up, then record
+$PY scripts/platform/explainer/record_explainer.py --video explainer --yes
 ```
+
+Without `--yes` the script only prints what it would remove and stops before recording.
 
 The script refuses to run unless both URLs are on `localhost` or `127.0.0.1`, because its cleanup deletes
 data through the API; pass `--allow-remote` to override, and it prints both URLs before the first request.
 
-Add `--headed` to watch the browser. `NOMIKOS_SLOW_MO` (default 150 ms) sets the pace and `FFMPEG` the
-ffmpeg binary (default `/opt/homebrew/bin/ffmpeg`).
+Add `--headed` to watch the browser. `NOMIKOS_SLOW_MO` (default 250 ms) sets the pace and `FFMPEG` the
+ffmpeg binary (default: `ffmpeg` on the PATH; the script stops with a message when there is none).
 
 Other variables, all optional:
 
@@ -35,7 +38,7 @@ Other variables, all optional:
 | `NOMIKOS_USER_EMAIL`, `NOMIKOS_USER_NAME`, `NOMIKOS_USER_PASSWORD` | Eleni Markou, the new user of the explainer |
 | `NOMIKOS_SECOND_EMAIL`, `NOMIKOS_SECOND_NAME`, `NOMIKOS_SECOND_PASSWORD` | Nikos Papadakis, the colleague she shares with (created through the API if missing) |
 | `NOMIKOS_SEED_PROJECT`, `NOMIKOS_SEED_DOCUMENT` | `Byzantine Greek Manuscripts`, `Grec 1360` (name prefix) |
-| `NOMIKOS_IMAGE_DIR`, `NOMIKOS_IMAGES` | the annotated data pages folder, two Grec 1360 jpegs (comma separated) |
+| `NOMIKOS_IMAGE_DIR`, `NOMIKOS_IMAGES` | `data/annotated/data/manuscripts/pages` under the repo root (the annotated data checkout, not in git), two Grec 1360 jpegs (comma separated); the explainer stops with a message when they are missing |
 
 ## What the stack needs
 
@@ -61,14 +64,27 @@ its lines and their ground truth text. Nothing is generated; it is the seeded da
 
 ## Re-runs
 
-The script tidies up through the API before it records: it cancels open jobs, deletes regions labelled
-`4v` (or unlabelled) on the first seeded page and deletes Eleni's "Athos Letters" project (with her copy of
-Grec 1360). After the tour it deletes any Segment the numbering demo left behind and cancels the job it
-started.
+The script only removes what it made, and only with `--yes`. Every region, Segment, project and job a run
+creates is recorded by id (the API returns them) in a run file next to the videos,
+`$NOMIKOS_VIDEO_OUT/.run-state-tour.json` or `.run-state-explainer.json`. A `--yes` run first deletes or
+cancels what the previous run of the same video recorded and still exists, then starts a fresh file and
+adds to it as it goes, so a run that stops half way is still on record.
+
+- The tour removes its own region, Segment and job again right after recording, so the seeded page ends
+  as it started.
+- The explainer cancels its jobs after recording and leaves Eleni's project (with her published copy of
+  Grec 1360) until the next run.
+- If the run file is lost, the explainer's listing falls back to Eleni's projects named "Athos Letters".
+
+Regions the recorder did not create are never touched, whatever their label, and neither are other
+projects, jobs it did not start or the job history. It never deletes accounts.
 
 The explainer registers Eleni through the Register page only when the account does not exist yet; on a
-re-run it shows the login instead. For the Register version again, delete her first:
+re-run it shows the login instead. For the Register version again, delete her by hand, on a scratch
+database only and after a `--yes` run has removed her project:
 `delete from users where email = 'eleni.markou@example.org';`
+
+The API allows a few logins per minute; the script reuses its tokens and waits when it is rate limited.
 
 Before recording, the script opens every route once off camera, so a `next dev` server compiles them
 before the camera rolls. When a step fails (usually a button that moved or was renamed) the script saves
@@ -79,4 +95,5 @@ before the camera rolls. When a step fails (usually a button that moved or was r
 - Playwright records at 1440x900. An init script adds a fixed caption bar (text kept in `sessionStorage`
   so it survives navigations), a red dot that follows the mouse, and hides the Next.js dev badge.
 - The public page is opened in a second, fresh browser context. The final cut is assembled with ffmpeg:
-  the main recording up to the public link, then the fresh context. The uncaptioned lead-in is trimmed. Output is H.264, yuv420p, faststart, no audio.
+  the main recording up to the public link, then the fresh context. The uncaptioned lead-in is trimmed.
+  Output is H.264, yuv420p, faststart, no audio.
