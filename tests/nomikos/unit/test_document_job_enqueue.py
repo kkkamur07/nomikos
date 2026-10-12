@@ -5,10 +5,10 @@ happens between authorization and ``session.add``:
 
 * **model resolution.** An explicit ``model_id`` wins and contributes only that model's
   defaults. Otherwise the nearest binding — part, then document, then project — supplies
-  both the model and its effective params. *No* binding is not an error: the resolver's
-  ``NotFoundError`` is swallowed and the job goes out with a null ``model_id`` for the
-  worker's own default to fill in. Swallowing an exception is exactly the kind of thing a
-  later reader "cleans up", so it is pinned here.
+  both the model and its effective params. For segment, *no* binding is not an error: the
+  resolver's ``NotFoundError`` is swallowed and the job goes out with a null ``model_id``
+  for the worker's own default to fill in. For transcribe it is a 422, because the
+  worker's default is one script's model. Both are pinned here.
 * **parameter precedence.** ``segment`` accepts caller params and layers them *over* the
   model or binding params; ``transcribe`` accepts none at all. Reversing either would
   silently ignore what the user asked for.
@@ -163,6 +163,11 @@ def _binding(model: InferenceModel, effective: dict) -> ResolvedModelBinding:
     return ResolvedModelBinding(binding=binding, model=model, effective_params=effective)
 
 
+def _bound_transcribe_model() -> ResolvedModelBinding:
+    """A project transcription binding: transcribe refuses to run without a model."""
+    return _binding(_model(InferenceTask.transcribe), {})
+
+
 def _fixture(
     *,
     owner_id: uuid.UUID | None = None,
@@ -286,7 +291,9 @@ async def test_an_explicitly_empty_selection_is_invalid_rather_than_a_whole_page
 async def test_transcribe_stages_a_pending_cloud_job_bound_to_the_caller_and_page() -> None:
     owner_id = uuid.uuid4()
     user = _user(owner_id)
-    service, project, document, part, _lines, _inference = _fixture(owner_id=owner_id, line_count=2)
+    service, project, document, part, _lines, _inference = _fixture(
+        owner_id=owner_id, line_count=2, resolved=_bound_transcribe_model()
+    )
     session = _Session()
 
     job = await service.enqueue_transcribe_part(
@@ -306,7 +313,9 @@ async def test_transcribe_stages_a_pending_cloud_job_bound_to_the_caller_and_pag
 async def test_a_whole_page_transcribe_carries_no_line_selection() -> None:
     """Absent, not empty: the worker distinguishes "every line" from "these lines"."""
     owner_id = uuid.uuid4()
-    service, project, document, part, _lines, _inference = _fixture(owner_id=owner_id, line_count=2)
+    service, project, document, part, _lines, _inference = _fixture(
+        owner_id=owner_id, line_count=2, resolved=_bound_transcribe_model()
+    )
 
     job = await service.enqueue_transcribe_part(
         _Session(),
@@ -322,7 +331,9 @@ async def test_a_whole_page_transcribe_carries_no_line_selection() -> None:
 
 async def test_a_selective_transcribe_carries_the_ids_as_strings_in_caller_order() -> None:
     owner_id = uuid.uuid4()
-    service, project, document, part, lines, _inference = _fixture(owner_id=owner_id, line_count=3)
+    service, project, document, part, lines, _inference = _fixture(
+        owner_id=owner_id, line_count=3, resolved=_bound_transcribe_model()
+    )
     selection = [lines[2].id, lines[0].id]
 
     job = await service.enqueue_transcribe_part(
@@ -465,21 +476,39 @@ async def test_the_nearest_binding_supplies_the_model_and_its_effective_params(
     assert inference.resolutions == [task]
 
 
-@pytest.mark.parametrize("method", ["enqueue_segment_part", "enqueue_transcribe_part"])
-async def test_no_binding_anywhere_still_enqueues_with_a_null_model(method: str) -> None:
-    """Not an error: the worker has its own default, and the resolver's 404 says only that
-    nobody pinned a model — refusing here would make an unconfigured project unusable."""
+async def test_segment_with_no_binding_anywhere_still_enqueues_with_a_null_model() -> None:
+    """Not an error for segmentation: one segmenter serves every script, and the resolver's
+    404 says only that nobody pinned a model."""
     owner_id = uuid.uuid4()
     service, project, document, part, _lines, _inference = _fixture(owner_id=owner_id, line_count=1)
     session = _Session()
 
-    job = await getattr(service, method)(
+    job = await service.enqueue_segment_part(
         session, _user(owner_id), project.id, document.id, part.id, execution=CLOUD_AVAILABLE
     )
 
     assert job.model_id is None
     assert job.binding_id is None
     assert session.commits == 1
+
+
+async def test_transcribe_with_no_model_and_no_binding_is_refused_and_nothing_is_staged() -> None:
+    """The worker's fallback is one script's model; a Greek page must not run it silently."""
+    owner_id = uuid.uuid4()
+    service, project, document, part, _lines, _inference = _fixture(owner_id=owner_id, line_count=1)
+    session = _Session()
+
+    with pytest.raises(ValidationError) as refused:
+        await service.enqueue_transcribe_part(
+            session, _user(owner_id), project.id, document.id, part.id, execution=CLOUD_AVAILABLE
+        )
+
+    assert str(refused.value) == (
+        "No transcription model is bound to this project. "
+        "Pick a model in the menu or bind one to the project."
+    )
+    assert session.added == []
+    assert session.commits == 0
 
 
 # --- Segment parameter precedence: the caller's request wins ---

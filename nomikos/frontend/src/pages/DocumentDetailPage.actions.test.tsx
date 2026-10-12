@@ -146,7 +146,17 @@ describe("DocumentDetailPage action toolbar", () => {
     seedProject("user-1");
     vi.mocked(api.getDocument).mockResolvedValue(DOCUMENT);
     vi.mocked(api.getDocumentWorkflowCounts).mockResolvedValue(COUNTS);
-    vi.mocked(api.listInferenceModels).mockResolvedValue([]);
+    vi.mocked(api.listInferenceModels).mockResolvedValue([
+      {
+        id: "htr-greek",
+        task: "transcribe",
+        name: "greek-v1",
+        provider: "ppocr",
+        artifact_ref: "registry://greek-v1",
+        default_params: {},
+        created_at: "2026-10-01T10:00:00Z",
+      },
+    ]);
     vi.mocked(api.enqueueDocumentSegment).mockResolvedValue({
       jobs: [queuedJob("job-1")],
       queued: 3,
@@ -242,8 +252,12 @@ describe("DocumentDetailPage action toolbar", () => {
       within(menu).getByRole("combobox", { name: "Segmentation model" }),
     ).toBeTruthy();
     expect(within(menu).getByRole("option", { name: "Default" })).toBeTruthy();
-    // Nothing is bound, so the menu names no model rather than guessing one.
-    expect(await within(menu).findByText("Project default")).toBeTruthy();
+    // Nothing is bound, so the menu asks for a model rather than guessing one.
+    expect(
+      await within(menu).findByRole("combobox", {
+        name: "Transcription model",
+      }),
+    ).toHaveValue("htr-greek");
     expect(
       within(menu).getByText(/Re-segmenting discards unapproved machine text/),
     ).toBeTruthy();

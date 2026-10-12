@@ -6,9 +6,10 @@ knows about the ML catalog, and the only one that writes ``jobs``.
 
 Model resolution is the substance behind the small interface: an explicit ``model_id``
 wins and contributes its defaults, otherwise the nearest binding (part, then document,
-then project) is consulted, and *no* binding is not an error: the job goes out with a
-null model and the agent's own default applies. That last part is why ``NotFoundError``
-from the resolver is swallowed here rather than propagated.
+then project) is consulted. For segmentation *no* binding is not an error: the job goes
+out with a null model and the agent's own default applies, which is why ``NotFoundError``
+from the resolver is swallowed there. For transcription it is refused: the agent's
+default is one script's model, and a page in any other script would run it silently.
 
 **Execution target** is fixed here, and only here, because this is the first moment all
 three inputs exist at once: the caller's account preference and the **capacity** reading
@@ -39,6 +40,11 @@ from backend.ml.domain.execution import (
 from backend.ml.infrastructure.orm_models import InferenceModel, InferenceTask
 from backend.project.infrastructure.project_repository import ProjectRepository
 from backend.users.infrastructure.orm_models import User
+
+NO_TRANSCRIBE_MODEL_MESSAGE = (
+    "No transcription model is bound to this project. "
+    "Pick a model in the menu or bind one to the project."
+)
 
 
 def _decide_execution(
@@ -104,12 +110,11 @@ class DocumentJobEnqueueService:
                     task=InferenceTask.transcribe,
                 )
             except NotFoundError:
-                selected_model_id = None
-            else:
-                selected_model = resolved.model
-                selected_model_id = resolved.model.id
-                binding_id = resolved.binding.id
-                ml_params = dict(resolved.effective_params)
+                raise ValidationError(NO_TRANSCRIBE_MODEL_MESSAGE) from None
+            selected_model = resolved.model
+            selected_model_id = resolved.model.id
+            binding_id = resolved.binding.id
+            ml_params = dict(resolved.effective_params)
         decision = _decide_execution(execution, selected_model, task=InferenceTask.transcribe)
         payload: dict = {"ml_params": ml_params, "execution": decision.target.value}
         if line_ids is not None:
