@@ -19,7 +19,7 @@
     "select_line": "Click a line: its text lights up",
     "edit_line": "Correct the text; it saves itself",
     "pane": "Transcript button hides and shows the pane",
-    "region": "Draw a region (G), label it 4v",
+    "region": "Draw a region (G), label it video-4v",
     "export": "Workflow, Export: Word for this page",
     "share": "Share the project with a colleague",
     "publish": "Publish: a read only public link",
