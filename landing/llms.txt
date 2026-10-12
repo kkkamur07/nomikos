@@ -6,7 +6,7 @@ Nomikos is open research tooling for manuscript HTR workflows: page annotation, 
 
 ## Site
 
-- [Home](https://nomikos.app/): Product overview, features, and published models
+- [Home](https://nomikos.app/): Product overview, demo videos, features, and published models
 - [App](https://app.nomikos.app/): Hosted annotation platform
 - [llms.txt](https://nomikos.app/llms.txt): This file
 

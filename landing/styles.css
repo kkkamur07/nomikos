@@ -371,6 +371,51 @@ main {
   box-shadow: 0 8px 32px rgba(13, 31, 60, 0.06);
 }
 
+/* ─── Videos ──────────────────────────────────────────────────── */
+.video-grid {
+  display: grid;
+  gap: 2rem;
+  width: 88%;
+  margin: 0.5rem auto 0;
+  align-items: start;
+}
+
+.video {
+  margin: 0;
+  min-width: 0;
+}
+
+.video__frame {
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 8px 32px rgba(13, 31, 60, 0.06);
+}
+
+.video__frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video figcaption {
+  margin-top: 0.875rem;
+}
+
+.video figcaption strong {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+@media (min-width: 48rem) {
+  .video-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .section--wide {
   border-top: 1px solid var(--border);
   padding-top: var(--pad-section);
