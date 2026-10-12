@@ -210,7 +210,7 @@ platform-prod = [
     "bcrypt>=4.2.0",
     "email-validator>=2.2.0",
     "psycopg2-binary>=2.9.10",
-    "PyJWT>=2.10.0",
+    "PyJWT>=2.15.0",
     "python-multipart>=0.0.18",
     # Secret-strength estimation for JWT_SECRET. Dropbox's zxcvbn, the Python port
     # the upstream authors point at. MIT, ~880 KB, and it runs once at settings
