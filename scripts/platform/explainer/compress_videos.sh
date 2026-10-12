@@ -2,7 +2,7 @@
 # Compress the recorded explainer videos for the landing page.
 #
 # Usage: compress_videos.sh SOURCE_DIR [OUT_DIR]
-#   SOURCE_DIR  folder holding nomikos-whats-new.mp4 and nomikos-explainer.mp4
+#   SOURCE_DIR  folder holding nomikos-explainer.mp4
 #   OUT_DIR     default: landing/assets/video in this checkout
 #
 # For each <name>.mp4 it writes <name>.mp4 (H.264), <name>.webm (VP9) and
@@ -32,7 +32,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 OUT_DIR="${2:-$REPO_ROOT/landing/assets/video}"
 MP4_CRF="${MP4_CRF:-35}"
 WEBM_CRF="${WEBM_CRF:-44}"
-NAMES=(nomikos-whats-new nomikos-explainer)
+NAMES=(nomikos-explainer)
 VF="scale=960:-2:flags=lanczos,fps=24,format=yuv420p"
 
 mkdir -p "$OUT_DIR"
