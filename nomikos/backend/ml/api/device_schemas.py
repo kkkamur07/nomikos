@@ -11,9 +11,28 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.ml.domain.devices import DeviceStatus, PairingStatus
+
+#: A helper advertises string tags like ``{"runtime": "torch"}``; the consent
+#: screen renders them as inert text. Bounded in count and length so an
+#: unauthenticated caller cannot store megabytes of JSON per pairing row.
+MAX_CAPABILITY_ENTRIES = 32
+MAX_CAPABILITY_KEY_LENGTH = 64
+MAX_CAPABILITY_VALUE_LENGTH = 512
+
+
+def bound_capabilities(value: dict[str, str]) -> dict[str, str]:
+    """Reject capability maps that exceed the count or length ceilings."""
+    if len(value) > MAX_CAPABILITY_ENTRIES:
+        raise ValueError(f"at most {MAX_CAPABILITY_ENTRIES} capabilities")
+    for key, item in value.items():
+        if len(key) > MAX_CAPABILITY_KEY_LENGTH:
+            raise ValueError("capability names must be short")
+        if len(item) > MAX_CAPABILITY_VALUE_LENGTH:
+            raise ValueError("capability values must be short")
+    return value
 
 
 class PairingStartRequest(BaseModel):
@@ -22,7 +41,12 @@ class PairingStartRequest(BaseModel):
     device_name: str = Field(min_length=1, max_length=120)
     platform: str = Field(min_length=1, max_length=32)
     helper_version: str = Field(min_length=1, max_length=32)
-    capabilities: dict = Field(default_factory=dict)
+    capabilities: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("capabilities")
+    @classmethod
+    def _bound_capabilities(cls, value: dict[str, str]) -> dict[str, str]:
+        return bound_capabilities(value)
 
 
 class PairingStartResponse(BaseModel):

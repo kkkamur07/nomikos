@@ -96,10 +96,6 @@ class HelperDeviceRepository:
         )
         return frozenset(result.scalars().all())
 
-    async def get_pairing(self, session: AsyncSession, pairing_id: UUID) -> HelperPairing | None:
-        result = await session.execute(select(HelperPairing).where(HelperPairing.id == pairing_id))
-        return result.scalar_one_or_none()
-
     async def get_pairing_for_update(
         self, session: AsyncSession, pairing_id: UUID
     ) -> HelperPairing | None:

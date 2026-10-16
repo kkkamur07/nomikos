@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.settings.auth import get_auth_settings
 from backend.users.api.dependencies import get_current_user
-from backend.users.api.rate_limit import throttle_auth_attempts
+from backend.users.api.rate_limit import (
+    UNATTRIBUTABLE_AUTH_RATE_LIMIT,
+    attributable_client_ip,
+    consume_rate_limit,
+    throttle_auth_attempts,
+)
 from backend.users.api.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 from backend.users.application.auth_service import AuthService
 from backend.users.application.browser_sessions import BrowserSessionService, BrowserSessionTokens
@@ -16,6 +21,30 @@ from infrastructure.db import get_db
 
 router = APIRouter(tags=["auth"])
 _auth = AuthService()
+
+
+async def _throttle_session_use(request: Request) -> None:
+    """Per-IP cap on session rotation; unattributable callers share one bucket.
+
+    Refresh and logout had no limiter at all. The IP dimension carries the
+    load where the peer identifies one client; where it does not, the coarse
+    shared bucket sheds the excess, which is safe here because rotation never
+    locks anyone out of signing in. The budget is the session-rotation one,
+    not the password-guessing one: refresh fires on every app boot and every
+    401, so one NAT full of browsers would starve on a budget of 10.
+    """
+    settings = get_auth_settings()
+    client_ip = attributable_client_ip(request)
+    if client_ip is not None:
+        key, limit = f"session:{client_ip}", settings.session_rotation_rate_limit_requests
+    else:
+        key, limit = "session:unattributable", UNATTRIBUTABLE_AUTH_RATE_LIMIT
+    await consume_rate_limit(
+        [key],
+        limit=limit,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+        detail="Too many requests; try again later",
+    )
 
 
 def _set_session_cookies(response: Response, tokens: BrowserSessionTokens) -> None:
@@ -79,7 +108,7 @@ async def register(
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
 ) -> TokenResponse:
-    user, _token = await _auth.register(
+    user = await _auth.register(
         db,
         email=body.email,
         username=body.username,
@@ -96,14 +125,17 @@ async def login(
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
 ) -> TokenResponse:
-    user, _token = await _auth.login(db, email=body.email, password=body.password)
+    user = await _auth.login(db, email=body.email, password=body.password)
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
     return _issue_session(response, tokens)
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
 async def refresh(
-    request: Request, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _rate_limit: Annotated[None, Depends(_throttle_session_use)],
 ) -> TokenResponse:
     settings = get_auth_settings()
     tokens = await BrowserSessionService(settings).rotate(
@@ -119,7 +151,10 @@ async def refresh(
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
-    request: Request, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _rate_limit: Annotated[None, Depends(_throttle_session_use)],
 ) -> None:
     settings = get_auth_settings()
     await BrowserSessionService(settings).revoke(

@@ -24,14 +24,16 @@ from backend.ml.api.device_schemas import (
     PairingLookupRequest,
     PairingRequestResponse,
 )
-from backend.ml.application.device_service import DevicePairingService
+from backend.ml.application.device_management import DeviceManagementService
+from backend.ml.application.pairing_service import DevicePairingService
 from backend.users.api.dependencies import get_current_user
 from backend.users.api.rate_limit import client_ip_for_request
 from backend.users.infrastructure.orm_models import User
 from infrastructure.db import get_db
 
 router = APIRouter(tags=["devices"], dependencies=[Depends(require_device_pairing_enabled)])
-_service = DevicePairingService()
+_pairings = DevicePairingService()
+_devices = DeviceManagementService()
 
 
 @router.post("/devices/pairings/lookup", response_model=PairingRequestResponse)
@@ -52,8 +54,8 @@ async def lookup_device_pairing(
     ``pairing_id`` included. Recovering a closed consent tab now means starting a
     new pairing from the helper, which costs one click.
     """
-    pairing = await _service.lookup_pairing(db, verification_token=body.verification_token)
-    return pairing_response_from_orm(pairing, service=_service)
+    pairing = await _pairings.lookup_pairing(db, verification_token=body.verification_token)
+    return pairing_response_from_orm(pairing, service=_pairings)
 
 
 @router.post("/devices/pairings/{pairing_id}/approve", response_model=DeviceResponse)
@@ -78,7 +80,7 @@ async def approve_device_pairing(
     0001, "Pairing phishing".
     """
     now = datetime.now(UTC)
-    device = await _service.approve_pairing(
+    device = await _pairings.approve_pairing(
         db,
         user=current_user,
         pairing_id=pairing_id,
@@ -86,7 +88,7 @@ async def approve_device_pairing(
         request_ip=client_ip_for_request(request),
         now=now,
     )
-    return device_response_from_orm(device, service=_service, now=now)
+    return device_response_from_orm(device, service=_pairings, now=now)
 
 
 @router.post("/devices/pairings/{pairing_id}/deny", status_code=status.HTTP_204_NO_CONTENT)
@@ -96,7 +98,7 @@ async def deny_device_pairing(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
-    await _service.deny_pairing(
+    await _pairings.deny_pairing(
         db,
         user=current_user,
         pairing_id=pairing_id,
@@ -111,8 +113,8 @@ async def list_devices(
     include_revoked: bool = False,
 ) -> list[DeviceResponse]:
     now = datetime.now(UTC)
-    devices = await _service.list_devices(db, user=current_user, include_revoked=include_revoked)
-    return [device_response_from_orm(device, service=_service, now=now) for device in devices]
+    devices = await _devices.list_devices(db, user=current_user, include_revoked=include_revoked)
+    return [device_response_from_orm(device, service=_pairings, now=now) for device in devices]
 
 
 @router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -126,4 +128,4 @@ async def revoke_device(
     Takes effect on that device's next request - every device call re-reads the
     row, so there is no cache expiry to wait out.
     """
-    await _service.revoke_device(db, user=current_user, device_id=device_id)
+    await _devices.revoke_device(db, user=current_user, device_id=device_id)

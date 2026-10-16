@@ -5,13 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.core.api.client_failures import clear_client_failure_rate_limit_state
-
 pytestmark = pytest.mark.integration
-
-
-def setup_function() -> None:
-    clear_client_failure_rate_limit_state()
 
 
 def test_client_failure_beacon_rejects_control_characters(client: TestClient):

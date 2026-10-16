@@ -30,12 +30,14 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address, ip_network
 from typing import NamedTuple
 
 from fastapi import HTTPException, Request
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.settings.app import get_app_settings
 from backend.core.settings.auth import get_auth_settings
@@ -56,10 +58,6 @@ MAX_IDENTITY_BODY_BYTES = 8 * 1024
 #: ``throttle_auth_attempts`` for why a shared bucket is safe *here* and would be
 #: an outage on the main path.
 UNATTRIBUTABLE_AUTH_RATE_LIMIT = 300
-
-
-def clear_auth_rate_limit_state() -> None:
-    """No-op - state lives in Postgres and is cleared by database truncation in tests."""
 
 
 def client_ip_for_request(request: Request) -> str:
@@ -189,71 +187,48 @@ def _normalized(keys: Sequence[str]) -> list[str]:
     return sorted({key[:255] for key in keys})
 
 
-async def check_rate_limit(
+@asynccontextmanager
+async def _locked_rate_limit_session(
     keys: Sequence[str],
-    *,
-    limit: int,
-    window_seconds: int,
-    detail: str,
-) -> None:
-    """Raise 429 if any key is exhausted, charging nothing.
+) -> AsyncIterator[tuple[AsyncSession, list[str]]]:
+    """Yield one session holding every key's advisory lock, in sorted order.
 
-    Separate from charging because the two are not always the same event. An
-    account bucket has to *reject* every attempt once it is full, but may only
-    be *charged* by the attempts that failed; see ``throttle_auth_attempts``.
+    The check and the charge happen inside the same lock: without it N parallel
+    attempts all read the bucket under the cap and all proceed. Locks are taken
+    in sorted order so two requests sharing two keys cannot deadlock.
     """
     unique_keys = _normalized(keys)
-    if not unique_keys:
-        return
-    window_start = datetime.now(UTC) - timedelta(seconds=window_seconds)
-    async with AsyncSessionLocal() as db:
-        for key in unique_keys:
-            count: int = (
-                await db.scalar(
-                    select(func.count())
-                    .select_from(AuthRateLimitAttempt)
-                    .where(
-                        AuthRateLimitAttempt.key == key,
-                        AuthRateLimitAttempt.attempted_at >= window_start,
-                    )
-                )
-                or 0
-            )
-            if count >= limit:
-                raise HTTPException(
-                    status_code=429,
-                    detail=detail,
-                    headers={"Retry-After": str(window_seconds)},
-                )
-
-
-async def charge_rate_limit(keys: Sequence[str], *, window_seconds: int) -> None:
-    """Record one attempt against every key without checking any ceiling.
-
-    Used where the decision to reject was already taken (or deliberately is not
-    taken at this point), so a full bucket must not turn into a second 429 that
-    replaces the response the caller actually earned.
-    """
-    unique_keys = _normalized(keys)
-    if not unique_keys:
-        return
-    now = datetime.now(UTC)
-    window_start = now - timedelta(seconds=window_seconds)
     async with AsyncSessionLocal() as db:
         for key in unique_keys:
             await db.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                 {"key": key},
             )
-        for key in unique_keys:
-            await db.execute(
-                delete(AuthRateLimitAttempt).where(
-                    AuthRateLimitAttempt.key == key,
-                    AuthRateLimitAttempt.attempted_at < window_start,
-                )
+        yield db, unique_keys
+
+
+async def _prune_expired(db: AsyncSession, keys: Sequence[str], window_start: datetime) -> None:
+    for key in keys:
+        await db.execute(
+            delete(AuthRateLimitAttempt).where(
+                AuthRateLimitAttempt.key == key,
+                AuthRateLimitAttempt.attempted_at < window_start,
             )
-            db.add(AuthRateLimitAttempt(key=key, attempted_at=now))
-        await db.commit()
+        )
+
+
+async def _attempt_count(db: AsyncSession, key: str, window_start: datetime) -> int:
+    return (
+        await db.scalar(
+            select(func.count())
+            .select_from(AuthRateLimitAttempt)
+            .where(
+                AuthRateLimitAttempt.key == key,
+                AuthRateLimitAttempt.attempted_at >= window_start,
+            )
+        )
+        or 0
+    )
 
 
 async def consume_rate_limit(
@@ -273,43 +248,50 @@ async def consume_rate_limit(
         return
     now = datetime.now(UTC)
     window_start = now - timedelta(seconds=window_seconds)
-
-    # Use a dedicated session so the rate-limit record always commits
-    # independently of the surrounding request transaction. Locks are taken in
-    # sorted order so two requests sharing two keys cannot deadlock.
-    async with AsyncSessionLocal() as db:
-        for key in unique_keys:
-            await db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-                {"key": key},
-            )
-        for key in unique_keys:
-            await db.execute(
-                delete(AuthRateLimitAttempt).where(
-                    AuthRateLimitAttempt.key == key,
-                    AuthRateLimitAttempt.attempted_at < window_start,
-                )
-            )
-            count: int = (
-                await db.scalar(
-                    select(func.count())
-                    .select_from(AuthRateLimitAttempt)
-                    .where(
-                        AuthRateLimitAttempt.key == key,
-                        AuthRateLimitAttempt.attempted_at >= window_start,
-                    )
-                )
-                or 0
-            )
-            if count >= limit:
+    async with _locked_rate_limit_session(keys) as (db, locked_keys):
+        await _prune_expired(db, locked_keys, window_start)
+        for key in locked_keys:
+            if await _attempt_count(db, key, window_start) >= limit:
                 await db.rollback()
                 raise HTTPException(
                     status_code=429,
                     detail=detail,
                     headers={"Retry-After": str(window_seconds)},
                 )
-        for key in unique_keys:
+        for key in locked_keys:
             db.add(AuthRateLimitAttempt(key=key, attempted_at=now))
+        await db.commit()
+
+
+async def refund_rate_limit(keys: Sequence[str], *, window_seconds: int) -> None:
+    """Return one attempt per key, for a charge the caller did not spend.
+
+    The account bucket is charged before the password is verified and refunded
+    when the attempt succeeds, so only failures spend budget while a parallel
+    burst cannot slip the cap.
+    """
+    unique_keys = _normalized(keys)
+    if not unique_keys:
+        return
+    window_start = datetime.now(UTC) - timedelta(seconds=window_seconds)
+    async with AsyncSessionLocal() as db:
+        for key in unique_keys:
+            row_id = await db.scalar(
+                select(AuthRateLimitAttempt.id)
+                .where(
+                    AuthRateLimitAttempt.key == key,
+                    AuthRateLimitAttempt.attempted_at >= window_start,
+                )
+                .order_by(
+                    AuthRateLimitAttempt.attempted_at.desc(),
+                    AuthRateLimitAttempt.id.desc(),
+                )
+                .limit(1)
+            )
+            if row_id is not None:
+                await db.execute(
+                    delete(AuthRateLimitAttempt).where(AuthRateLimitAttempt.id == row_id)
+                )
         await db.commit()
 
 
@@ -347,17 +329,14 @@ async def throttle_auth_attempts(request: Request) -> AsyncIterator[None]:
     The IP bucket is charged before the handler runs: an attacker's budget has to
     shrink whether or not a guess lands.
 
-    The account bucket is *checked* before the handler and charged only when the
-    attempt fails. Charging it up front, as this dependency used to, meant every
-    successful sign-in spent budget from a bucket keyed on the victim's own email
-    - so anyone who knew an address could hold its owner at HTTP 429 indefinitely
-    by posting garbage passwords, on a deployment where ``TRUST_PEER_IP=false``
-    leaves no IP dimension to spread the load. The bucket has to cap guessing
-    without capping the owner, and only failures are guesses.
-
-    A failed attempt is charged with ``charge_rate_limit``, not ``consume``: the
-    caller has already earned its 401, and a bucket that filled in the meantime
-    must not turn that into a 429 that hides it.
+    The account bucket is charged before the handler runs too, under the same
+    advisory lock the IP bucket uses. Checking it unlocked and charging only
+    after a failure let N parallel attempts all read the bucket under the cap,
+    so a burst slipped the per-account limit entirely. A success refunds its
+    charge below, so only failures spend budget: anyone who knows an address
+    still cannot hold its owner at HTTP 429 with successful sign-ins, and on a
+    deployment where ``TRUST_PEER_IP=false`` leaves no IP dimension the bucket
+    still caps guessing without capping the owner.
     """
     settings = get_auth_settings()
     keys = await auth_rate_limit_keys(request)
@@ -397,13 +376,14 @@ async def throttle_auth_attempts(request: Request) -> AsyncIterator[None]:
     if keys.ip is not None:
         await consume_rate_limit([keys.ip], limit=limit, window_seconds=window, detail=detail)
     if keys.account is not None:
-        await check_rate_limit([keys.account], limit=limit, window_seconds=window, detail=detail)
+        await consume_rate_limit([keys.account], limit=limit, window_seconds=window, detail=detail)
+    succeeded = False
     try:
         yield
-    except Exception:
-        if keys.account is not None:
-            await charge_rate_limit([keys.account], window_seconds=window)
-        raise
+        succeeded = True
+    finally:
+        if succeeded and keys.account is not None:
+            await refund_rate_limit([keys.account], window_seconds=window)
 
 
 #: A helper installation runs `nomikos pair` once, so a handful of starts per
@@ -411,10 +391,9 @@ async def throttle_auth_attempts(request: Request) -> AsyncIterator[None]:
 #: the route, not to bound the platform - that is the live-pairing ceiling in
 #: ``DevicePairingService.start_pairing``.
 #:
-#: The default lives in ``AuthSettings.device_pairing_rate_limit_requests``; this
-#: name is kept as the documented default so a reader of this module still sees
-#: the number, and so nothing that imported it breaks.
-DEVICE_PAIRING_RATE_LIMIT_REQUESTS = 10
+#: The budget lives in ``AuthSettings.device_pairing_rate_limit_requests`` so a
+#: deployment pairing many devices from one NAT can raise it without also
+#: raising the password-guessing budget.
 
 
 async def throttle_device_pairing_starts(request: Request) -> None:

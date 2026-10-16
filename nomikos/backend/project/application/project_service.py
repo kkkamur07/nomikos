@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import AccessDeniedError, ConflictError, NotFoundError
@@ -42,13 +43,20 @@ class ProjectService:
     ) -> Project:
         if await self._projects.get_by_slug(session, slug):
             raise ConflictError("Project slug already taken")
-        return await self._projects.create(
-            session,
-            name=name,
-            slug=slug,
-            guidelines=guidelines,
-            owner_id=user.id,
-        )
+        try:
+            return await self._projects.create(
+                session,
+                name=name,
+                slug=slug,
+                guidelines=guidelines,
+                owner_id=user.id,
+            )
+        except IntegrityError as exc:
+            # Check-then-insert lost a concurrent create with the same slug.
+            # The pre-check above keeps the common case a 409 without a
+            # rollback; this turns the race loser into the same 409.
+            await session.rollback()
+            raise ConflictError("Project slug already taken") from exc
 
     async def get_project(self, session: AsyncSession, user: User, project_id: UUID) -> Project:
         project = await self._load_or_404(session, project_id)
@@ -69,7 +77,11 @@ class ProjectService:
             existing = await self._projects.get_by_slug(session, slug)
             if existing is not None:
                 raise ConflictError("Project slug already taken")
-        return await self._projects.update(session, project, **updates)
+        try:
+            return await self._projects.update(session, project, **updates)
+        except IntegrityError as exc:
+            await session.rollback()
+            raise ConflictError("Project slug already taken") from exc
 
     async def delete_project(self, session: AsyncSession, user: User, project_id: UUID) -> None:
         project = await self._load_or_404(session, project_id)
@@ -96,6 +108,10 @@ class ProjectService:
     ) -> None:
         project = await self._load_or_404(session, project_id)
         self._require_owner(project, user.id)
+        # Unknown addresses stay a 404: the sharing panel treats any 2xx as
+        # "Shared with <value>", so silence would confirm a typo as success.
+        # (A silent 204 would stop account probing but lie to the UI; that
+        # tradeoff is an open design question, not a silent change.)
         collaborator = await self._find_collaborator(
             session, username=username, email=email, identifier=identifier
         )
@@ -111,8 +127,8 @@ class ProjectService:
         project = await self._load_or_404(session, project_id)
         self._require_owner(project, user.id)
         # Taken from the project's own collaborators rather than looked up
-        # globally: "is not shared on this project" and "is not a user at all"
-        # are the same answer to the caller, and this way it is one query.
+        # globally: absent here and absent everywhere are the same answer to
+        # the caller, and this way it is one query.
         collaborator = next(
             (shared for shared in project.shared_users if shared.id == user_id), None
         )

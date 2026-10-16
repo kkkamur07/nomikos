@@ -88,20 +88,10 @@ class ExecutionRequest:
 
 @dataclass(frozen=True)
 class ExecutionDecision:
-    """Where the job will run, and where the researcher asked for it to run.
-
-    ``substituted`` is not cosmetic. It is the entire user interface for this
-    feature (issue 059 renders it), and it belongs on the job rather than in a
-    toast because a researcher who looks away must still be able to read where
-    their job went.
-    """
+    """Where the job will run, and where the researcher asked for it to run."""
 
     target: ExecutionTarget
     preferred: ExecutionTarget
-
-    @property
-    def substituted(self) -> bool:
-        return self.target != self.preferred
 
 
 def choose_execution_target(

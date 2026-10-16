@@ -2905,7 +2905,7 @@ export interface components {
     PairingStartRequest: {
       /** Capabilities */
       capabilities?: {
-        [key: string]: unknown;
+        [key: string]: string;
       };
       /** Device Name */
       device_name: string;

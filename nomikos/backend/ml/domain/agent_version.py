@@ -130,14 +130,6 @@ class AgentVersion:
             pre_number=int(match.group("pre_number") or 0),
         )
 
-    @classmethod
-    def is_valid(cls, raw: str | None) -> bool:
-        try:
-            cls.parse(raw)
-        except MalformedAgentVersionError:
-            return False
-        return True
-
 
 class AgentVersionStatus(StrEnum):
     """What the platform makes of the version an agent presented.

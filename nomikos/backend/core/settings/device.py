@@ -12,10 +12,9 @@ from pydantic_settings import BaseSettings
 
 from backend.core.settings._cache import settings_cache
 from backend.core.settings._env import env_settings_config
+from backend.core.settings.secrets import is_placeholder_secret
 
 logger = logging.getLogger(__name__)
-
-_PLACEHOLDER_SECRETS = {"change-me", "change-me-in-production", "replace-me"}
 
 
 class DeviceSettings(BaseSettings):
@@ -212,11 +211,7 @@ class DeviceSettings(BaseSettings):
         if self.device_token_hmac_secret is None:
             return self
         normalized = self.device_token_hmac_secret.strip()
-        if (
-            len(normalized) < 32
-            or normalized.casefold() in _PLACEHOLDER_SECRETS
-            or normalized.casefold().startswith("replace-with-")
-        ):
+        if len(normalized) < 32 or is_placeholder_secret(normalized):
             raise ValueError(
                 "DEVICE_TOKEN_HMAC_SECRET must be at least 32 non-placeholder characters"
             )
@@ -233,11 +228,7 @@ class DeviceSettings(BaseSettings):
         if self.inference_worker_service_token is None:
             return self
         normalized = self.inference_worker_service_token.strip()
-        if (
-            len(normalized) < 32
-            or normalized.casefold() in _PLACEHOLDER_SECRETS
-            or normalized.casefold().startswith("replace-with-")
-        ):
+        if len(normalized) < 32 or is_placeholder_secret(normalized):
             raise ValueError(
                 "INFERENCE_WORKER_SERVICE_TOKEN must be at least 32 non-placeholder characters"
             )

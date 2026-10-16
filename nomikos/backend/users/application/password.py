@@ -10,6 +10,8 @@ We use the ``bcrypt`` library directly (bcrypt 4.x; passlib is not used).
 Passwords are never stored in plaintext; only the bcrypt hash is persisted in ``users.hashed_password``.
 """
 
+import asyncio
+
 import bcrypt
 
 # bcrypt default work factor when using gensalt() without rounds=
@@ -35,3 +37,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     except ValueError:
         return False
     return bcrypt.checkpw(encoded, hashed.encode("utf-8"))
+
+
+async def hash_password_async(plain: str) -> str:
+    """Hash off the event loop; bcrypt costs ~300ms at 12 rounds."""
+    return await asyncio.to_thread(hash_password, plain)
+
+
+async def verify_password_async(plain: str, hashed: str) -> bool:
+    """Verify off the event loop; see :func:`hash_password_async`."""
+    return await asyncio.to_thread(verify_password, plain, hashed)
