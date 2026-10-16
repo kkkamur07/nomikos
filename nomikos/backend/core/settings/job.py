@@ -12,6 +12,12 @@ class JobSettings(BaseSettings):
 
     enable_test_job_routes: bool = Field(default=False, alias="ENABLE_TEST_JOB_ROUTES")
     job_worker_enabled: bool = Field(default=True, alias="JOB_WORKER_ENABLED")
+    media_gc_enabled: bool = Field(
+        default=True,
+        alias="MEDIA_GC_ENABLED",
+        description="Run the abandoned-upload sweeper in the API lifespan. Disable it on "
+        "replicas that should not contend for the same rows.",
+    )
     job_sse_notifications_enabled: bool = Field(
         default=True,
         alias="JOB_SSE_NOTIFICATIONS_ENABLED",
