@@ -236,8 +236,9 @@ def test_isolates_in_neutral_runs(
 def test_level_at_rejects_a_removed_character() -> None:
     from nomikos_inference.architectures.ppocr_rec.bidi._common import level_at
 
-    with pytest.raises(ValueError, match="removed character"):
+    with pytest.raises(ValueError) as excinfo:
         level_at([None], 0)
+    assert str(excinfo.value) == "isolating run sequence contains a removed character"
 
 
 def _explicit(types: list[str]) -> tuple[list[int | None], list[str]]:
