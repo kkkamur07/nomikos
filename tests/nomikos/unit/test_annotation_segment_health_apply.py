@@ -458,6 +458,24 @@ class TestZeroExtentPins:
         assert report.finding_count == 0
 
     @pytest.mark.asyncio
+    async def test_zero_height_hides_a_suspect(self) -> None:
+        lines = [_row(1500.0, 1900.0, -50.0, order=0), _row(0.0, 10.0, -50.0, order=1)]
+        service, part = _service(lines, width=2479.0, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.finding_count == 0
+
+    @pytest.mark.asyncio
+    async def test_half_height_still_flags_a_suspect(self) -> None:
+        lines = [_row(1500.0, 1900.0, -49.5, order=0), _row(0.0, 10.0, -49.5, order=1)]
+        service, part = _service(lines, width=2479.0, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.finding_count == 1
+
+    @pytest.mark.asyncio
     async def test_unit_extent_width_still_flags_an_outsider(self) -> None:
         voter = _row(0.0, 1.0, 500.0, order=0)
         outsider = _row(-50.0, -49.95, 500.0, order=1)

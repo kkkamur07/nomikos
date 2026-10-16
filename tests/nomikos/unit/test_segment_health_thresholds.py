@@ -549,6 +549,12 @@ class TestBandIndexPins:
         segment = seg("s", rect(1890.0, 1990.0, 400.0, 500.0))
         assert _band_index(segment, [(1500.0, 1900.0)]) is None
 
+    def test_single_pixel_inside_counts(self) -> None:
+        from backend.annotation.application.segment_health.page_stats import _band_index
+
+        segment = seg("s", rect(1600.0, 1601.0, 400.0, 500.0))
+        assert _band_index(segment, [(1500.0, 1900.0)]) == 0
+
 
 class TestSuspectKillerPins:
     def test_triangle_outside_is_flagged(self) -> None:
