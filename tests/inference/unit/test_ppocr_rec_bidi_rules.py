@@ -469,7 +469,7 @@ def test_run_sequence_starting_mid_keep_reads_previous() -> None:
 
 def test_run_sequence_at_zero_reads_paragraph_level() -> None:
     sequences = isolating_run_sequences(["L", "L", "L"], [1, 0, 1], [0, 1, 2], {}, set(), 0)
-    assert sequences[0] == ([0], "L", "R")
+    assert sequences[0] == ([0], "R", "R")
 
 
 def test_run_sequences_extend_through_matched_isolates() -> None:
@@ -482,9 +482,8 @@ def test_run_sequences_extend_through_matched_isolates() -> None:
         0,
     )
     assert sequences == [
-        ([0, 1, 3], "L", "L"),
+        ([0, 1, 3, 4], "L", "L"),
         ([2], "R", "R"),
-        ([4], "L", "L"),
     ]
 
 
@@ -498,7 +497,7 @@ def test_run_sequences_skip_matched_pdi_runs() -> None:
         0,
     )
     assert sequences == [
-        ([0, 1, 2], "L", "R"),
+        ([0, 1, 2], "R", "R"),
         ([3, 4], "R", "R"),
     ]
 
@@ -512,13 +511,13 @@ def test_run_sequence_ending_in_unmatched_isolate_uses_paragraph() -> None:
         {2},
         0,
     )
-    assert sequences[0] == ([0, 1, 2, 3], "L", "L")
+    assert sequences[0] == ([0, 1, 2, 3], "L", "R")
 
 
 def test_l1_resets_after_paragraph_separator() -> None:
     levels, visual = resolve_levels(["RLE", "RLI", "PDI", "B", "PDF"], None, 0)
-    assert levels == [None, 0, 0, 0, 0, None]
-    assert visual == [1, 2, 3, 4]
+    assert levels == [None, 0, 0, 0, None]
+    assert visual == [1, 2, 3]
 
 
 def test_l1_trailing_whitespace_resets() -> None:
@@ -537,3 +536,38 @@ def test_l1_trailing_isolates_reset() -> None:
 def test_explicit_base_direction_mixed() -> None:
     assert get_display_map("aא", "L") == ("aא", [0, 1])
     assert get_display_map("אב", "R") == ("בא", [1, 0])
+
+
+@pytest.mark.parametrize(
+    ("types", "expected"),
+    [
+        # W2 feeds W5: an AN terminator-neighbor stays, an EN joins.
+        (["AL", "EN", "ET"], ([1, 2, 1], [2, 1, 0])),
+        (["AL", "L", "EN", "ET"], ([1, 2, 2, 2], [1, 2, 3, 0])),
+        (["AL", "R", "EN", "ET"], ([1, 1, 2, 2], [2, 3, 1, 0])),
+        (["L", "AL", "EN", "ET"], ([2, 1, 2, 1], [3, 2, 1, 0])),
+    ],
+)
+def test_weak_feeds_terminator_resolution(
+    types: list[str], expected: tuple[list[int | None], list[int]]
+) -> None:
+    assert resolve_levels(types, None, 1) == expected
+
+
+def test_nsm_after_isolate_joins_neutral_runs() -> None:
+    levels, visual = resolve_levels(["RLE", "LRI", "R", "NSM", "R", "PDF"], None, 0)
+    assert levels == [None, 1, 3, 3, 3, None]
+    assert visual == [4, 3, 2, 1]
+
+
+def test_no_mirroring_at_even_levels() -> None:
+    assert get_display_map("a\u202a(\u05d0)\u202c", None) == ("a(א)", [0, 2, 3, 4])
+
+
+def test_invalid_base_direction_message_is_exact() -> None:
+    from typing import Literal, cast
+
+    bad = cast("Literal['L', 'R'] | None", "X")
+    with pytest.raises(ValueError) as excinfo:
+        get_display_map("abc", bad)
+    assert str(excinfo.value) == "Invalid base direction 'X'"
