@@ -61,7 +61,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urljoin
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 
 from backend.document.infrastructure.media_store import get_media_store
 from backend.jobs.application.inference_dispatcher import (
@@ -115,7 +115,7 @@ class ClaimedPage:
     page_image_expires_at: datetime
 
 
-def _claimable_job_query(agent: InferenceAgent):
+def _claimable_job_query(agent: InferenceAgent) -> Select[tuple[Job]]:
     query = (
         select(Job)
         .where(Job.status == JobStatus.pending)
@@ -188,10 +188,12 @@ def claim_one_page(
         # The page is already claimed, so leaving it would park a job on an agent
         # that was never given anything to run, until the sweep failed it minutes
         # later. Fail it now, with the same allowlisted text rule as everywhere
-        # else - the exception detail is logged, never stored.
+        # else - the exception detail is logged, never stored. The agent gets an
+        # empty claim rather than a 500, so it keeps polling instead of backing
+        # off over a page that is already settled.
         logger.exception("could not build the claim payload for job %s", job_id)
         _fail_unbuildable_page(job_id, agent)
-        raise
+        return None
 
     logger.info(
         "job_claimed job_id=%s device_id=%s target=%s service_worker=%s inference_job_id=%s",
