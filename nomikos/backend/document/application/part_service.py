@@ -170,8 +170,11 @@ class DocumentPartService:
             filename_stem=filename_stem,
         )
         try:
-            upload_url, token = self._media.create_upload_url(
-                image_key, expires_at=datetime.now(UTC) + timedelta(minutes=5)
+            # A network round trip to Storage; keep it off the event loop.
+            upload_url, token = await asyncio.to_thread(
+                self._media.create_upload_url,
+                image_key,
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
             )
         except PresignUnsupported:
             # The local filesystem backend cannot presign. Roll the part back so no
