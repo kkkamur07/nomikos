@@ -1,0 +1,264 @@
+.pe-tb-btn--active .pe-kbd,
+.pe-dropdown-wrap {
+  position: relative;
+}
+.pe-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  width: 236px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.pe-dd-section {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 6px 8px 3px;
+}
+.pe-dd-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 0.8125rem;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.pe-dd-item:hover {
+  background: var(--surface-2);
+}
+.pe-dd-item:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: -2px;
+  background: var(--surface-2);
+}
+.pe-dd-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.pe-dd-item--action {
+  margin-top: 4px;
+}
+/*
+  Only items that carry a trailing hint become rows, so the plain text items
+  keep the block layout they were written against.
+*/
+.pe-dd-item:has(.pe-dd-meta) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pe-dd-meta {
+  font-size: 0.6875rem;
+  color: var(--text-4);
+  white-space: nowrap;
+}
+.pe-dd-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
+
+.pe-dd-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 0.8125rem;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.pe-dd-check:hover {
+  background: var(--surface-2);
+}
+.pe-dd-check input {
+  accent-color: var(--navy);
+}
+
+.pe-dd-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px 7px;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+.pe-dd-field label {
+  flex-shrink: 0;
+}
+.pe-dd-field select,
+.pe-dd-field__input {
+  font: inherit;
+  font-size: 0.8125rem;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  background: var(--surface);
+  color: var(--text);
+  min-width: 72px;
+}
+.pe-dd-field__input {
+  width: 72px;
+}
+.pe-dd-field select:disabled,
+.pe-dd-field__input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pe-dropdown--settings {
+  width: 260px;
+  right: 0;
+  left: auto;
+}
+
+.pe-dd-field--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 8px 10px;
+}
+
+.pe-dd-field--stack label {
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+.pe-dd-field--stack input[type="range"] {
+  width: 100%;
+  accent-color: var(--navy);
+}
+
+.pe-dd-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.625rem;
+  color: var(--text-4);
+}
+
+.pe-dd-model {
+  display: block;
+  padding: 5px 10px 7px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.pe-dd-model strong {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.pe-dd-check--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.pe-dd-check__label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pe-dd-textarea {
+  width: 100%;
+  min-height: 3.25rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+}
+.pe-dd-textarea:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pe-dd-pair-row {
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--border);
+}
+.pe-dd-pair-row__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.pe-dd-pair-row__num {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.pe-dd-pair-row__status {
+  font-size: 0.625rem;
+  color: var(--text-3);
+}
+.pe-dd-pair-row__status--paired {
+  font-size: 0.625rem;
+  color: var(--green, #047857);
+  font-weight: 500;
+}
+.pe-dd-pair-row__text {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-2);
+  word-break: break-word;
+}
+.pe-dd-item--compact {
+  padding: 4px 8px;
+  font-size: 0.6875rem;
+}
+.pe-dd-item--link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  text-align: left;
+}
+
+.pe-dd-share {
+  padding: 4px 10px 8px;
+}
+.pe-dd-share__label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.pe-dd-share__url {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.6875rem;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.pe-dd-share__actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}

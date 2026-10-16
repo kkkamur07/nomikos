@@ -1,0 +1,163 @@
+/* ─── Page rail: the document, as a strip you scroll ────────────── */
+/*
+  The one place in the editor where the whole document is reachable. It is a
+  real scroll container rather than a windowed list of pretend rows, so the
+  scrollbar tells the truth about how long the manuscript is; only the
+  thumbnails are windowed, in PageEditorPageRail.tsx, and the two agree through
+  RAIL_ITEM_HEIGHT_PX.
+*/
+.pe-page-rail {
+  flex: 0 0 auto;
+  width: 116px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  z-index: 5;
+}
+
+.pe-page-rail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 6px 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.pe-page-rail__title {
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.pe-page-rail__collapse {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 0.9375rem;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+}
+.pe-page-rail__collapse:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.pe-page-rail__collapse:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 1px;
+}
+
+.pe-page-rail-tab {
+  flex: 0 0 auto;
+  width: 18px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 0.9375rem;
+  line-height: 1;
+  padding: 0;
+  z-index: 5;
+}
+.pe-page-rail-tab:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.pe-page-rail-tab:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: -2px;
+}
+
+.pe-page-rail__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  scrollbar-width: thin;
+}
+
+/* Height is load-bearing: RAIL_ITEM_HEIGHT_PX windows the thumbnails off it. */
+.pe-page-rail__item {
+  height: 96px;
+  margin: 0;
+}
+
+.pe-page-rail__page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  height: 88px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 0.6875rem;
+}
+.pe-page-rail__page:hover {
+  background: var(--surface-2);
+}
+.pe-page-rail__page:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 1px;
+}
+.pe-page-rail__page--on {
+  border-color: var(--navy);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pe-page-rail__thumb {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+.pe-page-rail__thumb .auth-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pe-page-rail__num {
+  line-height: 1;
+}
+
+.pe-page-rail__reviewed {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+
+/* A narrow window needs the canvas more than it needs the strip. */
+@media (max-width: 900px) {
+  /* The rail and its edge tab go together: a tab left on screen would offer
+     a list this width cannot show. The pager and PageUp/PageDown still turn
+     pages at this width. */
+  .pe-page-rail,
+  .pe-page-rail-tab {
+    display: none;
+  }
+}

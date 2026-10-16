@@ -1,0 +1,26 @@
+/* Where the job ran. Standing text on the job, never a toast: a researcher who
+   looked away must still be able to read where their work went. */
+.pe-job-item__host {
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.pe-job-item__host[data-execution-substituted="true"] {
+  color: #92400e;
+}
+.pe-job-item__error {
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--red);
+}
+.pe-job-item__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.pe-job-item--cancelled {
+  background: rgba(100, 116, 139, 0.08);
+}
+.pe-job-item--cancelled .pe-job-item__status {
+  color: var(--text-3);
+}

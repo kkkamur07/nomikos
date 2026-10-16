@@ -1,0 +1,9 @@
+/* Page editor - full-viewport canvas, resizable PDF, confidence strip */
+
+.pe-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--surface);
+}
