@@ -96,6 +96,8 @@ class AnnotationExportService:
             text_order = order_by_line.get(line.id)
             if text_order is not None:
                 paired_text_orders.add(text_order)
+            segment = {"points": line.points, "kind": line.kind.value}
+            pending.append((line.id, segment_number, text, segment))
 
         # Decode, rectify, JPEG-encode and base64 the whole page in one hop off the loop:
         # a manuscript-sized page costs hundreds of milliseconds per segment.
