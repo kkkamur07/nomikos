@@ -61,7 +61,7 @@ from backend.ml.infrastructure.device_orm_models import (
     MAX_IP_LENGTH,
     HelperDevice,
 )
-from backend.users.application.password import hash_password
+from backend.users.application.password import hash_password_async
 from backend.users.infrastructure.orm_models import User
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,7 @@ async def _ensure_service_account(session: AsyncSession, *, now: datetime) -> Us
         username=SERVICE_ACCOUNT_USERNAME,
         # A bcrypt hash of a secret that is discarded on the next line. No
         # password grants this account, and there is nothing to leak.
-        hashed_password=hash_password(new_secret()),
+        hashed_password=await hash_password_async(new_secret()),
         prefer_local_inference=False,
         created_at=now,
     )

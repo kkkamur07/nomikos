@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.exceptions import ConflictError, InvalidCredentialsError, NotFoundError
 from backend.core.settings.auth import AuthSettings, get_auth_settings
 from backend.users.application.jwt_tokens import create_access_token
-from backend.users.application.password import hash_password, verify_password
+from backend.users.application.password import hash_password_async, verify_password_async
 from backend.users.infrastructure.orm_models import User
 from backend.users.infrastructure.user_repository import UserRepository
 
@@ -56,7 +56,7 @@ class AuthService:
             session,
             email=email,
             username=username,
-            hashed_password=hash_password(password),
+            hashed_password=await hash_password_async(password),
         )
         try:
             await session.commit()
@@ -78,7 +78,7 @@ class AuthService:
     ) -> tuple[User, str]:
         user = await self._repo.get_by_email(session, email)
         hash_to_check = user.hashed_password if user is not None else _DUMMY_PASSWORD_HASH
-        password_matches = verify_password(password, hash_to_check)
+        password_matches = await verify_password_async(password, hash_to_check)
         if user is None or not password_matches:
             raise InvalidCredentialsError("Invalid email or password")
         token = create_access_token(user.id, self._auth_settings)
