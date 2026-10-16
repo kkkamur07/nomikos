@@ -18,6 +18,8 @@ from typing import TypedDict
 
 import numpy as np
 
+from scripts.hf._ppocr_rec_inputs import greedy_decode as _greedy_decode
+
 # Numeric gates. Typical agreement is ~1e-6 relative on logits of magnitude
 # tens; the bounds sit an order of magnitude above the worst observed values
 # (logits 1.56e-3, softmax 2.67e-4) so a real regression trips them while
@@ -37,22 +39,6 @@ def _levenshtein(a: str, b: str) -> int:
             current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
         previous = current
     return previous[-1]
-
-
-def _greedy_decode(logits, labels):
-    """Collapse repeats, drop blank 0, map through the codec (display order)."""
-    best = logits.argmax(1)
-    parts = []
-    previous = -1
-    for label in best:
-        label = int(label)
-        if label == 0:
-            previous = 0
-            continue
-        if label != previous:
-            parts.append(labels.get(label, ""))
-        previous = label
-    return "".join(parts)
 
 
 def _softmax(values):

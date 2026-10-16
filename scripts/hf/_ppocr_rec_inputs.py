@@ -64,6 +64,22 @@ def has_real_boundary(line: PageXMLLine) -> bool:
     return list(map(tuple, line.boundary)) != list(map(tuple, line.baseline))
 
 
+def greedy_decode(logits, labels):
+    """Collapse repeats, drop blank 0, map through the codec (display order)."""
+    best = logits.argmax(1)
+    parts = []
+    previous = -1
+    for label in best:
+        label = int(label)
+        if label == 0:
+            previous = 0
+            continue
+        if label != previous:
+            parts.append(labels.get(label, ""))
+        previous = label
+    return "".join(parts)
+
+
 def find_page_image(pages_dir: Path, stem: str) -> Path | None:
     """First page image matching ``stem`` under ``pages_dir``, if any."""
     for suffix in IMAGE_SUFFIXES:

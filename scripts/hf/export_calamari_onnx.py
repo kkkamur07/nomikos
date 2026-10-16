@@ -34,15 +34,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import sys
 from pathlib import Path
 
-# Matches the exporter's own default. It is surfaced as a flag because the
-# opset is part of what an artifact is, and a re-export at a different opset
-# should be a deliberate, recorded choice rather than a silent consequence of
-# upgrading Torch.
-DEFAULT_OPSET_VERSION = 17
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.hf._export_cli import add_destination_arguments, write_report_json
 
 # The one file name the publishing chain agrees on, on both sides.
 CHECKPOINT_FILENAME = "best.pt"
@@ -69,23 +68,7 @@ def _parse_args() -> argparse.Namespace:
         default=CHECKPOINT_FILENAME,
         help=f"Checkpoint file inside the Hub repo (default: {CHECKPOINT_FILENAME})",
     )
-    parser.add_argument(
-        "--destination",
-        type=Path,
-        required=True,
-        help="Output .onnx path",
-    )
-    parser.add_argument(
-        "--opset",
-        type=int,
-        default=DEFAULT_OPSET_VERSION,
-        help=f"ONNX opset version (default: {DEFAULT_OPSET_VERSION})",
-    )
-    parser.add_argument(
-        "--report-json",
-        type=Path,
-        help="Also write the printed report to this path as JSON",
-    )
+    add_destination_arguments(parser)
     return parser.parse_args()
 
 
@@ -176,12 +159,7 @@ def main() -> int:
         print(f"export failed: {error}", file=sys.stderr)
         return 1
 
-    print(json.dumps(report, indent=2, ensure_ascii=False))
-    if args.report_json is not None:
-        args.report_json.parent.mkdir(parents=True, exist_ok=True)
-        args.report_json.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+    write_report_json(args.report_json, report)
     return 0
 
 

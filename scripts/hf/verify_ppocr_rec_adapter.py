@@ -110,27 +110,19 @@ def _kraken_masked_text(model, tensor, width):
     """Kraken's decode with ``seq_lens=[W]``: the known quirk, info only."""
     import torch
 
+    from scripts.hf._ppocr_rec_inputs import greedy_decode
+
     with torch.inference_mode():
         full, _ = model(torch.from_numpy(tensor), torch.tensor([width]))
     logits = full.numpy()[0, :, 0, :].T
-    best = logits.argmax(1)
     labels = {}
     for grapheme, seq in model.codec.c2l.items():
         if len(seq) == 1:
             labels[seq[0]] = grapheme
-    parts = []
-    previous = -1
-    for label in best:
-        label = int(label)
-        if label == 0:
-            previous = 0
-            continue
-        if label != previous:
-            parts.append(labels.get(label, ""))
-        previous = label
+    parts = greedy_decode(logits, labels)
     from kraken.lib.bidi import get_display
 
-    return get_display("".join(parts), None)
+    return get_display(parts, None)
 
 
 def main() -> int:
