@@ -45,18 +45,16 @@ def _hub_error_message(exc: Exception, *, repo_id: str, revision: str) -> str:
 
 class HuggingFaceHubClient:
     def snapshot_download(self, repo_id: str, revision: str, local_dir: Path) -> None:
+        """Download one pinned revision; errors are wrapped by ``_snapshot_download``."""
         from huggingface_hub import snapshot_download
 
-        try:
-            local_dir.mkdir(parents=True, exist_ok=True)
-            snapshot_download(
-                repo_id=repo_id,
-                revision=revision,
-                local_dir=str(local_dir),
-                repo_type="model",
-            )
-        except Exception as exc:
-            raise ValueError(_hub_error_message(exc, repo_id=repo_id, revision=revision)) from exc
+        local_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            local_dir=str(local_dir),
+            repo_type="model",
+        )
 
 
 _default_client: HubClient | None = None

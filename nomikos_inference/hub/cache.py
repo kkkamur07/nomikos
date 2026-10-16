@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import logging
 import os
-import re
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,10 +21,10 @@ from nomikos_inference.hub.manifest import (
     manifest_matches_expected,
     save_manifest,
 )
+from nomikos_inference.hub.pins import COMMIT_SHA_PATTERN, SHA256_PATTERN
 from nomikos_inference.hub.uri import parse_hf_weights_uri
 
-_COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
-_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+logger = logging.getLogger(__name__)
 
 # The **Hub cache** lives under the researcher's home directory, not beside the
 # code, because this module ships inside the published `nomikos-inference`
@@ -75,11 +75,11 @@ def _validate_provenance(
     signature rather than needing its own ``assert`` calls, which `python -O`
     strips (and would silently allow an unpinned download).
     """
-    if not hub_revision or not _COMMIT_SHA_PATTERN.fullmatch(hub_revision):
+    if not hub_revision or not COMMIT_SHA_PATTERN.fullmatch(hub_revision):
         raise ValueError(
             "hf weights source requires an immutable 40-character lowercase Hub commit in hub_revision"
         )
-    if not artifact_sha256 or not _SHA256_PATTERN.fullmatch(artifact_sha256):
+    if not artifact_sha256 or not SHA256_PATTERN.fullmatch(artifact_sha256):
         raise ValueError("hf weights source requires a 64-character lowercase artifact_sha256")
     return hub_revision, artifact_sha256
 
@@ -164,8 +164,11 @@ def resolve_hf_weights_source(
                     raise ValueError("cached Hub artifact path does not match its manifest")
                 verify_artifact_sha256(artifact, artifact_sha256)
                 return artifact
-            except (FileNotFoundError, ValueError):
-                pass
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning(
+                    "cached Hub artifact failed verification, re-downloading: %s",
+                    exc,
+                )
 
         if cache_dir.exists():
             shutil.rmtree(cache_dir)

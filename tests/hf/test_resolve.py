@@ -128,3 +128,51 @@ def test_resolve_rejects_mutable_only_hf_reference(tmp_path: Path):
             hub_client=MockHubClient(),
             cache_root=tmp_path,
         )
+
+
+def test_tampered_cache_logs_a_warning_before_redownload(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """On-disk tampering of a pinned artifact must leave a trace."""
+    import logging
+
+    kwargs = dict(
+        uri="hf://nomikos/greek-htr-calamari@stable",
+        registry_model_id="greek-calamari-v1",
+        registry_tag="stable",
+        hub_revision=HUB_REVISION,
+        artifact_sha256=ARTIFACT_SHA256,
+        architecture="calamari",
+        hub_client=MockHubClient(),
+        cache_root=tmp_path,
+    )
+    artifact = resolve_hf_weights_source(**kwargs)
+    artifact.write_bytes(b"tampered")
+    with caplog.at_level(logging.WARNING, logger="nomikos_inference.hub.cache"):
+        repaired = resolve_hf_weights_source(**kwargs)
+    assert repaired.read_bytes() == MOCK_GRAPH
+    assert "re-downloading" in caplog.text
+
+
+def test_raw_hub_error_is_wrapped_once(tmp_path: Path):
+    """The client raises raw; resolve maps it to one ValueError."""
+
+    class HfHubHTTPError(Exception):
+        pass
+
+    @dataclass
+    class FailingHubClient:
+        def snapshot_download(self, repo_id: str, revision: str, local_dir: Path) -> None:
+            raise HfHubHTTPError("401 Unauthorized for a gated repo")
+
+    with pytest.raises(ValueError, match="access denied"):
+        resolve_hf_weights_source(
+            "hf://nomikos/greek-htr-calamari@stable",
+            registry_model_id="greek-calamari-v1",
+            registry_tag="stable",
+            hub_revision=HUB_REVISION,
+            artifact_sha256=ARTIFACT_SHA256,
+            architecture="calamari",
+            hub_client=FailingHubClient(),
+            cache_root=tmp_path,
+        )
