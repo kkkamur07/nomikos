@@ -6,6 +6,8 @@ import {
   type DocumentWithPartsResponse,
   type ExecutionPreferenceResponse,
   type JobResponse,
+  type LineResponse,
+  type PartLayoutResponse,
 } from "../../api/client";
 import { BackgroundJobsProvider } from "../../context/BackgroundJobsContext";
 import { BackgroundJobsPanel } from "../../components/BackgroundJobsPanel";
@@ -92,35 +94,7 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-type MockedEditorApi = {
-  getDocument: ReturnType<typeof vi.fn>;
-  getPartLayout: ReturnType<typeof vi.fn>;
-  listPartLines: ReturnType<typeof vi.fn>;
-  listTranscriptions: ReturnType<typeof vi.fn>;
-  getPagePairing: ReturnType<typeof vi.fn>;
-  importPageTranscription: ReturnType<typeof vi.fn>;
-  pairTextLine: ReturnType<typeof vi.fn>;
-  updateGroundTruthLineText: ReturnType<typeof vi.fn>;
-  copyToGroundTruth: ReturnType<typeof vi.fn>;
-  updatePartReviewStatus: ReturnType<typeof vi.fn>;
-  replacePartLines: ReturnType<typeof vi.fn>;
-  createPartLine: ReturnType<typeof vi.fn>;
-  patchPartLine: ReturnType<typeof vi.fn>;
-  deletePartLine: ReturnType<typeof vi.fn>;
-  updateLineGeometry: ReturnType<typeof vi.fn>;
-  resetPartLayout: ReturnType<typeof vi.fn>;
-  generateTranscriptionPdf: ReturnType<typeof vi.fn>;
-  updateDocument: ReturnType<typeof vi.fn>;
-  listInferenceModels: ReturnType<typeof vi.fn>;
-  resolvePartModelBinding: ReturnType<typeof vi.fn>;
-  enqueueTranscribePart: ReturnType<typeof vi.fn>;
-  segmentPart: ReturnType<typeof vi.fn>;
-  getExecutionPreference: ReturnType<typeof vi.fn>;
-  setExecutionPreference: ReturnType<typeof vi.fn>;
-  getJob: ReturnType<typeof vi.fn>;
-};
-
-export const mockedApi = api as unknown as MockedEditorApi;
+export const mockedApi = vi.mocked(api);
 
 export const DOCUMENT: DocumentWithPartsResponse = {
   id: "doc-1",
@@ -176,7 +150,7 @@ export function documentWithPages(count: number): DocumentWithPartsResponse {
  * carries neither, and adding them here would put baselines on the canvas of
  * every test that never asked for one.
  */
-export function line(overrides: Record<string, unknown> = {}) {
+export function line(overrides: Partial<LineResponse> = {}): LineResponse {
   return {
     id: "line-1",
     part_id: "part-1",
@@ -222,7 +196,7 @@ export function maskPoints() {
  * page out: machine geometry, carrying the baseline and mask the layout editor
  * moves. Pass `baseline`/`mask` as `{ points }` to drive the wrapped form.
  */
-export function layoutLine(overrides: Record<string, unknown> = {}) {
+export function layoutLine(overrides: Partial<LineResponse> = {}) {
   return line({
     kind: "polygon",
     points: maskPoints(),
@@ -241,7 +215,9 @@ export function layoutLine(overrides: Record<string, unknown> = {}) {
  * layout tests vary - `manual_geometry`, and whether the geometry arrives as a
  * bare point list or wrapped in `{ points }`.
  */
-export function layoutWith(overrides: Record<string, unknown> = {}) {
+export function layoutWith(
+  overrides: Partial<PartLayoutResponse["lines"][number]> = {},
+) {
   return {
     blocks: [],
     lines: [
@@ -413,7 +389,7 @@ export function resetPageEditorApiMocks() {
     async (_projectId, _documentId, _partId, lineId, body) => {
       const existing = (
         (await mockedApi.listPartLines.mock.results.at(-1)?.value) as
-          Array<Record<string, unknown>> | undefined
+          LineResponse[] | undefined
       )?.find((line) => line.id === lineId) ?? {
         id: lineId,
         part_id: "part-1",
@@ -440,8 +416,8 @@ export function resetPageEditorApiMocks() {
   );
   mockedApi.replacePartLines.mockImplementation(
     async (_projectId, _documentId, _partId, body) =>
-      body.lines.map((line: Record<string, unknown>, index: number) => ({
-        id: (line.id as string | undefined) ?? `line-${index + 1}`,
+      body.lines.map((line, index) => ({
+        id: line.id ?? `line-${index + 1}`,
         part_id: "part-1",
         block_id: line.block_id ?? null,
         order: line.order,
