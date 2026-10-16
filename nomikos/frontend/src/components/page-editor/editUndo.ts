@@ -23,11 +23,7 @@ export function applyCanvasEdit(
 ): LineResponse[] {
   switch (edit.kind) {
     case "points":
-      return lines.map((line) =>
-        line.id === edit.segmentId
-          ? { ...line, points: edit.after, source: "manual" as const }
-          : line,
-      );
+      return withPoints(lines, edit.segmentId, edit.after);
     case "create":
       return mergeLine(lines, edit.line);
     case "delete":
@@ -41,16 +37,25 @@ export function applyCanvasEditInverse(
 ): LineResponse[] {
   switch (edit.kind) {
     case "points":
-      return lines.map((line) =>
-        line.id === edit.segmentId
-          ? { ...line, points: edit.before, source: "manual" as const }
-          : line,
-      );
+      return withPoints(lines, edit.segmentId, edit.before);
     case "create":
       return lines.filter((line) => line.id !== edit.line.id);
     case "delete":
       return mergeLine(lines, edit.line);
   }
+}
+
+/** A points edit marks the Segment manual, whichever way it is replayed. */
+function withPoints(
+  lines: LineResponse[],
+  segmentId: string,
+  points: LinePoint[],
+): LineResponse[] {
+  return lines.map((line) =>
+    line.id === segmentId
+      ? { ...line, points, source: "manual" as const }
+      : line,
+  );
 }
 
 function mergeLine(lines: LineResponse[], saved: LineResponse): LineResponse[] {
