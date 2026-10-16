@@ -17,6 +17,17 @@ import type { SetState } from "./editorHookTypes";
 
 type Direction = "undo" | "redo";
 
+/** The Segment a replay takes off the page: undoing a create, redoing a delete. */
+function removedSegmentId(
+  edit: CanvasEdit,
+  direction: Direction,
+): string | null {
+  if (edit.kind === "points") return null;
+  return (edit.kind === "create") === (direction === "undo")
+    ? edit.line.id
+    : null;
+}
+
 export type CanvasUndoInput = {
   projectId: string | undefined;
   documentId: string | undefined;
@@ -134,8 +145,10 @@ export function useCanvasUndo({
    * shows the segments as they were before the replay.
    */
   async function replay(direction: Direction): Promise<boolean> {
-    const from = direction === "undo" ? undoStackRef : redoStackRef;
-    const to = direction === "undo" ? redoStackRef : undoStackRef;
+    const [from, to] =
+      direction === "undo"
+        ? [undoStackRef, redoStackRef]
+        : [redoStackRef, undoStackRef];
     const edit = from.current.pop();
     if (!edit) return false;
     if (!projectId || !documentId || !partId) {
@@ -151,10 +164,8 @@ export function useCanvasUndo({
         previous,
         applyLocalLines,
       });
-      const removed =
-        edit.kind !== "points" &&
-        (edit.kind === "create") === (direction === "undo");
-      if (removed && selectedSegmentId === edit.line.id) {
+      const removed = removedSegmentId(edit, direction);
+      if (removed !== null && removed === selectedSegmentId) {
         setSelectedSegmentId(null);
       }
       to.current = pushEditOntoStack(to.current, done);
