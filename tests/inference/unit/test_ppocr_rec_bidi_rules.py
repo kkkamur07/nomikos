@@ -470,6 +470,11 @@ def test_run_sequences_pin_sos_eos_and_membership() -> None:
     assert sequences == [([0], "L", "L"), ([1], "L", "R"), ([2], "R", "R")]
 
 
+def test_run_sequence_at_zero_ignores_last_keep() -> None:
+    sequences = isolating_run_sequences(["L", "L", "L"], [0, 0, 1], [0, 1, 2], {}, set(), 0)
+    assert sequences[0] == ([0, 1], "L", "R")
+
+
 def test_run_sequence_starting_mid_keep_reads_previous() -> None:
     sequences = isolating_run_sequences(["L", "L", "L"], [1, 0, 0], [0, 1, 2], {}, set(), 0)
     assert sequences[1] == ([1, 2], "R", "L")
@@ -530,6 +535,12 @@ def test_l1_resets_after_paragraph_separator() -> None:
 
 def test_l1_trailing_whitespace_resets() -> None:
     levels, visual = resolve_levels(["RLE", "L", "WS", "PDF"], None, 0)
+    assert levels == [None, 2, 0, None]
+    assert visual == [1, 2]
+
+
+def test_l1_segment_separator_resets() -> None:
+    levels, visual = resolve_levels(["RLE", "L", "S", "PDF"], None, 0)
     assert levels == [None, 2, 0, None]
     assert visual == [1, 2]
 
