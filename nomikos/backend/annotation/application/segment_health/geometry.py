@@ -18,10 +18,10 @@ import math
 import statistics
 from dataclasses import dataclass, field
 
-Point = list[float]
-Polygon = list[Point]
+Point = list[float]  # pragma: no mutate
+Polygon = list[Point]  # pragma: no mutate
 # (min x, max x, min y, max y), the order the reference scripts used.
-Box = tuple[float, float, float, float]
+Box = tuple[float, float, float, float]  # pragma: no mutate
 
 
 def bbox(points: Polygon) -> Box:
