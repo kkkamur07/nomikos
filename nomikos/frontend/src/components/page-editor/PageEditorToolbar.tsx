@@ -4,8 +4,8 @@ import type {
   InferenceModelResponse,
   LineResponse,
   PageTranscriptionTextLineResponse,
-  PairingProgressResponse,
 } from "../../api/client";
+import type { components } from "../../api/schema";
 import type { PageEditorProcessingKind } from "./hooks/usePageEditorRunState";
 import { PageEditorBackLink } from "./PageEditorNavHeader";
 import { PageEditorModelSelect } from "./PageEditorModelSelect";
@@ -18,6 +18,8 @@ import {
   type ToolbarSegmentHealth,
 } from "./ToolbarPanels";
 import { ToolbarWorkflowMenu } from "./ToolbarWorkflowMenu";
+
+type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
 
 type PageEditorToolbarProps = {
   projectId: string | undefined;

@@ -4,11 +4,13 @@ import type {
   JobResponse,
   PageTranscriptionTextLineResponse,
   PagePairingResponse,
-  PairingProgressResponse,
 } from "../../../api/client";
+import type { components } from "../../../api/schema";
 import { submissionRefusalExplanation } from "../../../inference";
 import { ApiError, isAbortError } from "../../../api/errors";
 import type { PageEditorJobKind } from "../jobProgress";
+
+type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
 
 export type SetState<T> = Dispatch<SetStateAction<T>>;
 

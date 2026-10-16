@@ -5,10 +5,10 @@ import {
   type DocumentWithPartsResponse,
   type LineResponse,
   type PageTranscriptionTextLineResponse,
-  type PairingProgressResponse,
   type PartLayoutResponse,
   type TranscriptionLayerResponse,
 } from "../../../api/client";
+import type { components } from "../../../api/schema";
 import { ApiError } from "../../../api/errors";
 import { queryClient, taggedMeta } from "../../../api/queryClient";
 import { resourceTags } from "../../../api/resources";
@@ -25,6 +25,8 @@ import {
   type PartContentSetters,
 } from "./fetchPartContent";
 import { useEditorModels } from "./useEditorModels";
+
+type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
 
 const EMPTY_LAYOUT: PartLayoutResponse = { blocks: [], lines: [] };
 const NO_PAIRING: PairingProgressResponse = {
