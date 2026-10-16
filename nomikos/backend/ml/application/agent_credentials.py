@@ -44,6 +44,7 @@ row each rather than two rows for the same name.
 from __future__ import annotations
 
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid5
@@ -185,12 +186,28 @@ async def resolve_inference_agent(
 
 
 def _service_token_matches(presented: str, settings: DeviceSettings) -> bool:
-    import secrets
-
     configured = settings.inference_worker_service_token
     if not configured:
         return False
     return secrets.compare_digest(presented, configured)
+
+
+async def _find_service_device(
+    session: AsyncSession, user_id: UUID, name: str
+) -> HelperDevice | None:
+    return (
+        await session.execute(
+            select(HelperDevice)
+            .where(
+                HelperDevice.user_id == user_id,
+                HelperDevice.inference_host == ExecutionTarget.cloud,
+                HelperDevice.name == name,
+                HelperDevice.revoked_at.is_(None),
+            )
+            .order_by(HelperDevice.created_at, HelperDevice.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 async def _resolve_service_worker(
@@ -209,41 +226,36 @@ async def _resolve_service_worker(
         raise InvalidCredentialsError("Invalid service token")
 
     name = _clean_worker_name(worker_name)
-    # Serialise provisioning across processes. Two hosted workers booting at once
-    # would otherwise both miss the row and both insert it.
-    await session.execute(select(func.pg_advisory_xact_lock(_SERVICE_WORKER_LOCK_ID)))
-    user = await _ensure_service_account(session, now=now)
-    device = (
-        await session.execute(
-            select(HelperDevice)
-            .where(
-                HelperDevice.user_id == user.id,
-                HelperDevice.inference_host == ExecutionTarget.cloud,
-                HelperDevice.name == name,
-                HelperDevice.revoked_at.is_(None),
-            )
-            .order_by(HelperDevice.created_at, HelperDevice.id)
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    # Fast path with no lock: the device row already exists, which is every
+    # auth after the first. The account id is a constant, so the lookup needs
+    # no provisioning to address the row.
+    device = await _find_service_device(session, SERVICE_ACCOUNT_ID, name)
     if device is None:
-        device = HelperDevice(
-            user_id=user.id,
-            name=name,
-            inference_host=ExecutionTarget.cloud,
-            platform="hosted",
-            helper_version="service",
-            capabilities={},
-            # Never authenticates as a device: the empty digest cannot equal any
-            # 64-character hex string, so the service credential is the only way
-            # in and revoking it is one environment variable.
-            token_hash="",
-            token_prefix="",
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(device)
-        logger.info("inference_worker_device_provisioned name=%r user_id=%s", name, user.id)
+        # Serialise provisioning across processes. Two hosted workers booting
+        # at once would otherwise both miss the row and both insert it. The
+        # lock is taken only on this path, so routine claim auth never
+        # serialises on it.
+        await session.execute(select(func.pg_advisory_xact_lock(_SERVICE_WORKER_LOCK_ID)))
+        user = await _ensure_service_account(session, now=now)
+        device = await _find_service_device(session, user.id, name)
+        if device is None:
+            device = HelperDevice(
+                user_id=user.id,
+                name=name,
+                inference_host=ExecutionTarget.cloud,
+                platform="hosted",
+                helper_version="service",
+                capabilities={},
+                # Never authenticates as a device: the empty digest cannot equal any
+                # 64-character hex string, so the service credential is the only way
+                # in and revoking it is one environment variable.
+                token_hash="",
+                token_prefix="",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(device)
+            logger.info("inference_worker_device_provisioned name=%r user_id=%s", name, user.id)
     device.last_seen_at = now
     if request_ip:
         device.last_seen_ip = request_ip[:MAX_IP_LENGTH]
