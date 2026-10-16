@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from shapely import STRtree
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
@@ -355,6 +356,32 @@ def _cut_pair(left: _Work, right: _Work) -> bool:
     return abs(left.area - old_areas[0]) > 1e-9 or abs(right.area - old_areas[1]) > 1e-9
 
 
+def _candidate_pairs(
+    works: list[_Work], live: list[int], cut_threshold: float
+) -> list[tuple[int, int]]:
+    """Index pairs ``a < b`` of ``live`` whose bounding boxes touch, sorted.
+
+    Shared area is positive only when the bounding boxes intersect, so a
+    pair outside this list has a shared ratio of 0 and can never reach a
+    positive ``cut_threshold``. The STRtree turns the all-pairs scan into a
+    query per polygon; a non-positive threshold admits every pair, so it
+    keeps the full scan.
+    """
+    if cut_threshold <= 0:
+        return [(a, b) for pos, a in enumerate(live) for b in live[pos + 1 :]]
+    if len(live) < 2:
+        return []
+    polys = [works[i].poly for i in live]
+    query_index, tree_index = STRtree(polys).query(polys)
+    return sorted(
+        {
+            (live[first], live[second])
+            for first, second in zip(query_index.tolist(), tree_index.tolist(), strict=True)
+            if first < second
+        }
+    )
+
+
 def resolve_overlaps(
     works: list[_Work],
     layout: PageLayout,
@@ -382,11 +409,10 @@ def resolve_overlaps(
     for _ in range(_MAX_OVERLAP_PASSES):
         pairs: list[tuple[float, int, int]] = []
         live = [i for i, work in enumerate(works) if not work.dropped]
-        for pos_a, a in enumerate(live):
-            for b in live[pos_a + 1 :]:
-                ratio = _shared_ratio(works[a], works[b])
-                if ratio >= cut_threshold:
-                    pairs.append((-ratio, a, b))
+        for a, b in _candidate_pairs(works, live, cut_threshold):
+            ratio = _shared_ratio(works[a], works[b])
+            if ratio >= cut_threshold:
+                pairs.append((-ratio, a, b))
         pairs.sort()
         changed = False
         for _, a, b in pairs:
@@ -421,12 +447,12 @@ def resolve_overlaps(
                 right.overlap_unresolved = True
         if not changed:
             break
-    live = [work for work in works if not work.dropped]
-    for pos_a, left in enumerate(live):
-        for right in live[pos_a + 1 :]:
-            if _shared_ratio(left, right) >= cut_threshold:
-                left.overlap_unresolved = True
-                right.overlap_unresolved = True
+    live = [i for i, work in enumerate(works) if not work.dropped]
+    for a, b in _candidate_pairs(works, live, cut_threshold):
+        left, right = works[a], works[b]
+        if _shared_ratio(left, right) >= cut_threshold:
+            left.overlap_unresolved = True
+            right.overlap_unresolved = True
     return [work for work in works if not work.dropped]
 
 
