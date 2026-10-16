@@ -13,7 +13,6 @@ def document_response(
     document: Document,
     *,
     part_count: int | None = None,
-    public: bool = False,
     share_token: str | None = None,
 ) -> DocumentResponse:
     count = part_count if part_count is not None else len(document.parts)
@@ -44,9 +43,7 @@ def document_with_parts_response(
         # unpublished part must not appear in the body of the public document read.
         parts = [part for part in parts if part.published]
     return DocumentWithPartsResponse(
-        **document_response(
-            document, part_count=len(parts), public=public, share_token=share_token
-        ).model_dump(),
+        **document_response(document, part_count=len(parts), share_token=share_token).model_dump(),
         parts=[part_response(part, public=public) for part in parts],
     )
 
