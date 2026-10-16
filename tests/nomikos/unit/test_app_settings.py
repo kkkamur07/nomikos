@@ -68,6 +68,4 @@ def test_cors_settings_round_trip() -> None:
     with pytest.raises(ValidationError):
         AppSettings(CORS_ORIGINS="   ", MEDIA_ROOT=str(REPO_ROOT / "backend" / "media"))
     with pytest.raises(ValidationError):
-        AppSettings(
-            CORS_ORIGINS="http://x/path", MEDIA_ROOT=str(REPO_ROOT / "backend" / "media")
-        )
+        AppSettings(CORS_ORIGINS="http://x/path", MEDIA_ROOT=str(REPO_ROOT / "backend" / "media"))
