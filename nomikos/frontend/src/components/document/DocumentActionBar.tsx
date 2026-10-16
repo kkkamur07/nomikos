@@ -45,6 +45,67 @@ type DocumentActionBarProps = {
  * changes the whole document, so it is here and not in the page editor, which
  * keeps only the acts that change the page open in it.
  */
+function DeleteConfirmStep({
+  deleting,
+  documentName,
+  total,
+  onCancel,
+  onConfirm,
+}: {
+  deleting: boolean;
+  documentName: string;
+  total: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}): React.ReactNode {
+  return (
+    <ActionMenuConfirm
+      destructive
+      busy={deleting}
+      question={`Delete "${documentName}" and its ${total} pages?`}
+      detail="Every page image, segmentation and transcription in this document goes with it. There is no undo."
+      confirmLabel={deleting ? "Deleting…" : "Yes, delete the document"}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+function OverflowMenuItems({
+  busy,
+  onSettings,
+  onDelete,
+}: {
+  busy: boolean;
+  onSettings: () => void;
+  onDelete: () => void;
+}): React.ReactNode {
+  return (
+    <>
+      <ActionMenuItem
+        label="Document settings"
+        detail="Rename the document and see its sharing status."
+        onSelect={onSettings}
+      />
+      <ActionMenuItem
+        destructive
+        label="Delete document"
+        detail="Removes the document and every page in it."
+        disabled={busy}
+        onSelect={onDelete}
+      />
+    </>
+  );
+}
+
+function actionCounts(counts: DocumentWorkflowCounts | null): {
+  total: number;
+  reviewed: number;
+} {
+  if (!counts) return { total: 0, reviewed: 0 };
+  return { total: counts.total, reviewed: counts.reviewed };
+}
+
 export function DocumentActionBar({
   projectId,
   documentId,
@@ -68,8 +129,7 @@ export function DocumentActionBar({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const total = counts?.total ?? 0;
-  const reviewed = counts?.reviewed ?? 0;
+  const { total, reviewed } = actionCounts(counts);
 
   return (
     <div className="doc-actions" role="group" aria-label="Document actions">
@@ -148,12 +208,10 @@ export function DocumentActionBar({
       >
         {(close) =>
           confirmingDelete ? (
-            <ActionMenuConfirm
-              destructive
-              busy={deleting}
-              question={`Delete "${documentName}" and its ${total} pages?`}
-              detail="Every page image, segmentation and transcription in this document goes with it. There is no undo."
-              confirmLabel={deleting ? "Deleting…" : "Yes, delete the document"}
+            <DeleteConfirmStep
+              deleting={deleting}
+              documentName={documentName}
+              total={total}
               onCancel={() => setConfirmingDelete(false)}
               onConfirm={() => {
                 setDeleting(true);
@@ -165,23 +223,14 @@ export function DocumentActionBar({
               }}
             />
           ) : (
-            <>
-              <ActionMenuItem
-                label="Document settings"
-                detail="Rename the document and see its sharing status."
-                onSelect={() => {
-                  close();
-                  onOpenSettings();
-                }}
-              />
-              <ActionMenuItem
-                destructive
-                label="Delete document"
-                detail="Removes the document and every page in it."
-                disabled={busy}
-                onSelect={() => setConfirmingDelete(true)}
-              />
-            </>
+            <OverflowMenuItems
+              busy={busy}
+              onSettings={() => {
+                close();
+                onOpenSettings();
+              }}
+              onDelete={() => setConfirmingDelete(true)}
+            />
           )
         }
       </ActionMenu>

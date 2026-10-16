@@ -51,6 +51,28 @@ function menuItems(container: HTMLElement): HTMLElement[] {
   );
 }
 
+function menuItemsIn(container: HTMLElement | null): HTMLElement[] {
+  if (!container) return [];
+  return menuItems(container);
+}
+
+function nextFocusIndex(
+  items: HTMLElement[],
+  current: number,
+  delta: 1 | -1,
+): number {
+  if (current === -1) return delta > 0 ? 0 : items.length - 1;
+  return (current + delta + items.length) % items.length;
+}
+
+function jumpMenuFocus(items: HTMLElement[], key: string): void {
+  if (key === "Home") {
+    items[0]?.focus();
+  } else if (key === "End") {
+    items[items.length - 1]?.focus();
+  }
+}
+
 /**
  * A keyboard-operable dropdown menu.
  *
@@ -176,38 +198,22 @@ export function ActionMenu({
       closeAndRestoreFocus();
       return;
     }
-    const container = menuRef.current;
-    if (!container) return;
-    const items = menuItems(container);
+    const items = menuItemsIn(menuRef.current);
     if (items.length === 0) return;
     // -1 when focus is on the popup itself rather than on a row, which is
     // where it sits when every item happens to be disabled.
     const current = items.indexOf(
       globalThis.document.activeElement as HTMLElement,
     );
-
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      items[current === -1 ? 0 : (current + 1) % items.length].focus();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      items[nextFocusIndex(items, current, delta)]?.focus();
       return;
     }
-    if (event.key === "ArrowUp") {
+    if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      items[
-        current === -1
-          ? items.length - 1
-          : (current - 1 + items.length) % items.length
-      ].focus();
-      return;
-    }
-    if (event.key === "Home") {
-      event.preventDefault();
-      items[0].focus();
-      return;
-    }
-    if (event.key === "End") {
-      event.preventDefault();
-      items[items.length - 1].focus();
+      jumpMenuFocus(items, event.key);
     }
   }
 

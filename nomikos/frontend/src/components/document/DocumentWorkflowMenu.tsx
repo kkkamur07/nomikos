@@ -39,6 +39,19 @@ type DocumentWorkflowMenuProps = {
  * document, not on whichever page happens to be open in the editor. The page
  * editor keeps its own single-page versions of the same two jobs.
  */
+function selectWorkflowCounts(counts: DocumentWorkflowCounts | null): {
+  total: number;
+  unsegmented: number;
+  unpaired: number;
+} {
+  if (!counts) return { total: 0, unsegmented: 0, unpaired: 0 };
+  return {
+    total: counts.total,
+    unsegmented: counts.unsegmented,
+    unpaired: counts.unpaired,
+  };
+}
+
 export function DocumentWorkflowMenu({
   projectId,
   documentId,
@@ -79,9 +92,7 @@ export function DocumentWorkflowMenu({
     };
   }, [projectId, documentId]);
 
-  const total = counts?.total ?? 0;
-  const unsegmented = counts?.unsegmented ?? 0;
-  const unpaired = counts?.unpaired ?? 0;
+  const { total, unsegmented, unpaired } = selectWorkflowCounts(counts);
   const busy = disabled || running || counts === null;
   const selectedSegmentModelName =
     segmentModels.find((model) => model.id === selectedSegmentModelId)?.name ??
@@ -127,6 +138,101 @@ export function DocumentWorkflowMenu({
     }
   }
 
+  function ResegmentConfirmStep({
+    running,
+    total,
+    selectedSegmentModelName,
+    onCancel,
+    onConfirm,
+  }: {
+    running: boolean;
+    total: number;
+    selectedSegmentModelName: string | null;
+    onCancel: () => void;
+    onConfirm: () => void;
+  }): React.ReactNode {
+    return (
+      <ActionMenuConfirm
+        destructive
+        busy={running}
+        question={`Re-segment every page (${pageCountLabel(total)})?`}
+        detail={`Lines with approved text, a pairing or hand-drawn geometry stay. Every other line is redrawn and the model's unapproved text on it is discarded. There is no undo. Runs with ${selectedSegmentModelName ?? "the default model"}.`}
+        confirmLabel={
+          running ? "Queueing…" : `Yes, re-segment ${pageCountLabel(total)}`
+        }
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />
+    );
+  }
+
+  function WorkflowMenuItems({
+    segmentModels,
+    selectedSegmentModelId,
+    onSelectedSegmentModelIdChange,
+    busy,
+    unsegmented,
+    total,
+    unpaired,
+    onSegmentUnsegmented,
+    onResegment,
+    onTranscribe,
+  }: {
+    segmentModels: InferenceModelResponse[];
+    selectedSegmentModelId: string | null;
+    onSelectedSegmentModelIdChange: (id: string | null) => void;
+    busy: boolean;
+    unsegmented: number;
+    total: number;
+    unpaired: number;
+    onSegmentUnsegmented: () => void;
+    onResegment: () => void;
+    onTranscribe: () => void;
+  }): React.ReactNode {
+    return (
+      <>
+        <ActionMenuSection>Segment</ActionMenuSection>
+        <PageEditorModelSelect
+          label="Seg"
+          ariaLabel="Segmentation model"
+          models={segmentModels}
+          selectedModelId={selectedSegmentModelId}
+          onSelectedModelIdChange={onSelectedSegmentModelIdChange}
+          disabled={busy}
+          includeDefaultOption
+        />
+        <ActionMenuItem
+          label="Segment unsegmented pages"
+          meta={String(unsegmented)}
+          disabled={busy || unsegmented === 0}
+          onSelect={onSegmentUnsegmented}
+        />
+        <ActionMenuItem
+          destructive
+          label="Re-segment every page"
+          meta={String(total)}
+          disabled={busy || total === 0}
+          onSelect={onResegment}
+        />
+        <ActionMenuWarning>
+          Re-segmenting discards unapproved machine text on lines nobody has
+          touched. Only the top item is safe.
+        </ActionMenuWarning>
+        <ActionMenuDivider />
+        <ActionMenuSection>Transcribe</ActionMenuSection>
+        <ActionMenuCaption>
+          Model <strong>{TRANSCRIBE_MODEL_NAME}</strong>
+        </ActionMenuCaption>
+        <ActionMenuItem
+          label="Transcribe unpaired pages"
+          meta={String(unpaired)}
+          disabled={busy || unpaired === 0}
+          onSelect={onTranscribe}
+        />
+      </>
+    );
+  }
+
   return (
     <ActionMenu
       label="Workflow"
@@ -138,58 +244,26 @@ export function DocumentWorkflowMenu({
     >
       {(close) =>
         confirmingResegment ? (
-          <ActionMenuConfirm
-            destructive
-            busy={running}
-            question={`Re-segment every page (${pageCountLabel(total)})?`}
-            detail={`Lines with approved text, a pairing or hand-drawn geometry stay. Every other line is redrawn and the model's unapproved text on it is discarded. There is no undo. Runs with ${selectedSegmentModelName ?? "the default model"}.`}
-            confirmLabel={
-              running ? "Queueing…" : `Yes, re-segment ${pageCountLabel(total)}`
-            }
+          <ResegmentConfirmStep
+            running={running}
+            total={total}
+            selectedSegmentModelName={selectedSegmentModelName}
             onCancel={() => setConfirmingResegment(false)}
             onConfirm={() => void runSegment("all", close)}
           />
         ) : (
-          <>
-            <ActionMenuSection>Segment</ActionMenuSection>
-            <PageEditorModelSelect
-              label="Seg"
-              ariaLabel="Segmentation model"
-              models={segmentModels}
-              selectedModelId={selectedSegmentModelId}
-              onSelectedModelIdChange={setSelectedSegmentModelId}
-              disabled={busy}
-              includeDefaultOption
-            />
-            <ActionMenuItem
-              label="Segment unsegmented pages"
-              meta={String(unsegmented)}
-              disabled={busy || unsegmented === 0}
-              onSelect={() => void runSegment("unsegmented", close)}
-            />
-            <ActionMenuItem
-              destructive
-              label="Re-segment every page"
-              meta={String(total)}
-              disabled={busy || total === 0}
-              onSelect={() => setConfirmingResegment(true)}
-            />
-            <ActionMenuWarning>
-              Re-segmenting discards unapproved machine text on lines nobody has
-              touched. Only the top item is safe.
-            </ActionMenuWarning>
-            <ActionMenuDivider />
-            <ActionMenuSection>Transcribe</ActionMenuSection>
-            <ActionMenuCaption>
-              Model <strong>{TRANSCRIBE_MODEL_NAME}</strong>
-            </ActionMenuCaption>
-            <ActionMenuItem
-              label="Transcribe unpaired pages"
-              meta={String(unpaired)}
-              disabled={busy || unpaired === 0}
-              onSelect={() => void runTranscribe(close)}
-            />
-          </>
+          <WorkflowMenuItems
+            segmentModels={segmentModels}
+            selectedSegmentModelId={selectedSegmentModelId}
+            onSelectedSegmentModelIdChange={setSelectedSegmentModelId}
+            busy={busy}
+            unsegmented={unsegmented}
+            total={total}
+            unpaired={unpaired}
+            onSegmentUnsegmented={() => void runSegment("unsegmented", close)}
+            onResegment={() => setConfirmingResegment(true)}
+            onTranscribe={() => void runTranscribe(close)}
+          />
         )
       }
     </ActionMenu>
