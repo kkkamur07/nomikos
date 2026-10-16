@@ -3,7 +3,7 @@
 Two concurrent creates with the same slug must both end in 409, never a 500:
 the pre-check keeps the common case cheap and the ``IntegrityError`` handler
 turns the race loser into the same conflict. Sharing with an unknown address
-is ignored (204 at the route) so an owner cannot probe which emails hold
+is a 404 at the route so an owner cannot probe which emails hold
 accounts. Guidelines are bounded at the API so one request cannot store
 megabytes of text.
 """

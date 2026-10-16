@@ -9,8 +9,8 @@ unfalsifiable.
 The media store exercised here is the **local** backend, which is what this
 repository runs outside production. Its signature is minted and checked by the
 platform. The Supabase backend signs with Storage's own key, and there is no
-Supabase running in this environment - see the module docstring of
-``test_media_store_signed_urls`` for what is and is not covered there.
+Supabase running in this environment - the platform's refusal on that backend is
+covered by ``test_the_platform_refuses_to_serve_objects_on_the_supabase_backend``.
 
 **No test here sleeps.** Expiry is proven by asking the real signer for a link
 whose deadline is already in the past, and by showing that a deadline moved

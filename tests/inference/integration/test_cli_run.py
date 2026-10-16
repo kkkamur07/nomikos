@@ -624,9 +624,10 @@ def test_ctrl_c_reports_the_page_in_flight_before_exiting(
 
 # `test_a_killed_process_leaves_a_page_the_lease_later_releases` stood here. The lease
 # semantics it asserted - an expired lease re-pends a page rather than failing it, and
-# hands it to a different agent - are `tests/nomikos/integration/test_device_lease.py::
-# test_an_expired_lease_is_re_pended_and_never_failed` and
-# `::test_an_expired_lease_returns_the_page_to_a_different_agent`, tested against the
+# hands it to a different agent - are `tests/nomikos/integration/test_job_worker_sweeps.py::
+# test_a_slept_laptop_re_pends_and_an_unclaimed_row_is_left_alone` and
+# `tests/nomikos/integration/test_device_lease.py::
+# test_an_expired_lease_returns_the_page_to_a_different_agent`, tested against the
 # platform that implements them. The CLI increment was "SIGKILL cannot be caught", which
 # is an OS guarantee. It cost a second Postgres database, a second alembic run, a third
 # uvicorn process and a hard `time.sleep(32)`; all four went with it, along with the
