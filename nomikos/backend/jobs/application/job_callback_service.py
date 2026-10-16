@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import ConflictError, NotFoundError
 from backend.document.application.segment_merge_service import SegmentMergeService
@@ -39,8 +38,7 @@ CALLBACK_PROCESSING_ERROR = "Callback processing failed"
 # ``job.error`` is Text (unbounded), so this cap is not a column constraint. It
 # exists because the string is rendered whole in a toast and a traceback-length
 # message there is unreadable. The ``INFERENCE_FAILURE_ERROR`` prefix stays
-# stable so callers can still recognise the class of failure, same contract as
-# ``job_sweeps.WAITING_TIMEOUT_ERROR``.
+# stable so callers can still recognise the class of failure.
 _MAX_PUBLIC_ERROR_CHARS = 200
 
 # Ordered: URLs are swallowed whole before the path rule can nibble at their
@@ -298,11 +296,7 @@ def _assert_callback_matches_job(job: Job, callback: JobCallbackRequest) -> None
         raise ConflictError(f"job {job.id} does not recognize callback inference_job_id")
 
 
-def _mark_done_from_callback_sync(
-    job: Job,
-    callback: JobCallbackRequest,
-    result: dict,
-) -> None:
+def _mark_done_from_callback_sync(job: Job, result: dict) -> None:
     now = datetime.now(UTC)
     job.status = JobStatus.done
     job.result = result
@@ -416,7 +410,7 @@ def _merge_and_finalize(context: _MergeContext, callback: JobCallbackRequest) ->
             raise ConflictError(f"job {job.id} is not processing this inference callback")
 
         result = _merge_into_session(session, context, callback)
-        _mark_done_from_callback_sync(job, callback, result)
+        _mark_done_from_callback_sync(job, result)
         session.commit()
     return True
 
@@ -444,9 +438,6 @@ def _apply_callback_locked(callback: JobCallbackRequest) -> bool:
 
 
 class JobCallbackService:
-    def __init__(self, _session: AsyncSession) -> None:
-        pass
-
     async def apply_callback(self, callback: JobCallbackRequest) -> bool:
         """Apply callback. Returns False when the Product job was already terminal."""
         # Everything below the seam is sync: ``sync_system_session`` round-trips

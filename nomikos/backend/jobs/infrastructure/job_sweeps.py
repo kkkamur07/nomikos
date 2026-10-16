@@ -13,12 +13,11 @@ import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Row, func, select, update
+from sqlalchemy import Row, select, update
 
 from backend.jobs.infrastructure.job_sql import (
     NON_TERMINAL_STATUSES,
     held_by_agent,
-    not_held_by_agent,
     rows_affected,
 )
 from backend.jobs.infrastructure.notifications import notify_platform_job_statuses_changed
@@ -26,8 +25,6 @@ from backend.jobs.infrastructure.orm_models import Job, JobStatus
 from infrastructure.db import sync_system_session
 
 logger = logging.getLogger(__name__)
-
-WAITING_TIMEOUT_ERROR = "Inference timed out with no response"
 
 POISON_PAGE_ERROR = "This page could not be completed by any inference agent"
 
@@ -40,7 +37,8 @@ scan, an image the model crashes on) would otherwise loop forever, burning one
 agent slot per lap and never telling the researcher anything.
 ``jobs.claim_attempts`` counts the laps and this is where they stop.
 
-A constant rather than an environment dial, unlike the two timeouts next to it:
+A constant rather than an environment dial, unlike the running timeout and the
+device lease:
 those are operational (how long to wait before believing an agent is gone
 depends on the deployment), but "a page that has already killed five agents
 will not be run by a sixth" is a property of the queue, not the deployment.
@@ -50,26 +48,12 @@ will not be run by a sixth" is a property of the queue, not the deployment.
 def poison_page_error(max_claim_attempts: int) -> str:
     """Reason recorded when a page exhausted its claim budget.
 
-    Allowlisted static text, same rule as ``waiting_timeout_error``: nothing the
+    Allowlisted static text, same rule as ``worker._public_job_error``: nothing the
     page itself produced reaches the client, since no agent ever got far enough
     to report anything. Naming the count tells the researcher the page is the
     problem rather than the platform.
     """
     return f"{POISON_PAGE_ERROR} (abandoned {max_claim_attempts} times)"
-
-
-def waiting_timeout_error(waiting_timeout_seconds: float) -> str:
-    """Reason recorded when the inference service never called back.
-
-    Allowlisted static text, same rule as ``worker._public_job_error``: no
-    exception detail reaches the client. Naming the deadline lets the UI say
-    "inference went silent for 240s" instead of a generic error. The
-    ``WAITING_TIMEOUT_ERROR`` prefix stays stable so callers can still recognise
-    the timeout.
-
-    Currently unreachable in production, see ``fail_stale_waiting_jobs``.
-    """
-    return f"{WAITING_TIMEOUT_ERROR} after {int(waiting_timeout_seconds)}s"
 
 
 def _split_by_claim_budget(
@@ -163,64 +147,6 @@ def reclaim_stale_running_jobs(
         return moved
 
 
-def fail_stale_waiting_jobs(*, waiting_timeout_seconds: float) -> int:
-    """Fail jobs stuck in ``waiting`` because the inference callback never arrived.
-
-    Sweeps an empty population today. Its subject is a job the platform
-    dispatched to an inference service over HTTP, and that hop is gone (ADR
-    0003). Since then the only writer of ``waiting`` is ``claim_one_page``,
-    which always stamps ``agent:<device_id>``, so ``not_held_by_agent()``
-    excludes every waiting row by construction. Kept because the integration
-    suite still pins this sweep's behaviour on hand-built rows.
-
-    Unlike a crashed running job there's nothing to retry: the dispatch already
-    happened and the inference service went silent, so re-pending would
-    duplicate work. Fail instead, with an error the user can act on.
-
-    Agent-held pages are deliberately excluded, which (with the dispatch hop
-    gone) is why the population is empty rather than merely small. ADR 0005
-    makes a claimed page ``waiting`` so ``JobCallbackService`` needs no change,
-    which put a researcher's laptop under this timeout by accident. The
-    reasoning above doesn't hold there: nothing was dispatched anywhere, the
-    page never left the queue, and a closed lid isn't a silent inference
-    service. Those rows are governed by ``release_expired_device_leases``,
-    which re-pends instead of failing, see ``AGENT_CLAIM_PREFIX``. Every
-    waiting row is one of those today.
-    """
-    now = datetime.now(UTC)
-    stale_before = now - timedelta(seconds=waiting_timeout_seconds)
-    with sync_system_session() as session:
-        stale_ids = list(
-            session.execute(
-                select(Job.id)
-                .where(Job.status == JobStatus.waiting)
-                .where(not_held_by_agent())
-                .where(Job.updated_at <= stale_before)
-                .with_for_update(skip_locked=True)
-            ).scalars()
-        )
-        if not stale_ids:
-            return 0
-        result = session.execute(
-            update(Job)
-            .where(Job.id.in_(stale_ids))
-            .where(Job.status == JobStatus.waiting)
-            .where(not_held_by_agent())
-            .values(
-                status=JobStatus.failed,
-                error=waiting_timeout_error(waiting_timeout_seconds),
-                callback_claimed_at=None,
-                completed_at=now,
-                updated_at=now,
-            )
-        )
-        session.commit()
-        # A bulk update emits no per-job NOTIFY, so SSE subscribers would keep
-        # waiting on a job that just died. Notify each id after the commit.
-        notify_platform_job_statuses_changed((job_id, JobStatus.failed) for job_id in stale_ids)
-        return rows_affected(result)
-
-
 def release_expired_device_leases(
     *, lease_seconds: float, max_claim_attempts: int = MAX_CLAIM_ATTEMPTS
 ) -> int:
@@ -232,7 +158,7 @@ def release_expired_device_leases(
     release endpoint, since a killed process can't call one. This sweep is the
     whole recovery mechanism.
 
-    It re-pends, not fails, unlike ``fail_stale_waiting_jobs``: a researcher who
+    It re-pends rather than fails: a researcher who
     closes their lid mid-page should have it picked up by the next agent, not
     see it permanently failed. Nothing was dispatched to a third party, so
     there's no duplicate work to fear, the page is still in the platform's own
@@ -346,29 +272,8 @@ def clear_stale_callback_claims(*, claim_timeout_seconds: float) -> int:
             .where(Job.callback_claimed_at.is_not(None))
             .where(Job.callback_claimed_at <= stale_before)
             # Keep ``updated_at`` as-is: the column's ``onupdate`` would otherwise
-            # bump it and push the waiting-timeout deadline back another window.
+            # bump it and push the device-lease deadline back another window.
             .values(callback_claimed_at=None, updated_at=Job.updated_at)
         )
         session.commit()
         return rows_affected(result)
-
-
-def seconds_until_next_stale_waiting_job(*, waiting_timeout_seconds: float) -> float | None:
-    """Return seconds until the oldest waiting job is eligible for the timeout sweep.
-
-    Note it counts *every* waiting row, agent-held ones included, while the sweep
-    it paces only fails the non-agent ones. That is deliberate and harmless - it
-    can only wake the worker early - but it means a non-None answer here is not
-    evidence that ``fail_stale_waiting_jobs`` has anything to do. In practice it
-    never does; see ``fail_stale_waiting_jobs``.
-    """
-    with sync_system_session() as session:
-        oldest_updated_at = session.execute(
-            select(func.min(Job.updated_at)).where(Job.status == JobStatus.waiting)
-        ).scalar_one_or_none()
-    if oldest_updated_at is None:
-        return None
-
-    now = datetime.now(UTC)
-    fail_at = oldest_updated_at + timedelta(seconds=waiting_timeout_seconds)
-    return max((fail_at - now).total_seconds(), 0.0)

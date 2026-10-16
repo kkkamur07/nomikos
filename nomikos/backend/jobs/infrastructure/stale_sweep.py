@@ -1,13 +1,13 @@
 """Opportunistic stale-job recovery for hosts that run no background worker.
 
-``fail_stale_waiting_jobs`` and ``clear_stale_callback_claims`` only ever ran
+``clear_stale_callback_claims`` only ever ran
 from ``worker.process_one_job``, i.e. inside ``worker_loop``, which
 ``backend.core.app`` starts only when ``job_worker_enabled`` is true. The
 production API deployment sets ``JOB_WORKER_ENABLED=false`` because it is
-request/response only, so the inference timeout was inert exactly where jobs
+request/response only, so stale claims were never released exactly where jobs
 were reported stuck.
 
-``release_expired_device_leases`` joins them here rather than anywhere else for
+``release_expired_device_leases`` joins it here rather than anywhere else for
 the same reason, and it is the reason the **lease** needs no machinery of its
 own: ADR 0005 promises abandonment is "the existing stale sweep", and this is it.
 A background lease reaper would be a process the serverless deployment cannot
@@ -37,7 +37,6 @@ from backend.core.settings.device import get_device_settings
 from backend.core.settings.job import get_job_settings
 from backend.jobs.infrastructure.job_sweeps import (
     clear_stale_callback_claims,
-    fail_stale_waiting_jobs,
     release_expired_device_leases,
 )
 from infrastructure.db import sync_system_session
@@ -49,12 +48,6 @@ logger = logging.getLogger(__name__)
 STALE_SWEEP_ADVISORY_LOCK_KEY = 8_402_762
 
 _last_sweep_at: float | None = None
-
-
-def reset_stale_sweep_throttle() -> None:
-    """Forget the last sweep time so the next call sweeps. For tests and restarts."""
-    global _last_sweep_at
-    _last_sweep_at = None
 
 
 def _claim_throttle_window(now: float, min_interval_seconds: float) -> bool:
@@ -72,7 +65,7 @@ def _claim_throttle_window(now: float, min_interval_seconds: float) -> bool:
 
 
 def run_stale_job_sweep() -> int:
-    """Fail timed-out waiting jobs, re-pend expired leases, release stale claims.
+    """Re-pend expired leases and release stale callback claims.
 
     Blocking; call it in a thread. Returns the number of rows touched, or 0 when
     another replica already holds the sweep lock.
@@ -92,20 +85,10 @@ def run_stale_job_sweep() -> int:
             return 0
 
         # Both sweeps open their own sessions, so they never contend with the
-        # lock-holding transaction above. Waiting is swept before claims are
-        # released, matching process_one_job: releasing a claim rewrites the row
-        # and would push the waiting deadline out another window.
-        timed_out = fail_stale_waiting_jobs(
-            waiting_timeout_seconds=settings.job_worker_waiting_timeout_seconds
-        )
-        if timed_out:
-            logger.warning(
-                "on-read sweep failed %s platform job(s) waiting past the inference timeout",
-                timed_out,
-            )
-        # The other half of the waiting population: pages an **inference agent**
-        # holds. These go back to the queue rather than failing, because a closed
-        # laptop lid is not a failed job - until a page has been abandoned
+        # lock-holding transaction above. Every ``waiting`` page is one an
+        # **inference agent** holds. These go back to the queue rather than
+        # failing, because a closed laptop lid is not a failed job - until a page
+        # has been abandoned
         # MAX_CLAIM_ATTEMPTS times, at which point the page is the problem and it
         # is failed. See release_expired_device_leases.
         re_pended = release_expired_device_leases(
@@ -120,7 +103,7 @@ def run_stale_job_sweep() -> int:
         )
         if released:
             logger.warning("on-read sweep released %s stale inference callback claim(s)", released)
-        return timed_out + re_pended + released
+        return re_pended + released
 
 
 async def sweep_stale_jobs_on_read() -> None:

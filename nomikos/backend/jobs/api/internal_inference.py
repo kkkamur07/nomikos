@@ -63,8 +63,8 @@ from nomikos_inference.contracts.webhooks import INFERENCE_WEBHOOK_SECRET_HEADER
 router = APIRouter(prefix="/internal/inference", tags=["internal-inference"])
 
 
-def _callback_service(db: AsyncSession = Depends(get_db)) -> JobCallbackService:
-    return JobCallbackService(db)
+def _callback_service() -> JobCallbackService:
+    return JobCallbackService()
 
 
 async def _authorize_agent_callback(

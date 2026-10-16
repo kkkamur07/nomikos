@@ -124,8 +124,8 @@ async def get_job(
     current_user: User = Depends(get_current_user),
 ) -> JobResponse:
     # Recover stale jobs before reading. On a request/response host there is no
-    # worker loop, so this poll is the only thing that can enforce the inference
-    # timeout - without it a waiting job is reported as alive forever.
+    # worker loop, so this poll is the only thing that can release an expired
+    # device lease - without it an abandoned page is reported as alive forever.
     await sweep_stale_jobs_on_read()
     job = await service.get_job(job_id)
     _assert_job_access(job, current_user)
@@ -150,8 +150,8 @@ async def stream_job_events(
     request: Request,
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
-    # Sweep before the initial load so a job that already timed out streams its
-    # failure immediately instead of parking the client on a dead stream.
+    # Sweep before the initial load so a page whose lease already expired streams
+    # its new state immediately instead of parking the client on a dead stream.
     await sweep_stale_jobs_on_read()
     # No ``get_db`` dependency here: it would pin a pooled connection for the whole
     # stream. Authorize on a short-lived session so 403/404 still surface as a

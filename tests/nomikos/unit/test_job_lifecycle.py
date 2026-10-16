@@ -26,9 +26,7 @@ from backend.jobs.infrastructure.job_claim_engine import claim_next_pending_job,
 from backend.jobs.infrastructure.job_sql import AGENT_CLAIM_PREFIX
 from backend.jobs.infrastructure.job_sweeps import (
     clear_stale_callback_claims,
-    fail_stale_waiting_jobs,
     reclaim_stale_running_jobs,
-    waiting_timeout_error,
 )
 from backend.jobs.infrastructure.job_terminal import (
     apply_cancellation,
@@ -129,71 +127,6 @@ def _params(statement) -> dict:
     return statement.compile(dialect=postgresql.dialect()).params
 
 
-# --- Waiting-state timeout sweep ---
-# Tests jobs abandoned by the inference service are failed and announced.
-# Does not test running-job reclaim, which re-pends instead of failing.
-
-
-def test_stale_waiting_job_is_failed_and_notified(monkeypatch: pytest.MonkeyPatch):
-    stale_ids = [uuid.uuid4(), uuid.uuid4()]
-    session = _FakeSession([_FakeResult(rows=stale_ids), _FakeResult(rowcount=2)])
-    _use_session(monkeypatch, session)
-    notified = _record_notifications(monkeypatch)
-
-    assert fail_stale_waiting_jobs(waiting_timeout_seconds=240.0) == 2
-
-    # SSE subscribers unstick only if the bulk update is announced per job.
-    assert notified == [(stale_ids[0], JobStatus.failed), (stale_ids[1], JobStatus.failed)]
-    assert session.commits == 1
-
-    select_sql = _sql(session.statements[0])
-    assert "FOR UPDATE SKIP LOCKED" in select_sql
-    cutoff = _params(session.statements[0])["updated_at_1"]
-    assert timedelta(seconds=239) < datetime.now(UTC) - cutoff < timedelta(seconds=241)
-
-    values = _params(session.statements[1])
-    assert values["status"] == JobStatus.failed
-    assert values["error"] == waiting_timeout_error(240.0)
-    assert values["callback_claimed_at"] is None
-    assert values["completed_at"] is not None
-
-
-def test_waiting_sweep_only_touches_waiting_jobs(monkeypatch: pytest.MonkeyPatch):
-    session = _FakeSession([_FakeResult(rows=[uuid.uuid4()]), _FakeResult(rowcount=1)])
-    _use_session(monkeypatch, session)
-    _record_notifications(monkeypatch)
-
-    fail_stale_waiting_jobs(waiting_timeout_seconds=240.0)
-
-    assert _params(session.statements[0])["status_1"] == JobStatus.waiting
-    assert _params(session.statements[1])["status_1"] == JobStatus.waiting
-
-
-def test_waiting_sweep_is_a_noop_without_stale_jobs(monkeypatch: pytest.MonkeyPatch):
-    session = _FakeSession([_FakeResult(rows=[])])
-    _use_session(monkeypatch, session)
-    notified = _record_notifications(monkeypatch)
-
-    assert fail_stale_waiting_jobs(waiting_timeout_seconds=240.0) == 0
-    assert len(session.statements) == 1
-    assert session.commits == 0
-    assert notified == []
-
-
-async def test_idle_backoff_floors_an_expired_deadline(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        worker_module,
-        "seconds_until_next_stale_waiting_job",
-        lambda **_kwargs: 0.0,
-    )
-    settings = JobSettings()
-
-    # A zero-length sleep would spin the poll loop against Postgres.
-    assert await worker_module._idle_wait_seconds(settings, 2.0) == (
-        settings.job_poll_interval_seconds
-    )
-
-
 # --- Stale callback claims ---
 # Tests an abandoned callback claim stops blocking cancellation.
 # Does not test the callback merge itself.
@@ -207,7 +140,7 @@ def test_clear_stale_callback_claims_releases_non_terminal_jobs(monkeypatch: pyt
 
     sql = _sql(session.statements[0])
     assert "callback_claimed_at IS NOT NULL" in sql
-    # Bumping updated_at here would push the waiting deadline out another window.
+    # Bumping updated_at here would push the device-lease deadline out another window.
     assert "updated_at=jobs.updated_at" in sql
     values = _params(session.statements[0])
     assert values["callback_claimed_at"] is None
@@ -238,9 +171,9 @@ def test_job_with_stale_callback_claim_becomes_cancellable_again():
 
 # --- Opportunistic on-read sweep ---
 # Tests stale-job recovery still happens with no background worker, which is the
-# production API deployment (JOB_WORKER_ENABLED=false). Without this the waiting
-# timeout is inert there and a job sits in waiting forever. Does not test the
-# worker loop, which sweeps on its own tick.
+# production API deployment (JOB_WORKER_ENABLED=false). Without this an expired
+# device lease is never released there and a page sits in waiting forever. Does
+# not test the worker loop, which sweeps on its own tick.
 
 
 class _SweepStore:
@@ -250,25 +183,17 @@ class _SweepStore:
         self.job = job
         self.lock_granted = lock_granted
         self.lock_attempts = 0
-        self.waiting_selects = 0
         self.lease_selects = 0
         self.claim_clears = 0
 
 
-def _wants_agent_claims(statement) -> bool | None:
-    """Which half of ``waiting`` this statement addresses, read from its own SQL.
+def _wants_agent_claims(statement) -> bool:
+    """Whether this statement is restricted to agent-held pages, read from its own SQL.
 
-    True for the device-lease sweep, False for the waiting-timeout sweep, None for
-    a statement that does not discriminate. The two are complements over one
-    column, so the fake has to model ``claimed_by`` or it would hand every job to
-    both sweeps - which is precisely the bug this issue fixes.
+    The fake has to model ``claimed_by``: the lease sweep may only ever touch a
+    page an agent holds.
     """
-    sql = _sql(statement)
-    if "jobs.claimed_by NOT LIKE" in sql:
-        return False
-    if "jobs.claimed_by LIKE" in sql:
-        return True
-    return None
+    return "jobs.claimed_by LIKE" in _sql(statement)
 
 
 def _agent_held(job: Job) -> bool:
@@ -290,13 +215,10 @@ class _SweepSession:
 
         values = _params(statement)
         wants_agent = _wants_agent_claims(statement)
-        matches_claim = wants_agent is None or wants_agent == _agent_held(job)
+        matches_claim = not wants_agent or _agent_held(job)
 
         if isinstance(statement, Select):
-            if wants_agent:
-                store.lease_selects += 1
-            else:
-                store.waiting_selects += 1
+            store.lease_selects += 1
             stale = (
                 job.status == JobStatus.waiting
                 and matches_claim
@@ -305,11 +227,10 @@ class _SweepSession:
             if not stale:
                 return _FakeResult(rows=[])
             # The lease sweep reads the claim budget with the id, because it has
-            # to decide per row whether to re-pend or fail; the waiting timeout
-            # only ever fails, so it selects the id alone.
-            return _FakeResult(rows=[(job.id, job.claim_attempts) if wants_agent else job.id])
+            # to decide per row whether to re-pend or fail.
+            return _FakeResult(rows=[(job.id, job.claim_attempts)])
 
-        if "status" in values:  # fail_stale_waiting_jobs / release_expired_device_leases
+        if "status" in values:  # release_expired_device_leases
             if job.status != JobStatus.waiting or not matches_claim:
                 return _FakeResult(rowcount=0)
             job.status = values["status"]
@@ -360,9 +281,9 @@ def _install_sweep_store(
 @pytest.fixture(autouse=True)
 def _clean_sweep_throttle():
     """The throttle is process-global; never let it leak between tests."""
-    stale_sweep_module.reset_stale_sweep_throttle()
-    yield
-    stale_sweep_module.reset_stale_sweep_throttle()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(stale_sweep_module, "_last_sweep_at", None)
+        yield
 
 
 @pytest.fixture
@@ -421,7 +342,7 @@ def _readable_job(**overrides) -> Job:
     return Job(**fields)
 
 
-async def test_read_fails_a_stale_waiting_job_when_no_worker_runs(
+async def test_read_releases_an_expired_lease_when_no_worker_runs(
     monkeypatch: pytest.MonkeyPatch, job_env
 ):
     from backend.jobs.api import jobs as jobs_api
@@ -430,7 +351,11 @@ async def test_read_fails_a_stale_waiting_job_when_no_worker_runs(
     # Premise: app.py never starts worker_loop, so process_one_job never sweeps.
     assert settings.job_worker_enabled is False
 
-    job = _readable_job(updated_at=datetime.now(UTC) - timedelta(seconds=600))
+    lease = get_device_settings().device_lease_seconds
+    job = _readable_job(
+        claimed_by=f"{AGENT_CLAIM_PREFIX}{uuid.uuid4()}",
+        updated_at=datetime.now(UTC) - timedelta(seconds=lease + 60),
+    )
     store = _install_sweep_store(monkeypatch, job)
     notified = _record_notifications(monkeypatch)
     service = _StubJobService(job)
@@ -440,11 +365,11 @@ async def test_read_fails_a_stale_waiting_job_when_no_worker_runs(
     )
 
     assert store.lock_attempts == 1
-    assert response.status == JobStatus.failed
+    assert response.status == JobStatus.pending
     # The read must sweep first: reading a stale row and reporting it as alive is
     # exactly the bug.
     assert service.reads == 1
-    assert notified == [(job.id, JobStatus.failed)]
+    assert notified == [(job.id, JobStatus.pending)]
 
 
 async def test_two_quick_reads_run_only_one_sweep(monkeypatch: pytest.MonkeyPatch, job_env):
@@ -458,9 +383,9 @@ async def test_two_quick_reads_run_only_one_sweep(monkeypatch: pytest.MonkeyPatc
 
     # A sweep per request would put two extra round-trips on every poll.
     assert store.lock_attempts == 1
-    assert store.waiting_selects == 1
+    assert store.lease_selects == 1
 
-    stale_sweep_module.reset_stale_sweep_throttle()
+    monkeypatch.setattr(stale_sweep_module, "_last_sweep_at", None)
     await stale_sweep_module.sweep_stale_jobs_on_read()
     assert store.lock_attempts == 2
 
@@ -490,7 +415,7 @@ async def test_read_clears_a_stale_callback_claim_so_cancel_works(
     from backend.jobs.api import jobs as jobs_api
 
     job_env(JOB_WORKER_ENABLED="false")
-    # Fresh updated_at: the waiting timeout must not fire, only the claim release.
+    # Fresh updated_at: the lease must not fire, only the claim release.
     job = _readable_job(
         updated_at=datetime.now(UTC),
         callback_claimed_at=datetime.now(UTC) - timedelta(minutes=30),
@@ -523,7 +448,7 @@ async def test_sweep_skips_when_another_replica_holds_the_lock(
     await stale_sweep_module.sweep_stale_jobs_on_read()
 
     assert store.lock_attempts == 1
-    assert store.waiting_selects == 0
+    assert store.lease_selects == 0
     assert job.status == JobStatus.waiting
     assert notified == []
 
@@ -537,20 +462,6 @@ async def test_sweep_flag_disables_the_on_read_recovery(monkeypatch: pytest.Monk
 
     assert store.lock_attempts == 0
     assert job.status == JobStatus.waiting
-
-
-def test_the_sweep_throttle_stays_well_under_the_deadline_it_enforces(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.delenv("JOB_STALE_SWEEP_MIN_INTERVAL_SECONDS", raising=False)
-    settings = JobSettings()
-
-    # Detection lag is bounded by the throttle, so it has to stay well under the
-    # deadline it is enforcing.
-    assert (
-        settings.job_stale_sweep_min_interval_seconds
-        < settings.job_worker_waiting_timeout_seconds / 4
-    )
 
 
 # --- Worker ownership ---
@@ -691,12 +602,11 @@ def test_process_one_job_runs_every_stale_sweep(monkeypatch: pytest.MonkeyPatch)
 
         return _run
 
-    # All four sweeps, not three. An unpatched sweep does not make this test more
+    # All three sweeps, not two. An unpatched sweep does not make this test more
     # realistic -- it makes `process_one_job` open a live Postgres connection from the
     # lane CI runs with no database, so the test fails on connectivity rather than on
     # the ordering it exists to pin.
     monkeypatch.setattr(worker_module, "reclaim_stale_running_jobs", _sweep("reclaim", 1))
-    monkeypatch.setattr(worker_module, "fail_stale_waiting_jobs", _sweep("waiting", 2))
     monkeypatch.setattr(worker_module, "release_expired_device_leases", _sweep("lease", 3))
     monkeypatch.setattr(worker_module, "clear_stale_callback_claims", _sweep("claims", 4))
     monkeypatch.setattr(worker_module, "claim_next_pending_job", lambda **_kwargs: None)
@@ -704,14 +614,11 @@ def test_process_one_job_runs_every_stale_sweep(monkeypatch: pytest.MonkeyPatch)
     assert worker_module.process_one_job() is False
 
     settings = get_job_settings()
-    # Waiting must be swept before claims are released: releasing rewrites the row.
-    # The lease sweep sits between the two because it re-pends agent-held pages rather
-    # than failing them, and it reads the same `updated_at` the waiting sweep compares.
-    assert [name for name, _ in calls] == ["reclaim", "waiting", "lease", "claims"]
+    # Leases are released before callback claims, as on the read path.
+    assert [name for name, _ in calls] == ["reclaim", "lease", "claims"]
     assert calls[0][1] == {"running_timeout_seconds": settings.job_worker_running_timeout_seconds}
-    assert calls[1][1] == {"waiting_timeout_seconds": settings.job_worker_waiting_timeout_seconds}
-    assert calls[2][1] == {"lease_seconds": get_device_settings().device_lease_seconds}
-    assert calls[3][1] == {
+    assert calls[1][1] == {"lease_seconds": get_device_settings().device_lease_seconds}
+    assert calls[2][1] == {
         "claim_timeout_seconds": settings.job_worker_callback_claim_timeout_seconds
     }
 
@@ -819,13 +726,12 @@ async def test_a_repeatedly_abandoned_page_is_finally_failed(
     store = _install_sweep_store(monkeypatch, job)
 
     for lap in range(job_sweeps.MAX_CLAIM_ATTEMPTS):
-        # What the next agent's claim writes: the sweep cleared the claim, so
-        # without this the row falls into the *other* half of ``waiting`` and the
-        # inference timeout fails it for the wrong reason.
+        # What the next agent's claim writes: the sweep cleared the claim, and
+        # only an agent-held page is under the lease.
         job.status = JobStatus.waiting
         job.claimed_by = f"{AGENT_CLAIM_PREFIX}{uuid.uuid4()}"
         job.updated_at = datetime.now(UTC) - timedelta(days=1)
-        stale_sweep_module.reset_stale_sweep_throttle()
+        monkeypatch.setattr(stale_sweep_module, "_last_sweep_at", None)
         await stale_sweep_module.sweep_stale_jobs_on_read()
         if lap < job_sweeps.MAX_CLAIM_ATTEMPTS - 1:
             assert job.status == JobStatus.pending, f"lap {lap} should still be retried"
@@ -847,5 +753,5 @@ def test_a_finished_job_starts_over_with_a_full_claim_budget(monkeypatch: pytest
     from backend.jobs.application.job_callback_service import _mark_done_from_callback_sync
 
     job = _readable_job(claim_attempts=3)
-    _mark_done_from_callback_sync(job, object(), {"ok": True})
+    _mark_done_from_callback_sync(job, {"ok": True})
     assert job.claim_attempts == 0

@@ -8,15 +8,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 import infrastructure.models  # noqa: F401 — register all ORM mappers
 from backend.jobs.application.inference_dispatcher import build_page_run_request
-from backend.jobs.infrastructure.job_claim_engine import (
-    claim_next_pending_job,
-    count_active_jobs,
-    mark_job_done,
-    reclaim_stale_running_jobs,
-)
+from backend.jobs.infrastructure.job_claim_engine import claim_next_pending_job
+from backend.jobs.infrastructure.job_sql import NON_TERMINAL_STATUSES
+from backend.jobs.infrastructure.job_sweeps import reclaim_stale_running_jobs
+from backend.jobs.infrastructure.job_terminal import mark_job_done
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
 from backend.jobs.infrastructure.worker import execute_claimed_job
 from infrastructure.db import sync_system_session
@@ -29,15 +28,26 @@ from tests.nomikos.integration.helpers import (
 )
 
 
+def _count_active_test_jobs() -> int:
+    """Pending, running or waiting jobs this suite queued (payload test=true)."""
+    with sync_system_session() as session:
+        return session.execute(
+            select(func.count())
+            .select_from(Job)
+            .where(Job.status.in_(NON_TERMINAL_STATUSES))
+            .where(Job.payload.contains({"test": True}))
+        ).scalar_one()
+
+
 def _wait_until_no_active_test_jobs(*, timeout: float = 5.0) -> None:
     """Wait until the lifespan worker finished API test jobs (payload test=true)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if count_active_jobs(test_payload=True) == 0:
+        if _count_active_test_jobs() == 0:
             return
         time.sleep(0.05)
     raise AssertionError(
-        f"test jobs still active after {timeout}s (count={count_active_jobs(test_payload=True)})"
+        f"test jobs still active after {timeout}s (count={_count_active_test_jobs()})"
     )
 
 
@@ -172,42 +182,6 @@ def test_cancel_pending_job_marks_cancelled_and_discards_partials(
 
     again = client.post(f"/jobs/{job_id}/cancel", headers=auth_headers)
     assert again.status_code == 409
-
-
-def test_mark_job_waiting_does_not_overwrite_cancelled(
-    client: TestClient, registered_user: dict[str, str]
-):
-    """Cancel wins over a late waiting transition (worker race)."""
-    from backend.jobs.infrastructure.job_claim_engine import mark_job_waiting
-
-    auth_headers = {"Authorization": f"Bearer {registered_user['access_token']}"}
-    me = client.get("/me", headers=auth_headers)
-    assert me.status_code == 200
-    user_id = uuid.UUID(me.json()["id"])
-
-    with sync_system_session() as session:
-        job = Job(
-            type=JobType.segment,
-            status=JobStatus.running,
-            payload={"handler": "noop"},
-            user_id=user_id,
-        )
-        session.add(job)
-        session.commit()
-        session.refresh(job)
-        job_id = job.id
-
-    cancelled = client.post(f"/jobs/{job_id}/cancel", headers=auth_headers)
-    assert cancelled.status_code == 200, cancelled.text
-    assert cancelled.json()["status"] == "cancelled"
-
-    mark_job_waiting(job_id, inference_job_id=uuid.uuid4())
-
-    with sync_system_session() as session:
-        row = session.get(Job, job_id)
-        assert row is not None
-        assert row.status == JobStatus.cancelled
-        assert row.inference_job_id is None
 
 
 def test_cancel_rejects_when_callback_already_claimed(
@@ -455,7 +429,7 @@ def test_reading_a_job_releases_a_stale_callback_claim(
     blocked = client.post(f"/jobs/{job_id}/cancel", headers=auth_headers)
     assert blocked.status_code == 409, blocked.text
 
-    stale_sweep.reset_stale_sweep_throttle()
+    stale_sweep._last_sweep_at = None
     read = client.get(f"/jobs/{job_id}", headers=auth_headers)
     assert read.status_code == 200, read.text
     # Fresh updated_at, so only the claim is released - the job stays waiting.

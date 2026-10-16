@@ -35,7 +35,7 @@ from sqlalchemy import select, text
 
 import infrastructure.models  # noqa: F401 — register all ORM mappers
 from backend.core.settings.device import get_device_settings
-from backend.jobs.infrastructure.job_claim_engine import mark_job_failed
+from backend.jobs.infrastructure.job_terminal import mark_job_failed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus
 from backend.ml.domain.execution import ExecutionTarget
 from infrastructure.db import sync_system_session
