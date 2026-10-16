@@ -112,7 +112,7 @@ async def _idle_wait_seconds(settings: JobSettings, idle_interval: float) -> flo
     """Cap the idle backoff so it can never sleep past a waiting job's deadline.
 
     The deadline being respected is the inference-dispatch timeout, whose
-    population is empty today - nothing calls ``mark_job_waiting`` any more, so
+    population is empty today - every ``waiting`` row carries an agent claim, so
     ``fail_stale_waiting_jobs`` has no rows. The cap still fires whenever *any*
     job is waiting, agent-held ones included, because the query does not
     discriminate. The effect is a worker that wakes sooner than it needs to,

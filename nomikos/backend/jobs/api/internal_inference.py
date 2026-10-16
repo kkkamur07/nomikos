@@ -29,7 +29,7 @@ narrowing above, read off the same column: an agent credential may report on the
 page it holds and no other, and the platform secret may report on pages no agent
 holds. Today that second set is empty, which is why this reads as a guard rather
 than a feature - the platform's own HTTP hop into an inference service is gone,
-and ``mark_job_waiting`` is the seam a future one would come back through. It is
+and nothing writes a ``waiting`` row without an agent claim any more. It is
 kept, and guarded, rather than deleted, because the secret it authenticates is
 still required in production by ``backend.core.settings.ml`` and still documented
 as the platform-side callback credential; deleting only the branch would leave a

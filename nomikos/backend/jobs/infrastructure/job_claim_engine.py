@@ -67,7 +67,7 @@ def waiting_timeout_error(waiting_timeout_seconds: float) -> str:
     ``WAITING_TIMEOUT_ERROR`` prefix stays stable so callers can still recognise
     the timeout.
 
-    Currently unreachable in production, see ``mark_job_waiting``.
+    Currently unreachable in production, see ``fail_stale_waiting_jobs``.
     """
     return f"{WAITING_TIMEOUT_ERROR} after {int(waiting_timeout_seconds)}s"
 
@@ -162,8 +162,6 @@ def count_active_jobs(*, test_payload: bool | None = None) -> int:
     until the worker has finished everything a test queued. Nothing in the
     application reads it.
     """
-    from sqlalchemy import func
-
     with sync_system_session() as session:
         query = (
             select(func.count())
@@ -275,9 +273,10 @@ def fail_stale_waiting_jobs(*, waiting_timeout_seconds: float) -> int:
 
     Sweeps an empty population today. Its subject is a job the platform
     dispatched to an inference service over HTTP, and that hop is gone (ADR
-    0003); ``mark_job_waiting``, the only thing that ever created such a row,
-    has no production caller. Kept as the other half of that seam, see
-    ``mark_job_waiting``.
+    0003). Since then the only writer of ``waiting`` is ``claim_one_page``,
+    which always stamps ``agent:<device_id>``, so ``_not_held_by_agent()``
+    excludes every waiting row by construction. Kept because the integration
+    suite still pins this sweep's behaviour on hand-built rows.
 
     Unlike a crashed running job there's nothing to retry: the dispatch already
     happened and the inference service went silent, so re-pending would
@@ -461,20 +460,6 @@ def clear_stale_callback_claims(*, claim_timeout_seconds: float) -> int:
         return result.rowcount or 0
 
 
-def seconds_until_next_stale_running_job(*, running_timeout_seconds: float) -> float | None:
-    """Return seconds until the oldest running job is eligible for reclaim."""
-    with sync_system_session() as session:
-        oldest_started_at = session.execute(
-            select(func.min(Job.started_at)).where(Job.status == JobStatus.running)
-        ).scalar_one_or_none()
-    if oldest_started_at is None:
-        return None
-
-    now = datetime.now(UTC)
-    reclaim_at = oldest_started_at + timedelta(seconds=running_timeout_seconds)
-    return max((reclaim_at - now).total_seconds(), 0.0)
-
-
 def seconds_until_next_stale_waiting_job(*, waiting_timeout_seconds: float) -> float | None:
     """Return seconds until the oldest waiting job is eligible for the timeout sweep.
 
@@ -482,7 +467,7 @@ def seconds_until_next_stale_waiting_job(*, waiting_timeout_seconds: float) -> f
     it paces only fails the non-agent ones. That is deliberate and harmless - it
     can only wake the worker early - but it means a non-None answer here is not
     evidence that ``fail_stale_waiting_jobs`` has anything to do. In practice it
-    never does; see ``mark_job_waiting``.
+    never does; see ``fail_stale_waiting_jobs``.
     """
     with sync_system_session() as session:
         oldest_updated_at = session.execute(
@@ -494,62 +479,6 @@ def seconds_until_next_stale_waiting_job(*, waiting_timeout_seconds: float) -> f
     now = datetime.now(UTC)
     fail_at = oldest_updated_at + timedelta(seconds=waiting_timeout_seconds)
     return max((fail_at - now).total_seconds(), 0.0)
-
-
-def mark_job_waiting(
-    job_id: uuid.UUID,
-    *,
-    inference_job_id: uuid.UUID | None = None,
-    payload_patch: dict | None = None,
-) -> None:
-    """Move a non-terminal job to ``waiting``. No-op if already terminal.
-
-    Uses ``FOR UPDATE`` so a concurrent cancel can't be overwritten by the
-    status write after a stale unlocked read.
-
-    Nothing in production calls this. It's the only writer of ``waiting`` with
-    a non-agent ``claimed_by``: the platform used to POST a job to the
-    inference service over HTTP and call this to record it was out for
-    dispatch. ADR 0003 deleted that hop. Since then the only writer of
-    ``waiting`` is ``claim_one_page``, which always stamps
-    ``agent:<device_id>``, so ``_not_held_by_agent()`` excludes every waiting
-    row by construction, and the population that
-    ``fail_stale_waiting_jobs``, ``waiting_timeout_error``,
-    ``seconds_until_next_stale_waiting_job``, and ``worker._idle_wait_seconds``
-    operate on is permanently empty.
-
-    Kept rather than deleted because it's the seam a platform-side dispatch
-    comes back through, and because removal wouldn't stop here: the deadline it
-    enforces is ``JOB_WORKER_WAITING_TIMEOUT_SECONDS`` in
-    ``backend.core.settings.job``, and the credential that would call back with
-    the result is ``INFERENCE_WEBHOOK_SECRET``, required in production by
-    ``backend.core.settings.ml`` and documented in ``docs/deployment``. Deleting
-    these two functions but leaving a mandatory setting and secret behind them
-    would be worse than keeping this dead code.
-
-    This is a seam, not live code: the machinery below does not describe
-    something the platform currently does.
-    """
-    now = datetime.now(UTC)
-    with sync_system_session() as session:
-        job = session.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
-        ).scalar_one_or_none()
-        if job is None:
-            raise ValueError(f"job {job_id} not found")
-        if job.status in (JobStatus.done, JobStatus.failed, JobStatus.cancelled):
-            return
-        payload = dict(job.payload or {})
-        if payload_patch:
-            payload.update(payload_patch)
-        job.payload = payload
-        job.status = JobStatus.waiting
-        job.callback_claimed_at = None
-        if inference_job_id is not None:
-            job.inference_job_id = inference_job_id
-        job.updated_at = now
-        session.commit()
-        notify_platform_job_status_changed(job.id, job.status)
 
 
 def _owned_by(statement, claimed_by: str | None):
