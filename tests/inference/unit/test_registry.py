@@ -82,6 +82,12 @@ def test_registry_rejects_partial_hf_provenance():
         )
 
 
+def test_registry_rejects_hf_entry_with_neither_pin():
+    """An hf:// entry with neither pin must fail validation, not resolve time."""
+    with pytest.raises(ValueError, match="both hub_revision and artifact_sha256"):
+        RegistryVersionEntry(weights_source="hf://example/demo@stable")
+
+
 # `test_blla_rejects_digest_mismatch_before_runtime_load` stood here. The same ordering
 # claim -- digest before open, integrity failure rather than a parse error -- is
 # `test_architecture_contract.py::test_corrupt_artifact_is_a_service_error_not_a_client_error`,

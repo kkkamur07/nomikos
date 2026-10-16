@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from functools import lru_cache
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from nomikos_inference import INFERENCE_ROOT
 from nomikos_inference.contracts.common import (
     ComputeDevice,
     HostEligibility,
@@ -16,11 +16,9 @@ from nomikos_inference.contracts.common import (
     LineCrop,
     RegistryArchitecture,
 )
+from nomikos_inference.hub.pins import COMMIT_SHA_PATTERN, SHA256_PATTERN
 
-INFERENCE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY_PATH = INFERENCE_ROOT / "registry.yaml"
-_COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
-_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class RegistryVersionEntry(BaseModel):
@@ -31,21 +29,21 @@ class RegistryVersionEntry(BaseModel):
     @field_validator("hub_revision")
     @classmethod
     def validate_hub_revision(cls, value: str | None) -> str | None:
-        if value is not None and not _COMMIT_SHA_PATTERN.fullmatch(value):
+        if value is not None and not COMMIT_SHA_PATTERN.fullmatch(value):
             raise ValueError("hub_revision must be a 40-character lowercase commit SHA")
         return value
 
     @field_validator("artifact_sha256")
     @classmethod
     def validate_artifact_sha256(cls, value: str | None) -> str | None:
-        if value is not None and not _SHA256_PATTERN.fullmatch(value):
+        if value is not None and not SHA256_PATTERN.fullmatch(value):
             raise ValueError("artifact_sha256 must be a 64-character lowercase SHA-256")
         return value
 
     @model_validator(mode="after")
     def validate_hf_provenance_pair(self) -> RegistryVersionEntry:
-        if self.weights_source.startswith("hf://") and (
-            bool(self.hub_revision) != bool(self.artifact_sha256)
+        if self.weights_source.startswith("hf://") and not (
+            self.hub_revision and self.artifact_sha256
         ):
             raise ValueError("hf weights_source must provide both hub_revision and artifact_sha256")
         if not self.weights_source.startswith("hf://") and self.hub_revision is not None:
