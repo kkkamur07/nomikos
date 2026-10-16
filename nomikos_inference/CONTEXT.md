@@ -230,7 +230,7 @@ these lived under `src/hf/`.
 | Publish staging validation, model cards, collection sync | `nomikos_inference/publish/` | no |
 | Local bundled weights for offline dev | `nomikos_inference/publish/artifacts/local/` | no |
 | Publish-ready staging tree | `nomikos_inference/publish/artifacts/staging/` | no |
-| Training-stack predictors (the export *input*, not the runtime) | `nomikos_inference/predictors/` | no |
+| Training-stack predictors (the export *input*, not the runtime) | deleted; was `nomikos_inference/predictors/` | no |
 | Hub runtime cache | `~/.nomikos/hf/cache/` | n/a |
 | Collection metadata | `nomikos_inference/publish/collection.yaml` | no |
 | CLI entrypoints | `scripts/hf/` | no |
