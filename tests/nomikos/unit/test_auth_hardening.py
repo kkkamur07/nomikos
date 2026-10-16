@@ -960,3 +960,52 @@ async def test_orphaned_project_cannot_be_published_by_a_collaborator() -> None:
         await service.update_document(
             None, collaborator, project.id, document.id, workflow=DocumentWorkflow.published
         )
+
+
+async def test_session_rotation_is_capped_per_client(monkeypatch) -> None:
+    """Refresh and logout had no limiter; they share the auth budget per IP."""
+    from backend.users.api import auth as auth_module
+    from backend.users.api.auth import _throttle_session_use
+
+    monkeypatch.setenv("TRUST_PEER_IP", "true")
+    monkeypatch.setenv("BEHIND_PROXY", "false")
+    monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
+    _clear_platform_settings()
+    calls: list[tuple[list[str], int]] = []
+
+    async def _record(keys, *, limit, window_seconds, detail):
+        calls.append((list(keys), limit))
+
+    monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
+    await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
+
+    assert calls == [(["session:203.0.113.7"], get_auth_settings().auth_rate_limit_requests)]
+
+
+async def test_session_rotation_without_an_address_uses_the_shared_bucket(monkeypatch) -> None:
+    from backend.users.api import auth as auth_module
+    from backend.users.api.auth import _throttle_session_use
+
+    monkeypatch.setenv("TRUST_PEER_IP", "false")
+    monkeypatch.setenv("BEHIND_PROXY", "false")
+    monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
+    _clear_platform_settings()
+    calls: list[tuple[list[str], int]] = []
+
+    async def _record(keys, *, limit, window_seconds, detail):
+        calls.append((list(keys), limit))
+
+    monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
+    await _throttle_session_use(_request(peer="10.0.0.1", path="/auth/logout"))
+
+    assert calls == [(["session:unattributable"], rate_limit.UNATTRIBUTABLE_AUTH_RATE_LIMIT)]
+
+
+def test_refresh_and_logout_mount_the_session_throttle() -> None:
+    from backend.core.app import create_app
+    from backend.users.api.auth import _throttle_session_use
+
+    for path in ("/auth/refresh", "/auth/logout"):
+        dependencies = _dependency_calls(_route(create_app(), path, "POST").dependant)
+
+        assert _throttle_session_use in dependencies
