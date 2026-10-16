@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Callable
 from datetime import datetime
 from typing import Generic, TypeVar
 from uuid import UUID
@@ -60,8 +61,8 @@ def paginate_rows(
     rows: list[T],
     *,
     limit: int,
-    created_at_getter,
-    id_getter,
+    created_at_getter: Callable[[T], datetime],
+    id_getter: Callable[[T], UUID],
 ) -> tuple[list[T], str | None]:
     """Slice *limit + 1* rows and emit next cursor when more pages exist."""
     has_more = len(rows) > limit
