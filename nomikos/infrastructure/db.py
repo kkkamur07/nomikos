@@ -2,8 +2,9 @@
 
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
+from typing import cast
 
-from sqlalchemy import MetaData, create_engine, event
+from sqlalchemy import CursorResult, MetaData, Result, create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -93,3 +94,13 @@ async def system_session() -> AsyncGenerator[AsyncSession, None]:
 def sync_system_session() -> Generator[Session, None, None]:
     with SyncSessionLocal() as session:
         yield session
+
+
+def rows_affected(result: Result[tuple[object, ...]]) -> int:
+    """Rows an UPDATE or DELETE touched.
+
+    ``Session.execute`` is typed as returning ``Result`` for every statement,
+    but a DML statement always yields a ``CursorResult``, which is where
+    ``rowcount`` lives.
+    """
+    return cast(CursorResult[tuple[object, ...]], result).rowcount or 0

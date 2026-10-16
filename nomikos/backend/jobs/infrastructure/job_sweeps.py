@@ -15,14 +15,10 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Row, select, update
 
-from backend.jobs.infrastructure.job_sql import (
-    NON_TERMINAL_STATUSES,
-    held_by_agent,
-    rows_affected,
-)
+from backend.jobs.infrastructure.job_sql import NON_TERMINAL_STATUSES, held_by_agent
 from backend.jobs.infrastructure.notifications import notify_platform_job_statuses_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus
-from infrastructure.db import sync_system_session
+from infrastructure.db import rows_affected, sync_system_session
 
 logger = logging.getLogger(__name__)
 

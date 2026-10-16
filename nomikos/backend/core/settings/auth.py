@@ -46,7 +46,7 @@ class AuthSettings(BaseSettings):
     model_config = env_settings_config()
 
     environment: str = Field(default="development", alias="ENVIRONMENT")
-    jwt_secret: str = Field(alias="JWT_SECRET")
+    jwt_secret: str = Field(default="", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(default=15, alias="JWT_EXPIRE_MINUTES")
     session_expire_days: int = Field(default=14, alias="AUTH_SESSION_EXPIRE_DAYS", ge=1, le=90)
