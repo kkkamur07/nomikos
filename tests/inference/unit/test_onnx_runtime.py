@@ -274,7 +274,14 @@ def test_segment_geometry_stays_inside_the_page(blla_artifact: Path) -> None:
 
     response = run_blla_segment(SEGMENT_PAGE.read_bytes(), model_path=blla_artifact)
 
+    assert response.lines
     for line in response.lines:
+        metadata = line.source_metadata
+        assert isinstance(metadata["simplification_status"], str)
+        assert isinstance(metadata["raw_point_count"], int)
+        assert isinstance(metadata["simplified_point_count"], int)
+        assert isinstance(metadata["min_vertex_spacing"], float)
+        assert isinstance(metadata["epsilon"], float)
         for x, y in line.points:
             assert -1 <= x <= width + 1
             assert -1 <= y <= height + 1
