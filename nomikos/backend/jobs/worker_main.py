@@ -21,6 +21,8 @@ from backend.jobs.infrastructure.worker import worker_loop
 
 logger = logging.getLogger(__name__)
 
+_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
 
 def validate_worker_settings() -> None:
     """Resolve worker dependencies before connecting to the database."""
@@ -36,12 +38,19 @@ async def _run() -> None:
         stop_event.set()
 
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    for sig in _STOP_SIGNALS:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, _request_stop)
 
     logger.info("platform job worker started")
-    await worker_loop(stop_event)
+    try:
+        await worker_loop(stop_event)
+    finally:
+        # Handed back so a loop that outlives the worker (a test's, an embedding
+        # process's) does not keep routing SIGTERM to an event nobody awaits.
+        for sig in _STOP_SIGNALS:
+            with contextlib.suppress(NotImplementedError):
+                loop.remove_signal_handler(sig)
     logger.info("platform job worker stopped")
 
 
