@@ -820,20 +820,21 @@ class TestMergeKillerPins:
         ]
 
     def test_fractional_fallback_rounds(self) -> None:
-        primary = [[0.05, 0.0], [0.05, 10.0], [0.05, 10.0]]
-        fragment = [[0.05, 20.0], [0.05, 30.0], [0.05, 30.0]]
+        primary = [[0.05, 0.15], [0.05, 10.15], [0.05, 10.16]]
+        fragment = [[0.05, 20.15], [0.05, 30.15], [0.05, 30.16]]
         assert merge_polygons(primary, fragment) == [
-            [0.1, 0.0],
-            [0.1, 10.0],
-            [0.1, 20.0],
-            [0.1, 30.0],
+            [0.1, 0.1],
+            [0.1, 10.2],
+            [0.1, 20.1],
+            [0.1, 30.1],
+            [0.1, 30.2],
         ]
 
     def test_fractional_bridge_rounds(self) -> None:
-        primary = [[0.05, 0.0], [10.0, 0.0], [10.0, 10.0], [0.05, 10.0]]
+        primary = [[0.05, 0.15], [10.0, 0.0], [10.0, 10.0], [0.05, 10.0]]
         fragment = [[14.0, 0.0], [20.0, 0.0], [20.0, 10.0], [14.0, 10.0]]
         merged = merge_polygons(primary, fragment)
-        assert merged[0] == [0.1, 0.0]
+        assert merged[0] == [0.1, 0.1]
         assert bbox(merged) == (0.1, 20.0, 0.0, 10.0)
 
     def test_dedupe_keeps_a_single_point(self) -> None:
@@ -998,6 +999,12 @@ class TestOverlapKillerPins2:
         (trim,) = find_overlaps([big, tiny], stats())
         assert trim.duplicate is True
 
+    def test_tiny_first_reports_a_duplicate(self) -> None:
+        big = seg("g", rect(200.0, 400.0, 390.0, 410.0), [[200.0, 405.0], [400.0, 405.0]])
+        tiny = seg("t", [(300.0, 400.0), (301.0, 400.0), (300.0, 401.0)])
+        (trim,) = find_overlaps([tiny, big], stats())
+        assert trim.duplicate is True
+
     def test_sliver_guard_needs_both_sides_short(self) -> None:
         crosser = seg("c", rect(300.0, 1800.0, 400.0, 500.0), [[300.0, 450.0], [1800.0, 450.0]])
         assert len(find_spanning([crosser], stats(bands=[(200.0, 1200.0), (1250.0, 1900.0)]))) == 1
@@ -1048,7 +1055,7 @@ class TestOverlapAreaKillerPins:
 
     def test_kinked_edge_is_measured(self) -> None:
         first = rect(300.0, 1100.0, 400.0, 500.0)
-        second = [[300.0, 400.0], [700.0, 450.0], [1100.0, 400.0], [1100.0, 500.0], [300.0, 500.0]]
+        second = [[300.0, 400.0], [650.0, 450.0], [1100.0, 400.0], [1100.0, 500.0], [300.0, 500.0]]
         assert overlap_area(first, second) == pytest.approx(60000.0)
 
     def test_single_point_baseline_kills_the_split(self) -> None:
