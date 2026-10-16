@@ -17,7 +17,8 @@ lines is therefore not added: what it covers is already claimed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from shapely.geometry import Polygon
@@ -35,7 +36,7 @@ from backend.document.infrastructure.orm_models import (
     Transcription,
     TranscriptionKind,
 )
-from backend.ml.domain.segment import CanonicalSegmentResult
+from backend.ml.domain.segment import CanonicalBlock, CanonicalLine, CanonicalSegmentResult
 
 
 @dataclass(frozen=True)
@@ -75,43 +76,10 @@ class SegmentMergeService:
     ) -> SegmentMergeSummary:
         part = self._load_part(session, part_id)
         transcribed_ids = self._human_transcribed_line_ids(session, part)
+        pruned = _prune_unprotected(session, part, transcribed_ids)
+        blocks_by_external_id = _add_blocks(session, part.id, canonical_segment.blocks)
 
-        preserved_manual_lines = 0
-        preserved_transcribed_lines = 0
-        pruned_lines = 0
-        kept_lines: list[Line] = []
-        for line in list(part.lines):
-            if line.manual_geometry:
-                preserved_manual_lines += 1
-                kept_lines.append(line)
-                continue
-            if line.id in transcribed_ids:
-                preserved_transcribed_lines += 1
-                kept_lines.append(line)
-                continue
-            session.delete(line)
-            pruned_lines += 1
-        # Blocks carry no transcription of their own, so the geometry rule is the whole
-        # rule for them. A kept line whose block goes loses only its block_id (SET NULL),
-        # which is the state kraken lines without a block are already in.
-        for block in list(part.blocks):
-            if not block.manual_geometry:
-                session.delete(block)
-        session.flush()
-
-        blocks_by_external_id: dict[str, Block] = {}
-        for block_data in canonical_segment.blocks:
-            block = Block(
-                part_id=part.id,
-                order=block_data.order,
-                box=block_data.box,
-                manual_geometry=False,
-            )
-            session.add(block)
-            blocks_by_external_id[block_data.external_id] = block
-        session.flush()
-
-        kept_geometry = _polygons(line.points for line in kept_lines)
+        kept_geometry = _polygons(line.points for line in pruned.kept_lines)
         added_lines = 0
         skipped_covered_lines = 0
         for line_data in canonical_segment.lines:
@@ -119,29 +87,7 @@ class SegmentMergeService:
                 skipped_covered_lines += 1
                 continue
             added_lines += 1
-            source_metadata = {
-                **line_data.source_metadata,
-                "external_id": line_data.external_id,
-                "job_id": str(job_id),
-            }
-            line = Line(
-                part_id=part.id,
-                block_id=(
-                    blocks_by_external_id[line_data.block_external_id].id
-                    if line_data.block_external_id in blocks_by_external_id
-                    else None
-                ),
-                baseline=line_data.baseline,
-                mask=line_data.mask,
-                kind=line_data.kind,
-                points=line_data.points,
-                source=LineSource.kraken,
-                source_metadata=source_metadata,
-                kraken_ceiling=line_data.kraken_ceiling,
-                manual_geometry=False,
-                order=line_data.order,
-            )
-            session.add(line)
+            session.add(_kraken_line(part.id, line_data, blocks_by_external_id, job_id))
 
         if commit:
             session.commit()
@@ -149,9 +95,9 @@ class SegmentMergeService:
             blocks_count=len(canonical_segment.blocks),
             lines_count=len(canonical_segment.lines),
             added_lines=added_lines,
-            pruned_lines=pruned_lines,
-            preserved_manual_lines=preserved_manual_lines,
-            preserved_transcribed_lines=preserved_transcribed_lines,
+            pruned_lines=pruned.pruned_lines,
+            preserved_manual_lines=pruned.preserved_manual_lines,
+            preserved_transcribed_lines=pruned.preserved_transcribed_lines,
             skipped_covered_lines=skipped_covered_lines,
         )
 
@@ -181,7 +127,7 @@ class SegmentMergeService:
                 PageTranscriptionLine.paired_line_id.is_not(None),
             )
         )
-        return set(transcribed) | set(paired)
+        return set(transcribed) | {line_id for line_id in paired if line_id is not None}
 
     def _load_part(self, session: Session, part_id: UUID) -> DocumentPart:
         # Lock the part row for the length of the merge. Two segment jobs on the
@@ -203,7 +149,85 @@ class SegmentMergeService:
         return part
 
 
-def _polygons(point_lists) -> list[Polygon]:
+@dataclass
+class _PruneResult:
+    kept_lines: list[Line] = field(default_factory=list)
+    preserved_manual_lines: int = 0
+    preserved_transcribed_lines: int = 0
+    pruned_lines: int = 0
+
+
+def _prune_unprotected(
+    session: Session, part: DocumentPart, transcribed_ids: set[UUID]
+) -> _PruneResult:
+    """Delete the machine geometry nobody touched; keep and count what a human did."""
+    result = _PruneResult()
+    for line in list(part.lines):
+        if line.manual_geometry:
+            result.preserved_manual_lines += 1
+            result.kept_lines.append(line)
+        elif line.id in transcribed_ids:
+            result.preserved_transcribed_lines += 1
+            result.kept_lines.append(line)
+        else:
+            session.delete(line)
+            result.pruned_lines += 1
+    # Blocks carry no transcription of their own, so the geometry rule is the whole
+    # rule for them. A kept line whose block goes loses only its block_id (SET NULL),
+    # which is the state kraken lines without a block are already in.
+    for block in list(part.blocks):
+        if not block.manual_geometry:
+            session.delete(block)
+    session.flush()
+    return result
+
+
+def _add_blocks(session: Session, part_id: UUID, blocks: list[CanonicalBlock]) -> dict[str, Block]:
+    blocks_by_external_id: dict[str, Block] = {}
+    for block_data in blocks:
+        block = Block(
+            part_id=part_id,
+            order=block_data.order,
+            box=block_data.box,
+            manual_geometry=False,
+        )
+        session.add(block)
+        blocks_by_external_id[block_data.external_id] = block
+    session.flush()
+    return blocks_by_external_id
+
+
+def _kraken_line(
+    part_id: UUID,
+    line_data: CanonicalLine,
+    blocks_by_external_id: dict[str, Block],
+    job_id: UUID,
+) -> Line:
+    block = (
+        blocks_by_external_id.get(line_data.block_external_id)
+        if line_data.block_external_id is not None
+        else None
+    )
+    return Line(
+        part_id=part_id,
+        block_id=block.id if block is not None else None,
+        baseline=line_data.baseline,
+        mask=line_data.mask,
+        kind=line_data.kind,
+        points=line_data.points,
+        source=LineSource.kraken,
+        source_metadata={
+            **line_data.source_metadata,
+            "external_id": line_data.external_id,
+            "job_id": str(job_id),
+        },
+        kraken_ceiling=line_data.kraken_ceiling,
+        manual_geometry=False,
+        order=line_data.order,
+    )
+
+
+def _polygons(point_lists: Iterable[list[list[float]] | None]) -> list[Polygon]:
     polygons: list[Polygon] = []
     for points in point_lists:
         polygon = _polygon(points)
