@@ -89,11 +89,12 @@ async def test_share_by_email_ignores_case(owner, friend, project) -> None:
     assert projects.added == [friend]
 
 
-async def test_share_by_unknown_email_names_the_address(owner, project) -> None:
-    service, _ = _service(project, [owner])
+async def test_share_by_unknown_email_is_ignored(owner, project) -> None:
+    """No 404 for an unknown address: it would let an owner probe accounts."""
+    service, projects = _service(project, [owner])
 
-    with pytest.raises(NotFoundError, match="nobody@example.org"):
-        await service.share_project(None, owner, project.id, email="nobody@example.org")
+    assert await service.share_project(None, owner, project.id, email="nobody@example.org") is None
+    assert projects.added == []
 
 
 async def test_share_with_own_email_is_a_conflict(owner, project) -> None:
@@ -163,11 +164,11 @@ async def test_identifier_prefers_the_email_owner_over_a_username_squatter(owner
     assert projects.added == [victim]
 
 
-async def test_unknown_identifier_names_what_was_typed(owner, project) -> None:
-    service, _ = _service(project, [owner])
+async def test_unknown_identifier_is_ignored(owner, project) -> None:
+    service, projects = _service(project, [owner])
 
-    with pytest.raises(NotFoundError, match="ghost"):
-        await service.share_project(None, owner, project.id, identifier="ghost")
+    assert await service.share_project(None, owner, project.id, identifier="ghost") is None
+    assert projects.added == []
 
 
 async def test_share_needs_exactly_one_identifier(owner, friend, project) -> None:

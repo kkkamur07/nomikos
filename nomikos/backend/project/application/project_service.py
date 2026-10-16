@@ -1,7 +1,9 @@
 """Project CRUD and sharing use cases."""
 
+import logging
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import AccessDeniedError, ConflictError, NotFoundError
@@ -10,6 +12,8 @@ from backend.project.infrastructure.orm_models import Project
 from backend.project.infrastructure.project_repository import ProjectRepository
 from backend.users.infrastructure.orm_models import User
 from backend.users.infrastructure.user_repository import UserRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -42,13 +46,20 @@ class ProjectService:
     ) -> Project:
         if await self._projects.get_by_slug(session, slug):
             raise ConflictError("Project slug already taken")
-        return await self._projects.create(
-            session,
-            name=name,
-            slug=slug,
-            guidelines=guidelines,
-            owner_id=user.id,
-        )
+        try:
+            return await self._projects.create(
+                session,
+                name=name,
+                slug=slug,
+                guidelines=guidelines,
+                owner_id=user.id,
+            )
+        except IntegrityError as exc:
+            # Check-then-insert lost a concurrent create with the same slug.
+            # The pre-check above keeps the common case a 409 without a
+            # rollback; this turns the race loser into the same 409.
+            await session.rollback()
+            raise ConflictError("Project slug already taken") from exc
 
     async def get_project(self, session: AsyncSession, user: User, project_id: UUID) -> Project:
         project = await self._load_or_404(session, project_id)
@@ -69,7 +80,11 @@ class ProjectService:
             existing = await self._projects.get_by_slug(session, slug)
             if existing is not None:
                 raise ConflictError("Project slug already taken")
-        return await self._projects.update(session, project, **updates)
+        try:
+            return await self._projects.update(session, project, **updates)
+        except IntegrityError as exc:
+            await session.rollback()
+            raise ConflictError("Project slug already taken") from exc
 
     async def delete_project(self, session: AsyncSession, user: User, project_id: UUID) -> None:
         project = await self._load_or_404(session, project_id)
@@ -96,9 +111,16 @@ class ProjectService:
     ) -> None:
         project = await self._load_or_404(session, project_id)
         self._require_owner(project, user.id)
-        collaborator = await self._find_collaborator(
-            session, username=username, email=email, identifier=identifier
-        )
+        try:
+            collaborator = await self._find_collaborator(
+                session, username=username, email=email, identifier=identifier
+            )
+        except NotFoundError:
+            # Always 204: a 404 for an unknown email would let any project
+            # owner probe which addresses hold accounts. Unknown addresses are
+            # ignored rather than invited so no information leaves this branch.
+            logger.info("share_project_unknown_identifier project_id=%s", project_id)
+            return
         if collaborator.id == project.owner_id:
             raise ConflictError("Cannot share project with the owner")
         if any(shared.id == collaborator.id for shared in project.shared_users):
