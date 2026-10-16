@@ -80,3 +80,40 @@ export function zoomAnchoredPosition(
     y: cursor.y - (cursor.y - position.y) * ratio,
   };
 }
+
+/**
+ * The transform that fits the whole folio into the visible canvas.
+ *
+ * Scales to the pane and keeps `reservedBottom` (the island's own strip) out
+ * of the usable area, because the last line of a folio matters as much as the
+ * first and must not land under the toolbar. Null when either size is unknown.
+ */
+export function fitTransform(
+  view: { width: number; height: number },
+  canvas: { width: number; height: number },
+  limits: {
+    padding: number;
+    reservedBottom: number;
+    minScale: number;
+    maxScale: number;
+  },
+): { x: number; y: number; scale: number } | null {
+  if (!view.width || !view.height || !canvas.width || !canvas.height) {
+    return null;
+  }
+  const usableWidth = Math.max(1, view.width - limits.padding * 2);
+  const usableHeight = Math.max(
+    1,
+    view.height - limits.reservedBottom - limits.padding,
+  );
+  const scale = clampScale(
+    Math.min(usableWidth / canvas.width, usableHeight / canvas.height),
+    limits.minScale,
+    limits.maxScale,
+  );
+  return {
+    x: (view.width - canvas.width * scale) / 2,
+    y: (view.height - limits.reservedBottom - canvas.height * scale) / 2,
+    scale,
+  };
+}
