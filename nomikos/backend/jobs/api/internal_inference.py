@@ -29,7 +29,7 @@ narrowing above, read off the same column: an agent credential may report on the
 page it holds and no other, and the platform secret may report on pages no agent
 holds. Today that second set is empty, which is why this reads as a guard rather
 than a feature - the platform's own HTTP hop into an inference service is gone,
-and ``mark_job_waiting`` is the seam a future one would come back through. It is
+and nothing writes a ``waiting`` row without an agent claim any more. It is
 kept, and guarded, rather than deleted, because the secret it authenticates is
 still required in production by ``backend.core.settings.ml`` and still documented
 as the platform-side callback credential; deleting only the branch would leave a
@@ -48,7 +48,7 @@ from backend.core.exceptions import InvalidCredentialsError
 from backend.jobs.api.dependencies import require_inference_webhook_secret
 from backend.jobs.application.job_callback_service import JobCallbackService
 from backend.jobs.application.job_claim_service import job_is_held_by
-from backend.jobs.infrastructure.job_claim_engine import AGENT_CLAIM_PREFIX
+from backend.jobs.infrastructure.job_sql import AGENT_CLAIM_PREFIX
 from backend.jobs.infrastructure.orm_models import Job
 from backend.ml.application.agent_credentials import (
     SERVICE_TOKEN_HEADER,
@@ -63,8 +63,8 @@ from nomikos_inference.contracts.webhooks import INFERENCE_WEBHOOK_SECRET_HEADER
 router = APIRouter(prefix="/internal/inference", tags=["internal-inference"])
 
 
-def _callback_service(db: AsyncSession = Depends(get_db)) -> JobCallbackService:
-    return JobCallbackService(db)
+def _callback_service() -> JobCallbackService:
+    return JobCallbackService()
 
 
 async def _authorize_agent_callback(

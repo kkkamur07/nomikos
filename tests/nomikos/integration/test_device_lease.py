@@ -33,16 +33,10 @@ import infrastructure.models  # noqa: F401 - register all ORM mappers
 from backend.core.settings.device import get_device_settings
 from backend.core.settings.job import get_job_settings
 from backend.jobs.application.job_claim_service import agent_claim_owner
-from backend.jobs.infrastructure.job_claim_engine import (
-    WAITING_TIMEOUT_ERROR,
-    fail_stale_waiting_jobs,
-    release_expired_device_leases,
-)
+from backend.jobs.infrastructure import stale_sweep
+from backend.jobs.infrastructure.job_sweeps import release_expired_device_leases
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
-from backend.jobs.infrastructure.stale_sweep import (
-    reset_stale_sweep_throttle,
-    run_stale_job_sweep,
-)
+from backend.jobs.infrastructure.stale_sweep import run_stale_job_sweep
 from backend.ml.api.agent_version import AGENT_VERSION_HEADER
 from backend.ml.application.agent_credentials import SERVICE_TOKEN_HEADER, WORKER_NAME_HEADER
 from infrastructure.db import sync_system_session
@@ -81,9 +75,9 @@ SERVICE_HEADERS = {
 @pytest.fixture(autouse=True)
 def _clean_sweep_throttle():
     """The throttle is process-global; never let it leak between tests."""
-    reset_stale_sweep_throttle()
-    yield
-    reset_stale_sweep_throttle()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(stale_sweep, "_last_sweep_at", None)
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +102,7 @@ def _claim_allowed_to_sweep(client: TestClient, token: str):
     throttle, not by the lease, and the throttle has its own tests; asserting on
     it here would be measuring the wrong mechanism.
     """
-    reset_stale_sweep_throttle()
+    stale_sweep._last_sweep_at = None
     return _claim(client, token)
 
 
@@ -183,14 +177,11 @@ def test_an_expired_lease_is_re_pended_and_never_failed(
 ) -> None:
     """The terminal state this must not reach is ``failed``.
 
-    The page is aged past *both* deadlines - the 240s waiting timeout and the
-    600s lease - so if the two populations were ever collapsed into one the
-    waiting sweep would fail it here. It must come back as ``pending`` instead,
-    with no error and no completion, because nothing failed: a page was put down.
+    The page is aged past its 600s lease. It must come back as ``pending``, with
+    no error and no completion, because nothing failed: a page was put down.
     """
     _agent, page = _leased_page(client, owner_headers, owner_project)
     job_id = page["product_job_id"]
-    settings = get_job_settings()
     device_settings = get_device_settings()
     _age_by(job_id, device_settings.device_lease_seconds + 60)
 
@@ -201,18 +192,12 @@ def test_an_expired_lease_is_re_pended_and_never_failed(
     assert stored.status is JobStatus.pending
     assert stored.status is not JobStatus.failed, "an abandoned lease must never be failed"
     assert stored.error is None
-    assert WAITING_TIMEOUT_ERROR not in (stored.error or "")
     assert stored.completed_at is None
     # The claim is gone, so *any* agent may take it next.
     assert stored.claimed_by is None
     assert stored.inference_job_id is None
     assert stored.started_at is None
     assert stored.heartbeat_at is None
-    # And the failing sweep, run directly at the same age, still declines it.
-    assert (
-        fail_stale_waiting_jobs(waiting_timeout_seconds=settings.job_worker_waiting_timeout_seconds)
-        == 0
-    )
 
 
 def test_the_stopped_agent_cannot_report_on_a_page_it_no_longer_holds(
@@ -328,68 +313,6 @@ def test_a_hosted_worker_inherits_the_same_lease(
     # And the next hosted worker to ask gets it.
     reclaimed = client.post(CLAIM_URL, headers=SERVICE_HEADERS, json={"wait_seconds": 0})
     assert reclaimed.json()["page"]["product_job_id"] == job_id
-
-
-def test_a_platform_dispatched_page_still_fails_on_the_waiting_timeout() -> None:
-    """Whatever is correct for a non-agent row stays correct.
-
-    A job the platform itself dispatched and got no callback for has nothing to
-    retry, so it still fails at 240 seconds. Only the ``claimed_by`` prefix
-    separates the two, and both behaviours have to survive.
-    """
-    settings = get_job_settings()
-    job_id = uuid.uuid4()
-    with sync_system_session() as session:
-        session.add(
-            Job(
-                id=job_id,
-                type=JobType.segment,
-                status=JobStatus.waiting,
-                payload={"handler": "noop"},
-                inference_job_id=uuid.uuid4(),
-                claimed_by="build-host:4711",
-                updated_at=datetime.now(UTC) - timedelta(seconds=600),
-            )
-        )
-        session.commit()
-
-    assert (
-        fail_stale_waiting_jobs(waiting_timeout_seconds=settings.job_worker_waiting_timeout_seconds)
-        == 1
-    )
-    stored = _stored_job(job_id)
-    assert stored.status is JobStatus.failed
-    assert stored.error.startswith(WAITING_TIMEOUT_ERROR)
-
-
-def test_an_unclaimed_waiting_row_is_failed_not_re_pended() -> None:
-    """``NOT LIKE`` is NULL for an unclaimed row.
-
-    Written the naive way, the exemption for agent rows would have swallowed
-    every job with a NULL ``claimed_by`` - which is most of the population the
-    waiting timeout exists for.
-    """
-    settings = get_job_settings()
-    job_id = uuid.uuid4()
-    with sync_system_session() as session:
-        session.add(
-            Job(
-                id=job_id,
-                type=JobType.segment,
-                status=JobStatus.waiting,
-                payload={"handler": "noop"},
-                claimed_by=None,
-                updated_at=datetime.now(UTC) - timedelta(seconds=600),
-            )
-        )
-        session.commit()
-
-    assert release_expired_device_leases(lease_seconds=1.0) == 0
-    assert (
-        fail_stale_waiting_jobs(waiting_timeout_seconds=settings.job_worker_waiting_timeout_seconds)
-        == 1
-    )
-    assert _stored_job(job_id).status is JobStatus.failed
 
 
 # ---------------------------------------------------------------------------
