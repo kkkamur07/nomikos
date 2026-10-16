@@ -38,11 +38,6 @@ def _vram_total_mb() -> int:
     return torch.cuda.get_device_properties(0).total_memory // (1024 * 1024)
 
 
-def _reset() -> None:
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-
-
 def _peak_mb() -> int:
     return torch.cuda.max_memory_allocated() // (1024 * 1024)
 
@@ -180,32 +175,10 @@ def smoke_calamari(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def smoke_trocr(
-    checkpoint: Path,
-    batch_sizes: list[int],
-    freeze_encoder: bool,
-    vocab_size: int = 500,
-    label_seq_len: int = 24,
-    steps: int = 2,
-) -> tuple[int, float]:
-    """Forward+backward over dummy 384×384 images.
-
-    Returns (recommended_batch_size, seconds_per_step).
-    """
+def _load_trocr_model(checkpoint: Path, freeze_encoder: bool, device):
+    """Load the TrOCR checkpoint for VRAM probing with sane decoding defaults."""
     from transformers import VisionEncoderDecoderModel
 
-    model_tag = checkpoint.name
-    param_count = "282.9 M" if "base" in model_tag else "28.9 M"
-    enc_note = "encoder frozen" if freeze_encoder else "full fine-tune"
-    print(f"\n{'TrOCR  ' + model_tag:^70}")
-    print(f"{param_count + ' params · FP16 · ' + enc_note + ' · 384×384':^70}")
-    print(_SEP)
-
-    device = torch.device("cuda")
-    best_bs, best_step_s = batch_sizes[0], 0.0
-
-    # Load model once, so we don't re-pay disk I/O and kernel compilation per batch
-    print("  loading model …", flush=True)
     model = VisionEncoderDecoderModel.from_pretrained(str(checkpoint))
     dec_cfg = model.config.decoder
     if not getattr(model.config, "pad_token_id", None):
@@ -220,50 +193,109 @@ def smoke_trocr(
         for p in model.encoder.parameters():
             p.requires_grad_(False)
     trainable = [p for p in model.parameters() if p.requires_grad]
+    return model, trainable, real_vocab
 
-    # Warm up CUDA kernels once at the smallest batch size before timing
-    _warmup_pv = torch.randn(batch_sizes[0], 3, 384, 384, device=device, dtype=torch.float16)
-    _warmup_lb = torch.zeros(batch_sizes[0], label_seq_len, dtype=torch.long, device=device)
+
+def _warmup_trocr_kernels(model, *, batch_size: int, label_seq_len: int, device) -> None:
+    """One untimed forward at the smallest batch size to compile CUDA kernels."""
+    _warmup_pv = torch.randn(batch_size, 3, 384, 384, device=device, dtype=torch.float16)
+    _warmup_lb = torch.zeros(batch_size, label_seq_len, dtype=torch.long, device=device)
     with torch.autocast("cuda", dtype=torch.float16):
         model(pixel_values=_warmup_pv, labels=_warmup_lb)
     del _warmup_pv, _warmup_lb
     torch.cuda.synchronize()
+
+
+def _trocr_step(
+    model, optimizer, trainable, *, batch_size: int, label_seq_len: int, vocab_size: int, device
+) -> float:
+    """One timed forward+backward over dummy 384x384 images."""
+    pixel_values = torch.randn(batch_size, 3, 384, 384, device=device, dtype=torch.float16)
+    labels = torch.randint(0, vocab_size, (batch_size, label_seq_len), device=device)
+    labels[:, label_seq_len // 2 :] = -100
+    t0 = time.perf_counter()
+    optimizer.zero_grad(set_to_none=True)
+    with torch.autocast("cuda", dtype=torch.float16):
+        out = model(pixel_values=pixel_values, labels=labels)
+    out.loss.backward()
+    torch.nn.utils.clip_grad_norm_(trainable, 1.0)
+    optimizer.step()
+    torch.cuda.synchronize()
+    return time.perf_counter() - t0
+
+
+def _probe_trocr_batch(
+    model, trainable, *, batch_size: int, label_seq_len: int, vocab_size: int, device, steps: int
+) -> tuple[float | None, str]:
+    """Time one batch size; returns (seconds per step, status) without raising."""
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    optimizer = torch.optim.AdamW(trainable, lr=1e-5)
+    try:
+        elapsed = sum(
+            _trocr_step(
+                model,
+                optimizer,
+                trainable,
+                batch_size=batch_size,
+                label_seq_len=label_seq_len,
+                vocab_size=vocab_size,
+                device=device,
+            )
+            for _ in range(steps)
+        )
+        return elapsed / steps, "OK"
+    except RuntimeError as exc:
+        tag = "OOM" if "out of memory" in str(exc).lower() else f"ERR: {exc}"
+        torch.cuda.empty_cache()
+        return None, tag
+
+
+def smoke_trocr(
+    checkpoint: Path,
+    batch_sizes: list[int],
+    freeze_encoder: bool,
+    label_seq_len: int = 24,
+    steps: int = 2,
+) -> tuple[int, float]:
+    """Forward+backward over dummy 384×384 images.
+
+    Returns (recommended_batch_size, seconds_per_step).
+    """
+    model_tag = checkpoint.name
+    param_count = "282.9 M" if "base" in model_tag else "28.9 M"
+    enc_note = "encoder frozen" if freeze_encoder else "full fine-tune"
+    print(f"\n{'TrOCR  ' + model_tag:^70}")
+    print(f"{param_count + ' params · FP16 · ' + enc_note + ' · 384×384':^70}")
+    print(_SEP)
+
+    device = torch.device("cuda")
+    best_bs, best_step_s = batch_sizes[0], 0.0
+
+    # Load model once, so we don't re-pay disk I/O and kernel compilation per batch
+    print("  loading model …", flush=True)
+    model, trainable, real_vocab = _load_trocr_model(checkpoint, freeze_encoder, device)
+
+    # Warm up CUDA kernels once at the smallest batch size before timing
+    _warmup_trocr_kernels(
+        model, batch_size=batch_sizes[0], label_seq_len=label_seq_len, device=device
+    )
     print("  kernels compiled — probing batch sizes …", flush=True)
 
     for bs in batch_sizes:
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        try:
-            opt = torch.optim.AdamW(trainable, lr=1e-5)
-
-            def _trocr_step(
-                _bs: int = bs,
-                _opt: torch.optim.Optimizer = opt,
-                _model: VisionEncoderDecoderModel = model,
-            ) -> float:
-                pixel_values = torch.randn(_bs, 3, 384, 384, device=device, dtype=torch.float16)
-                labels = torch.randint(0, real_vocab, (_bs, label_seq_len), device=device)
-                labels[:, label_seq_len // 2 :] = -100
-                t0 = time.perf_counter()
-                _opt.zero_grad(set_to_none=True)
-                with torch.autocast("cuda", dtype=torch.float16):
-                    out = _model(pixel_values=pixel_values, labels=labels)
-                out.loss.backward()
-                torch.nn.utils.clip_grad_norm_(trainable, 1.0)
-                _opt.step()
-                torch.cuda.synchronize()
-                return time.perf_counter() - t0
-
-            elapsed = sum(_trocr_step() for _ in range(steps))
-            step_s = elapsed / steps
-            _row(bs, _peak_mb(), step_s, "OK")
-            best_bs, best_step_s = bs, step_s
-            del opt
-        except RuntimeError as exc:
-            tag = "OOM" if "out of memory" in str(exc).lower() else f"ERR: {exc}"
-            _row(bs, None, None, tag)
-            torch.cuda.empty_cache()
+        step_s, status = _probe_trocr_batch(
+            model,
+            trainable,
+            batch_size=bs,
+            label_seq_len=label_seq_len,
+            vocab_size=real_vocab,
+            device=device,
+            steps=steps,
+        )
+        _row(bs, _peak_mb() if status == "OK" else None, step_s, status)
+        if status != "OK" or step_s is None:
             break
+        best_bs, best_step_s = bs, step_s
 
     del model
     torch.cuda.empty_cache()
