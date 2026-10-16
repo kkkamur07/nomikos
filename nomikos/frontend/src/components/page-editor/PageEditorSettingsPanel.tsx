@@ -19,6 +19,70 @@ type PageEditorSettingsPanelProps = {
   hasLocalCapacity: boolean;
 };
 
+type NumericSetting =
+  | "wheelZoomSpeed"
+  | "overlayStrokeWidth"
+  | "baselineStrokeWidth"
+  | "segmentFillOpacity"
+  | "handleSize";
+
+type SliderRowProps = {
+  id: string;
+  label: string;
+  setting: NumericSetting;
+  format: (value: number) => string;
+  min: number;
+  max: number;
+  step: number;
+  /** What the low and the high end of the slider mean. */
+  ends: [string, string];
+  disabled?: boolean;
+  settings: PageEditorCanvasSettings;
+  onSettingsChange: (settings: PageEditorCanvasSettings) => void;
+};
+
+function SliderRow({
+  id,
+  label,
+  setting,
+  format,
+  min,
+  max,
+  step,
+  ends,
+  disabled,
+  settings,
+  onSettingsChange,
+}: SliderRowProps) {
+  return (
+    <div className="pe-dd-field pe-dd-field--stack">
+      <label htmlFor={id}>
+        {label} <strong>{format(settings[setting])}</strong>
+      </label>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={settings[setting]}
+        disabled={disabled}
+        onChange={(event) =>
+          onSettingsChange({
+            ...settings,
+            [setting]: Number(event.target.value),
+          })
+        }
+        onClick={(event) => event.stopPropagation()}
+      />
+      <div className="pe-dd-range-labels" aria-hidden="true">
+        <span>{ends[0]}</span>
+        <span>{ends[1]}</span>
+      </div>
+    </div>
+  );
+}
+
 export function PageEditorSettingsPanel({
   settings,
   onSettingsChange,
@@ -63,31 +127,18 @@ export function PageEditorSettingsPanel({
         How far the page zooms per mouse-wheel notch or trackpad step. Zoom
         buttons and pinch are unaffected.
       </p>
-      <div className="pe-dd-field pe-dd-field--stack">
-        <label htmlFor="pe-wheel-zoom-speed">
-          Scroll zoom speed{" "}
-          <strong>{settings.wheelZoomSpeed.toFixed(2)}×</strong>
-        </label>
-        <input
-          id="pe-wheel-zoom-speed"
-          type="range"
-          min={WHEEL_ZOOM_SPEED_MIN}
-          max={WHEEL_ZOOM_SPEED_MAX}
-          step={0.25}
-          value={settings.wheelZoomSpeed}
-          onChange={(event) =>
-            onSettingsChange({
-              ...settings,
-              wheelZoomSpeed: Number(event.target.value),
-            })
-          }
-          onClick={(event) => event.stopPropagation()}
-        />
-        <div className="pe-dd-range-labels" aria-hidden="true">
-          <span>Precise</span>
-          <span>Fast</span>
-        </div>
-      </div>
+      <SliderRow
+        id="pe-wheel-zoom-speed"
+        label="Scroll zoom speed"
+        setting="wheelZoomSpeed"
+        format={(value) => `${value.toFixed(2)}×`}
+        min={WHEEL_ZOOM_SPEED_MIN}
+        max={WHEEL_ZOOM_SPEED_MAX}
+        step={0.25}
+        ends={["Precise", "Fast"]}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
 
       <div className="pe-dd-divider" />
 
@@ -96,107 +147,56 @@ export function PageEditorSettingsPanel({
         Stroke widths stay consistent while zooming. Baselines from Kraken
         layout use their own control.
       </p>
-      <div className="pe-dd-field pe-dd-field--stack">
-        <label htmlFor="pe-stroke-width">
-          Segment stroke{" "}
-          <strong>{settings.overlayStrokeWidth.toFixed(1)}×</strong>
-        </label>
-        <input
-          id="pe-stroke-width"
-          type="range"
-          min={0.5}
-          max={4}
-          step={0.25}
-          value={settings.overlayStrokeWidth}
-          onChange={(event) =>
-            onSettingsChange({
-              ...settings,
-              overlayStrokeWidth: Number(event.target.value),
-            })
-          }
-          onClick={(event) => event.stopPropagation()}
-        />
-        <div className="pe-dd-range-labels" aria-hidden="true">
-          <span>Thin</span>
-          <span>Thick</span>
-        </div>
-      </div>
-      <div className="pe-dd-field pe-dd-field--stack">
-        <label htmlFor="pe-baseline-width">
-          Baseline width{" "}
-          <strong>{settings.baselineStrokeWidth.toFixed(2)}×</strong>
-        </label>
-        <input
-          id="pe-baseline-width"
-          type="range"
-          min={0.25}
-          max={2.5}
-          step={0.05}
-          value={settings.baselineStrokeWidth}
-          disabled={!settings.showBaselines}
-          onChange={(event) =>
-            onSettingsChange({
-              ...settings,
-              baselineStrokeWidth: Number(event.target.value),
-            })
-          }
-          onClick={(event) => event.stopPropagation()}
-        />
-        <div className="pe-dd-range-labels" aria-hidden="true">
-          <span>Thin</span>
-          <span>Thick</span>
-        </div>
-      </div>
-      <div className="pe-dd-field pe-dd-field--stack">
-        <label htmlFor="pe-segment-fill">
-          Segment fill{" "}
-          <strong>{Math.round(settings.segmentFillOpacity * 100)}%</strong>
-        </label>
-        <input
-          id="pe-segment-fill"
-          type="range"
-          min={0}
-          max={0.35}
-          step={0.025}
-          value={settings.segmentFillOpacity}
-          onChange={(event) =>
-            onSettingsChange({
-              ...settings,
-              segmentFillOpacity: Number(event.target.value),
-            })
-          }
-          onClick={(event) => event.stopPropagation()}
-        />
-        <div className="pe-dd-range-labels" aria-hidden="true">
-          <span>Clear</span>
-          <span>Solid</span>
-        </div>
-      </div>
+      <SliderRow
+        id="pe-stroke-width"
+        label="Segment stroke"
+        setting="overlayStrokeWidth"
+        format={(value) => `${value.toFixed(1)}×`}
+        min={0.5}
+        max={4}
+        step={0.25}
+        ends={["Thin", "Thick"]}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
+      <SliderRow
+        id="pe-baseline-width"
+        label="Baseline width"
+        setting="baselineStrokeWidth"
+        format={(value) => `${value.toFixed(2)}×`}
+        min={0.25}
+        max={2.5}
+        step={0.05}
+        ends={["Thin", "Thick"]}
+        disabled={!settings.showBaselines}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
+      <SliderRow
+        id="pe-segment-fill"
+        label="Segment fill"
+        setting="segmentFillOpacity"
+        format={(value) => `${Math.round(value * 100)}%`}
+        min={0}
+        max={0.35}
+        step={0.025}
+        ends={["Clear", "Solid"]}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
 
-      <div className="pe-dd-field pe-dd-field--stack">
-        <label htmlFor="pe-handle-size">
-          Pointer size <strong>{settings.handleSize.toFixed(2)}×</strong>
-        </label>
-        <input
-          id="pe-handle-size"
-          type="range"
-          min={0.4}
-          max={2.5}
-          step={0.05}
-          value={settings.handleSize}
-          onChange={(event) =>
-            onSettingsChange({
-              ...settings,
-              handleSize: Number(event.target.value),
-            })
-          }
-          onClick={(event) => event.stopPropagation()}
-        />
-        <div className="pe-dd-range-labels" aria-hidden="true">
-          <span>Small</span>
-          <span>Large</span>
-        </div>
-      </div>
+      <SliderRow
+        id="pe-handle-size"
+        label="Pointer size"
+        setting="handleSize"
+        format={(value) => `${value.toFixed(2)}×`}
+        min={0.4}
+        max={2.5}
+        step={0.05}
+        ends={["Small", "Large"]}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
 
       <div className="pe-dd-divider" />
 
