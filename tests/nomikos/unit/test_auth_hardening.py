@@ -622,7 +622,6 @@ def _login_client(monkeypatch) -> tuple[TestClient, _Buckets]:
     """Mount the real throttle on a route that fails the way `/auth/login` fails."""
     buckets = _Buckets(get_auth_settings().auth_rate_limit_requests)
     monkeypatch.setattr(rate_limit, "consume_rate_limit", buckets.consume)
-    monkeypatch.setattr(rate_limit, "charge_rate_limit", buckets.charge)
     monkeypatch.setattr(rate_limit, "refund_rate_limit", buckets.refund)
 
     app = FastAPI()

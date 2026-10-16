@@ -133,8 +133,8 @@ class ProjectService:
         project = await self._load_or_404(session, project_id)
         self._require_owner(project, user.id)
         # Taken from the project's own collaborators rather than looked up
-        # globally: "is not shared on this project" and "is not a user at all"
-        # are the same answer to the caller, and this way it is one query.
+        # globally: absent here and absent everywhere are the same answer to
+        # the caller, and this way it is one query.
         collaborator = next(
             (shared for shared in project.shared_users if shared.id == user_id), None
         )

@@ -106,7 +106,7 @@ async def register(
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
 ) -> TokenResponse:
-    user, _token = await _auth.register(
+    user = await _auth.register(
         db,
         email=body.email,
         username=body.username,
@@ -123,7 +123,7 @@ async def login(
     db: Annotated[AsyncSession, Depends(get_db)],
     response: Response,
 ) -> TokenResponse:
-    user, _token = await _auth.login(db, email=body.email, password=body.password)
+    user = await _auth.login(db, email=body.email, password=body.password)
     tokens = await BrowserSessionService(get_auth_settings()).create(db, user)
     return _issue_session(response, tokens)
 

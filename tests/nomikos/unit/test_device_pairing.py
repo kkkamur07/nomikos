@@ -91,9 +91,6 @@ class _FakeDeviceRepository:
         self.devices[device.id] = device
         return device
 
-    async def get_pairing(self, session, pairing_id):
-        return self.pairings.get(pairing_id)
-
     async def get_pairing_for_update(self, session, pairing_id):
         return self.pairings.get(pairing_id)
 
@@ -181,8 +178,11 @@ def session() -> _FakeSession:
 def service(repo: _FakeDeviceRepository) -> DevicePairingService:
     return DevicePairingService(repository=repo, settings=_settings())
 
+
 @pytest.fixture
-def management(repo: _FakeDeviceRepository, service: DevicePairingService) -> DeviceManagementService:
+def management(
+    repo: _FakeDeviceRepository, service: DevicePairingService
+) -> DeviceManagementService:
     return DeviceManagementService(repository=repo, settings=service.settings)
 
 
@@ -228,7 +228,7 @@ async def _pair(
         verification_token=verification_token,
         now=now,
     )
-    pairing = await service._repo.get_pairing(session, started.pairing_id)
+    pairing = await service._repo.get_pairing_for_update(session, started.pairing_id)
     return pairing, started.device_code
 
 

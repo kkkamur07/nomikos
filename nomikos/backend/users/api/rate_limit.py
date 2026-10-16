@@ -60,10 +60,6 @@ MAX_IDENTITY_BODY_BYTES = 8 * 1024
 UNATTRIBUTABLE_AUTH_RATE_LIMIT = 300
 
 
-def clear_auth_rate_limit_state() -> None:
-    """No-op - state lives in Postgres and is cleared by database truncation in tests."""
-
-
 def client_ip_for_request(request: Request) -> str:
     """Public helper for IP-based throttles outside auth routes."""
     return _real_ip(request)
@@ -233,27 +229,6 @@ async def _attempt_count(db: AsyncSession, key: str, window_start: datetime) -> 
         )
         or 0
     )
-
-
-async def charge_rate_limit(keys: Sequence[str], *, window_seconds: int) -> None:
-    """Record one attempt against every key without checking any ceiling.
-
-    Used where the decision to reject was already taken (or deliberately is not
-    taken at this point), so a full bucket must not turn into a second 429 that
-    replaces the response the caller actually earned.
-    """
-    unique_keys = _normalized(keys)
-    if not unique_keys:
-        return
-    now = datetime.now(UTC)
-    window_start = now - timedelta(seconds=window_seconds)
-    # Use a dedicated session so the rate-limit record always commits
-    # independently of the surrounding request transaction.
-    async with _locked_rate_limit_session(keys) as (db, locked_keys):
-        await _prune_expired(db, locked_keys, window_start)
-        for key in locked_keys:
-            db.add(AuthRateLimitAttempt(key=key, attempted_at=now))
-        await db.commit()
 
 
 async def consume_rate_limit(

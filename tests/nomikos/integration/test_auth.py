@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from backend.core.settings import get_infrastructure_settings
 from backend.core.settings.auth import AuthSettings, get_auth_settings
-from backend.users.api.rate_limit import clear_auth_rate_limit_state
 from tests.nomikos.integration.helpers import assert_api_error
 
 
@@ -394,7 +393,6 @@ def test_login_rate_limit_returns_429(client, monkeypatch):
     monkeypatch.setenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
 
     get_auth_settings.cache_clear()
-    clear_auth_rate_limit_state()
 
     first = client.post(
         "/auth/login",
@@ -413,7 +411,6 @@ def test_login_rate_limit_is_atomic_for_parallel_requests(client, monkeypatch):
     monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", "1")
     monkeypatch.setenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
     get_auth_settings.cache_clear()
-    clear_auth_rate_limit_state()
 
     def login_attempt() -> int:
         return client.post(

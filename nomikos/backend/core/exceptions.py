@@ -23,7 +23,3 @@ class ConflictError(GreekOCRException):
 
 class ValidationError(GreekOCRException):
     """Input or state failed business validation."""
-
-
-class DatabaseUnavailableError(GreekOCRException):
-    """Postgres or connection pool unreachable."""

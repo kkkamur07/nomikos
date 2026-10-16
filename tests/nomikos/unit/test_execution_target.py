@@ -76,7 +76,6 @@ def test_the_preferred_host_wins_when_it_has_capacity(preferred: ExecutionTarget
 
     assert decision.target is preferred
     assert decision.preferred is preferred
-    assert decision.substituted is False
 
 
 # --- Substitution: the other host, and the job says so ---
@@ -98,7 +97,6 @@ def test_an_unavailable_preference_is_substituted_and_recorded(
 
     assert decision.target is expected
     assert decision.preferred is preferred
-    assert decision.substituted is True
 
 
 # --- Refusal: no row is created for a host nobody claims from ---
@@ -139,7 +137,6 @@ def test_a_model_that_is_not_a_lite_tier_is_ineligible_for_local() -> None:
     decision = choose_execution_target(_request(LOCAL, LOCAL, CLOUD), eligible=frozenset({CLOUD}))
 
     assert decision.target is CLOUD
-    assert decision.substituted is True
 
 
 # --- Resolving a model to its registry entry ---

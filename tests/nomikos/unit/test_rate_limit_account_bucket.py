@@ -163,16 +163,9 @@ async def test_consume_charges_then_rejects_when_full(sessions: _SessionFactory)
     assert sum(session.rollbacks for session in sessions.sessions) == 1
 
 
-async def test_charge_never_rejects_when_full(sessions: _SessionFactory) -> None:
-    for _ in range(3):
-        await rate_limit.charge_rate_limit(["k"], window_seconds=60)
-
-    assert len(sessions.store) == 3
-
-
 async def test_refund_returns_one_charge(sessions: _SessionFactory) -> None:
-    await rate_limit.charge_rate_limit(["k"], window_seconds=60)
-    await rate_limit.charge_rate_limit(["k"], window_seconds=60)
+    await rate_limit.consume_rate_limit(["k"], limit=5, window_seconds=60, detail="slow")
+    await rate_limit.consume_rate_limit(["k"], limit=5, window_seconds=60, detail="slow")
 
     await rate_limit.refund_rate_limit(["k"], window_seconds=60)
     assert len(sessions.store) == 1
@@ -195,7 +188,6 @@ async def test_expired_attempts_do_not_count(sessions: _SessionFactory) -> None:
 
 async def test_empty_keys_open_no_session(sessions: _SessionFactory) -> None:
     await rate_limit.consume_rate_limit([], limit=1, window_seconds=60, detail="slow")
-    await rate_limit.charge_rate_limit([], window_seconds=60)
     await rate_limit.refund_rate_limit([], window_seconds=60)
 
     assert sessions.sessions == []
