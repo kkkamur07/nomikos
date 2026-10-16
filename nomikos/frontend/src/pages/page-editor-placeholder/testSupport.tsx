@@ -55,6 +55,18 @@ vi.mock("../../api/client", async (importOriginal) => {
     getJob: vi.fn(),
   };
 
+  function jobChanged(last: JobResponse | null, job: JobResponse): boolean {
+    return (
+      !last || last.status !== job.status || last.updated_at !== job.updated_at
+    );
+  }
+
+  /** The finished job, a throw for a failed one, or null while it runs. */
+  function settledJob(job: JobResponse): JobResponse | null {
+    if (job.status === "failed") throw new Error(job.error ?? "Job failed.");
+    return job.status === "done" ? job : null;
+  }
+
   async function waitForJob(
     jobId: string,
     options?: { timeoutMs?: number; onUpdate?: (job: JobResponse) => void },
@@ -64,18 +76,10 @@ vi.mock("../../api/client", async (importOriginal) => {
     let lastJob: JobResponse | null = null;
     while (Date.now() < deadline) {
       const job = await mockedApi.getJob(jobId);
-      if (
-        !lastJob ||
-        lastJob.status !== job.status ||
-        lastJob.updated_at !== job.updated_at
-      ) {
-        options?.onUpdate?.(job);
-      }
+      if (jobChanged(lastJob, job)) options?.onUpdate?.(job);
       lastJob = job;
-      if (job.status === "done") return job;
-      if (job.status === "failed") {
-        throw new Error(job.error ?? "Job failed.");
-      }
+      const settled = settledJob(job);
+      if (settled) return settled;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     throw new Error("Job timed out.");
