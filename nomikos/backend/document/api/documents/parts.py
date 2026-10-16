@@ -43,6 +43,10 @@ async def upload_part(
     db: Annotated[AsyncSession, Depends(get_db)],
     file: UploadFile = File(...),
 ) -> DocumentPartResponse:
+    # The multipart parser has already spooled the body to a temporary file and knows
+    # its size, so an over-cap upload is refused before any of it is read into memory.
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise ValidationError("File exceeds the 100 MB upload limit")
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if not data:
         raise ValidationError("Uploaded file is empty")
