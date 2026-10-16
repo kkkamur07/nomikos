@@ -89,12 +89,8 @@ def _tensor_dims(entry) -> list:
 
 def _graph_io(model) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Named inputs and outputs with their dims, for the report and the gate."""
-    inputs = [
-        {"name": entry.name, "dims": _tensor_dims(entry)} for entry in model.graph.input
-    ]
-    outputs = [
-        {"name": entry.name, "dims": _tensor_dims(entry)} for entry in model.graph.output
-    ]
+    inputs = [{"name": entry.name, "dims": _tensor_dims(entry)} for entry in model.graph.input]
+    outputs = [{"name": entry.name, "dims": _tensor_dims(entry)} for entry in model.graph.output]
     return inputs, outputs
 
 

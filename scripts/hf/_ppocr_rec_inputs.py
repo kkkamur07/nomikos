@@ -11,6 +11,7 @@ script keeps only its own ``take`` step (tensors vs PNG bytes).
 This is a library, not a script: no argparse, no ``main``. kraken and PIL
 stay function-local so importing this module never requires model weights.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -105,7 +106,9 @@ def read_xml_page(xml_path: Path, workspace: Path):
     return page
 
 
-def cut_page_crops(page, image, stem: str, *, already: int, max_lines: int | None) -> tuple[
+def cut_page_crops(
+    page, image, stem: str, *, already: int, max_lines: int | None
+) -> tuple[
     list[CutLine],
     dict[str, int],
 ]:
@@ -124,9 +127,7 @@ def cut_page_crops(page, image, stem: str, *, already: int, max_lines: int | Non
                 single = dataclasses.replace(page.to_container(), lines=[xml_line])
                 crop, _ = next(extract_polygons(image, single))
                 counters["polygon_lines"] += 1
-                records.append(
-                    CutLine(name=name, crop=crop, truth=xml_line.text, valid_norm=False)
-                )
+                records.append(CutLine(name=name, crop=crop, truth=xml_line.text, valid_norm=False))
             else:
                 box = xml_line.to_bbox(text_direction="horizontal-lr")
                 single = Segmentation(
@@ -139,9 +140,7 @@ def cut_page_crops(page, image, stem: str, *, already: int, max_lines: int | Non
                 )
                 crop, _ = next(extract_polygons(image, single))
                 counters["box_lines"] += 1
-                records.append(
-                    CutLine(name=name, crop=crop, truth=xml_line.text, valid_norm=True)
-                )
+                records.append(CutLine(name=name, crop=crop, truth=xml_line.text, valid_norm=True))
         except (StopIteration, ValueError) as error:
             counters["skipped_lines"] += 1
             print(f"cannot cut {name}: {error}", file=sys.stderr)

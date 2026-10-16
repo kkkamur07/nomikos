@@ -99,9 +99,7 @@ def _build_real_inputs(pages_dir, xml_dir, line_files, *, height, pad, max_lines
     from kraken.lib.dataset import ImageInputTransforms
 
     records, counters = collect_page_crops(pages_dir, xml_dir, max_lines=max_lines)
-    records.extend(
-        collect_file_crops(line_files, already=len(records), max_lines=max_lines)
-    )
+    records.extend(collect_file_crops(line_files, already=len(records), max_lines=max_lines))
     inputs = []
     for record in records:
         transforms = ImageInputTransforms(1, height, 0, 3, (pad, 0), record.valid_norm)

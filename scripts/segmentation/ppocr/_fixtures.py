@@ -235,9 +235,7 @@ def norm_kwargs(model_dir: Path) -> tuple[dict[str, object], dict[str, object]]:
     )
 
 
-def build_tensor(
-    bgr, *, cap: int, normaliser: dict[str, object]
-):
+def build_tensor(bgr, *, cap: int, normaliser: dict[str, object]):
     """Run PaddleX's own preprocessing classes over one BGR image."""
     import numpy as np
     from paddlex.inference.models.common import ToBatch, ToCHWImage

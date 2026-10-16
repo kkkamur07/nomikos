@@ -185,9 +185,7 @@ def _score_adapter_page(page: str, args: argparse.Namespace) -> tuple[dict, list
             "noise_policy": "off",
         },
     )
-    fixture_boxes = [
-        np.asarray(box, dtype=np.float64).reshape(4, 2) for box in fixture["boxes"]
-    ]
+    fixture_boxes = [np.asarray(box, dtype=np.float64).reshape(4, 2) for box in fixture["boxes"]]
     adapter_quads = [
         np.asarray(line.points, dtype=np.float64).reshape(4, 2) for line in response.lines
     ]
@@ -220,7 +218,9 @@ def _score_adapter_page(page: str, args: argparse.Namespace) -> tuple[dict, list
         f"max={max_px:.3f}px mean={mean_px:.3f}px",
         flush=True,
     )
-    failures = _gate_page_failures(page, len(fixture_boxes), len(adapter_quads), unmatched_f, unmatched_a, max_px)
+    failures = _gate_page_failures(
+        page, len(fixture_boxes), len(adapter_quads), unmatched_f, unmatched_a, max_px
+    )
     _draw_overlays(
         page, image_bytes, adapter_quads, baselines, fixture_boxes, unmatched_f, args.output_dir
     )
@@ -242,9 +242,7 @@ def _gate_page_failures(
             f"{page}: box count differs (fixture={fixture_count} adapter={adapter_count})"
         )
     if unmatched_f or unmatched_a:
-        failures.append(
-            f"{page}: unmatched boxes f={sorted(unmatched_f)} a={sorted(unmatched_a)}"
-        )
+        failures.append(f"{page}: unmatched boxes f={sorted(unmatched_f)} a={sorted(unmatched_a)}")
     if not math.isfinite(max_px) or max_px > MAX_CORNER_PX:
         failures.append(f"{page}: max corner distance {max_px:.3f}px exceeds {MAX_CORNER_PX}px")
     return failures

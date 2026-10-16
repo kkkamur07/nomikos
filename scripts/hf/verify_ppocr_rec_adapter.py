@@ -58,9 +58,7 @@ def _parse_args() -> argparse.Namespace:
 def _build_real_inputs(pages_dir, xml_dir, line_files, *, max_lines):
     """Cut every line with kraken's own extractor; returns crops and counters."""
     records, counters = collect_page_crops(pages_dir, xml_dir, max_lines=max_lines)
-    records.extend(
-        collect_file_crops(line_files, already=len(records), max_lines=max_lines)
-    )
+    records.extend(collect_file_crops(line_files, already=len(records), max_lines=max_lines))
     inputs = []
     for record in records:
         output = BytesIO()

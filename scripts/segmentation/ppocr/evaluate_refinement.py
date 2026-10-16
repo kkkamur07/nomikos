@@ -117,9 +117,7 @@ def _axis(polygon: Polygon) -> list[list[float]]:
     return points
 
 
-def _eligibility(
-    targets: list[dict], polygons: list[Polygon]
-) -> tuple[np.ndarray, np.ndarray]:
+def _eligibility(targets: list[dict], polygons: list[Polygon]) -> tuple[np.ndarray, np.ndarray]:
     """Per (prediction, target) eligibility and affinity, per the benchmark's `score`."""
     eligible = np.zeros((len(polygons), len(targets)), dtype=bool)
     affinity = np.zeros(eligible.shape, dtype=float)
@@ -334,9 +332,7 @@ def _score_variant_page(
         if line.source_metadata.get("suspect", False)
     ]
     wrong = sum(1 for p in suspects if p in scored["matched_pred"])
-    merged = sum(
-        1 for line in response.lines if line.source_metadata.get("merged_from", 1) > 1
-    )
+    merged = sum(1 for line in response.lines if line.source_metadata.get("merged_from", 1) > 1)
     return {
         **scored,
         "pairs": _pairs_above(polygons, PAIR_THRESHOLD),

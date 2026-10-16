@@ -88,7 +88,9 @@ def _score_pipeline_cell(
     return row, failures, fixture
 
 
-def _open_pipeline(args: argparse.Namespace, post_cfg: dict[str, object], thresh: float, box_thresh: float):
+def _open_pipeline(
+    args: argparse.Namespace, post_cfg: dict[str, object], thresh: float, box_thresh: float
+):
     """The reference Paddle pipeline with the model's own thresholds."""
     from paddleocr import TextDetection
 

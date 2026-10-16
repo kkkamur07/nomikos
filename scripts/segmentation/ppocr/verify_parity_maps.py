@@ -71,9 +71,7 @@ def _score_maps_cell(
     paddle_boxes = as_boxes(paddle_boxes_raw)
     onnx_boxes = as_boxes(onnx_boxes_raw)
     box_delta = int(len(paddle_boxes) - len(onnx_boxes))
-    corner = (
-        max_corner_distance(paddle_boxes, onnx_boxes) if box_delta == 0 else float("inf")
-    )
+    corner = max_corner_distance(paddle_boxes, onnx_boxes) if box_delta == 0 else float("inf")
     row: dict[str, object] = {
         "page": page,
         "cap": cap,

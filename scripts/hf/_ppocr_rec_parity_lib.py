@@ -170,9 +170,7 @@ def _score_entry(
         onnx_text=onnx_text,
         masked_text=masked_text,
         masked_max_abs_diff=(
-            float(np.abs(torch_logits - masked_logits).max())
-            if masked_logits is not None
-            else None
+            float(np.abs(torch_logits - masked_logits).max()) if masked_logits is not None else None
         ),
         masked_out_lens=masked_out_lens,
         text_identical=torch_text == onnx_text,
@@ -302,9 +300,7 @@ class _MismatchFigures:
     worst_softmax_real: float
 
 
-def _mismatch_figures(
-    rows: list[_ParityRow], real_rows: list[_ParityRow]
-) -> _MismatchFigures:
+def _mismatch_figures(rows: list[_ParityRow], real_rows: list[_ParityRow]) -> _MismatchFigures:
     """Collect the per-line mismatches and worst-case diffs for the gate."""
     return _MismatchFigures(
         real_mismatched=[row["name"] for row in real_rows if not row["text_identical"]],
