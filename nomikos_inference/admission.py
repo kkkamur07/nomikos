@@ -255,7 +255,7 @@ def _validate_bounded_param(
         raise ValueError(CLIENT_INPUT_ERROR)
 
 
-def validate_segment_params(params: dict[str, JsonValue], settings: AdmissionSettings) -> None:
+def validate_segment_params(params: dict[str, JsonValue]) -> None:
     """Bound the BLLA segmentation knobs before they reach the decoder."""
     for key, (minimum, maximum) in SEGMENT_PARAM_BOUNDS.items():
         _validate_bounded_param(params, key, minimum=minimum, maximum=maximum)
@@ -264,7 +264,7 @@ def validate_segment_params(params: dict[str, JsonValue], settings: AdmissionSet
 def validate_request_params(params: dict[str, JsonValue], settings: AdmissionSettings) -> int:
     size = serialized_params_size(params, settings)
     validate_transcribe_params(params, settings)
-    validate_segment_params(params, settings)
+    validate_segment_params(params)
     return size
 
 

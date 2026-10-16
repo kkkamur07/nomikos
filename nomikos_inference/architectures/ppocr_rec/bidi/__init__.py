@@ -24,6 +24,6 @@ _resolve), algorithm unchanged.
 """
 
 from nomikos_inference.architectures.ppocr_rec.bidi._common import UCD_VERSION, bidi_class
-from nomikos_inference.architectures.ppocr_rec.bidi._resolve import get_display, get_display_map
+from nomikos_inference.architectures.ppocr_rec.bidi._resolve import get_display_map
 
-__all__ = ["get_display", "get_display_map", "bidi_class", "UCD_VERSION"]
+__all__ = ["get_display_map", "bidi_class", "UCD_VERSION"]

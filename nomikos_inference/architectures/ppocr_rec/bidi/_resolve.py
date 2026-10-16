@@ -1,7 +1,7 @@
 """Isolating run sequences, implicit levels and visual reorder.
 
 Split out of ``bidi/__init__.py``: rule X10/BD13 sequence building, rules
-I1/I2/L1/L2, and the ``get_display`` entry points. Algorithm unchanged from
+I1/I2/L1/L2, and the ``get_display_map`` entry point. Algorithm unchanged from
 kraken 7.1.1 (literal port of UAX #9).
 """
 
@@ -28,7 +28,7 @@ from nomikos_inference.architectures.ppocr_rec.bidi._neutral import (
 )
 from nomikos_inference.architectures.ppocr_rec.bidi._weak import resolve_weak
 
-__all__ = ["resolve_levels", "get_display", "get_display_map"]
+__all__ = ["resolve_levels", "get_display_map"]
 
 
 def _compact_runs(
@@ -236,12 +236,3 @@ def get_display_map(text: str, base_dir: Literal["L", "R"] | None = None) -> tup
         display.append(chr(cp))
         order.append(k)
     return "".join(display), order
-
-
-def get_display(text: str, base_dir: Literal["L", "R"] | None = None) -> str:
-    """Reorder a string from logical order into display order (UAX #9).
-
-    Mirrored characters are replaced by their mirror image; directional
-    formatting characters and BN-class characters are removed.
-    """
-    return get_display_map(text, base_dir)[0]
