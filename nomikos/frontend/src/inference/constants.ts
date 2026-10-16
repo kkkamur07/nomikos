@@ -14,7 +14,7 @@
  */
 
 /** The one distribution. A hosted worker installs the same one (ADR 0002). */
-export const AGENT_PACKAGE_NAME = "nomikos-inference";
+const AGENT_PACKAGE_NAME = "nomikos-inference";
 
 /**
  * `--torch-backend=cpu` is load-bearing, not a tuning flag: without it a plain

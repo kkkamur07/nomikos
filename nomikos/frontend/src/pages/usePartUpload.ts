@@ -29,9 +29,11 @@ async function finalizeWithRetry(
   };
   try {
     await api.finalizePartUpload(projectId, documentId, partId, body);
-  } catch {
+  } catch (err) {
     // The bytes are already in storage; a transient failure here must not
-    // orphan them. One retry, then the error stands.
+    // orphan them. A 4xx (409, 422) answers the same way twice, so only a
+    // network failure or a 5xx earns the one retry, then the error stands.
+    if (err instanceof ApiError && err.status < 500) throw err;
     await api.finalizePartUpload(projectId, documentId, partId, body);
   }
 }
@@ -71,7 +73,16 @@ async function uploadOnePart(
       } catch {
         // The fetch itself failed - a CSP connect-src block shows up here as
         // a TypeError, never as a status - so the presigned host is
-        // unreachable and the multipart path takes over.
+        // unreachable and the multipart path takes over. `begin` already
+        // committed a pending row, which the document would show as a broken
+        // page until the media GC sweeps it, so discard it first. Best
+        // effort: if the delete fails the sweeper still reaps the row after
+        // the presign window, and the user's file matters more.
+        try {
+          await api.deletePart(projectId, documentId, begin.part_id);
+        } catch {
+          // The sweeper reaps the pending row; the upload goes on.
+        }
         await api.uploadPart(projectId, documentId, file);
         return;
       }

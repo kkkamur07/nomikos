@@ -27,7 +27,7 @@ export const DOCUMENT: DocumentWithPartsResponse = {
   })),
 };
 
-export const COUNTS = { total: 3, reviewed: 1, unsegmented: 2, unpaired: 3 };
+const COUNTS = { total: 3, reviewed: 1, unsegmented: 2, unpaired: 3 };
 
 /** The anchor `saveBlobAsFile` builds, captured instead of navigated to. */
 export const lastDownloadRef: {
@@ -58,7 +58,7 @@ export function seedProject(ownerId: string) {
 }
 
 /** One job as a batch route announces it: id plus the host fixed for it. */
-export function queuedJob(jobId: string) {
+function queuedJob(jobId: string) {
   return {
     job_id: jobId,
     execution_target: "cloud" as const,
