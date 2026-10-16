@@ -7,6 +7,7 @@ from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader
@@ -18,6 +19,8 @@ from backend.document.infrastructure.orm_models import (
 )
 from infrastructure.db import sync_system_session
 from tests.nomikos.integration.helpers import documents_url
+
+pytestmark = pytest.mark.integration
 
 
 def _png_bytes(width: int = 160, height: int = 90) -> bytes:

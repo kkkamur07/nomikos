@@ -11,6 +11,8 @@ from backend.core.settings.auth import AuthSettings, get_auth_settings
 from backend.users.api.rate_limit import clear_auth_rate_limit_state
 from tests.nomikos.integration.helpers import assert_api_error
 
+pytestmark = pytest.mark.integration
+
 
 def _session_headers(response) -> dict[str, str]:
     """What a browser that can read the CSRF cookie sends: both cookies, plus the header."""
