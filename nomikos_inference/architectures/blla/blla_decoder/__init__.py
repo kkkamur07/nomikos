@@ -119,7 +119,6 @@ def _decode_reference_pipeline(
                 supplementary_objects=supplementary_objects,
                 image_features=image_features,
                 bounds=bounds,
-                topline=False,
             )
         except Exception as error:  # noqa: BLE001 - one bad baseline is not a bad page
             first_failure = first_failure or error

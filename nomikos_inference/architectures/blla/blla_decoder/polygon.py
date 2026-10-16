@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy.ndimage import binary_erosion, distance_transform_cdt
 from shapely import geometry as geom
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, unary_union
 from shapely.validation import explain_validity
 from skimage import draw
@@ -99,7 +100,8 @@ def _calc_seam(
         mask[line_locations] = 0
     distance_bias = distance_transform_cdt(mask)
     polygon_mask = (
-        np.asarray(_make_polygonal_mask(polygon - (c_min, r_min), patch.shape[::-1])) <= 128
+        np.asarray(_make_polygonal_mask(polygon - (c_min, r_min), (patch.shape[1], patch.shape[0])))
+        <= 128
     )
     polygon_mask = binary_erosion(polygon_mask, border_value=True, iterations=2)
     patch[polygon_mask] = mask_value
@@ -153,7 +155,7 @@ def _calc_seam(
     return seam_array + (c_min, r_min)
 
 
-def _intersection_ring(roi_polygon: object, polygon: object) -> np.ndarray:
+def _intersection_ring(roi_polygon: BaseGeometry, polygon: BaseGeometry) -> np.ndarray:
     """Reduce the ROI/polygon intersection to the ring of its largest part.
 
     A well-behaved line intersects its ROI in one ``Polygon``, whose
@@ -186,22 +188,18 @@ def _extract_polygon(
     offset_baseline: np.ndarray,
     end_points: tuple[list[int], list[int]],
     direction: np.ndarray,
-    topline: bool,
     offset: int,
     image_features: np.ndarray,
 ) -> np.ndarray:
     upper_polygon = np.concatenate((baseline, env_up[::-1]))
     bottom_polygon = np.concatenate((baseline, env_bottom[::-1]))
     upper_offset_polygon = np.concatenate((offset_baseline, env_up[::-1]))
-    bottom_offset_polygon = np.concatenate((offset_baseline, env_bottom[::-1]))
     angle = np.arctan2(direction[1], direction[0])
     roi_polygon = unary_union([geom.Polygon(upper_polygon), geom.Polygon(bottom_polygon)])
-    if topline:
-        upper_seam = _calc_seam(baseline, upper_polygon, angle, image_features)
-        bottom_seam = _calc_seam(offset_baseline, bottom_offset_polygon, angle, image_features)
-    else:
-        upper_seam = _calc_seam(offset_baseline, upper_offset_polygon, angle, image_features)
-        bottom_seam = _calc_seam(baseline, bottom_polygon, angle, image_features)
+    # The baseline is the line's bottom: the upper seam is sought from the
+    # offset line above it, the lower one from the baseline itself.
+    upper_seam = _calc_seam(offset_baseline, upper_offset_polygon, angle, image_features)
+    bottom_seam = _calc_seam(baseline, bottom_polygon, angle, image_features)
     upper_line = geom.LineString(upper_seam).simplify(5)
     bottom_line = geom.LineString(bottom_seam).simplify(5)
     upper_offset = upper_line.parallel_offset(offset // 2, side="right")
@@ -226,12 +224,23 @@ def _extract_polygon(
     return _intersection_ring(roi_polygon, polygon)
 
 
-def _calc_roi(
-    line: np.ndarray,
-    bounds: np.ndarray,
-    supplementary_objects: list[list[list[int]]],
-    direction: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+def _closest_intersection(point: np.ndarray, intersections: BaseGeometry) -> BaseGeometry:
+    """The intersection point nearest ``point``, whatever shape shapely returned."""
+    source = geom.Point(point)
+    if intersections.is_empty:
+        raise ValueError(f"No intersection with boundaries: {intersections.wkt}")
+    if intersections.geom_type == "MultiPoint":
+        return min(intersections.geoms, key=lambda item: source.distance(item))
+    if intersections.geom_type == "Point":
+        return intersections
+    if intersections.geom_type == "GeometryCollection" and len(intersections.geoms) > 0:
+        candidate = min(intersections.geoms, key=lambda item: source.distance(item))
+        return candidate if candidate.geom_type == "Point" else nearest_points(source, candidate)[1]
+    raise ValueError(f"No intersection with boundaries: {intersections.wkt}")
+
+
+def _sample_line(line: np.ndarray) -> np.ndarray:
+    """The line's ends plus a point every 10 px along it."""
     line_string = geom.LineString(line)
     interpolated = [line[0]]
     distance = 10
@@ -239,68 +248,57 @@ def _calc_roi(
         interpolated.append(np.asarray(line_string.interpolate(distance).coords[0]))
         distance += 10
     interpolated.append(line[-1])
-    interpolated_array = np.asarray(interpolated)
-    upper_intersections = [
-        _ray_intersect_boundaries(
-            point,
-            (direction * (-1, 1))[::-1],
-            bounds + 1,
-        ).astype(int)
-        for point in interpolated_array
+    return np.asarray(interpolated)
+
+
+def _side_boundary(ray_ends: list[np.ndarray], neighbours: list[BaseGeometry]) -> BaseGeometry:
+    """Outline of the line through the rays' far ends and the neighbour lines."""
+    walls = [geom.LineString(ray_ends), *neighbours]
+    return unary_union(walls).buffer(1).boundary
+
+
+def _calc_roi(
+    line: np.ndarray,
+    bounds: np.ndarray,
+    supplementary_objects: list[list[list[int]]],
+    direction: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    samples = _sample_line(line)
+    upper_ends = [
+        _ray_intersect_boundaries(point, (direction * (-1, 1))[::-1], bounds + 1).astype(int)
+        for point in samples
     ]
-    bottom_intersections = [
-        _ray_intersect_boundaries(
-            point,
-            (direction * (1, -1))[::-1],
-            bounds + 1,
-        ).astype(int)
-        for point in interpolated_array
+    bottom_ends = [
+        _ray_intersect_boundaries(point, (direction * (1, -1))[::-1], bounds + 1).astype(int)
+        for point in samples
     ]
-    upper_polygon = geom.Polygon(interpolated_array.tolist() + upper_intersections)
-    bottom_polygon = geom.Polygon(interpolated_array.tolist() + bottom_intersections)
-    side_a = [geom.LineString(upper_intersections)]
-    side_b = [geom.LineString(bottom_intersections)]
+    upper_polygon = geom.Polygon(samples.tolist() + upper_ends)
+    bottom_polygon = geom.Polygon(samples.tolist() + bottom_ends)
+    above: list[BaseGeometry] = []
+    below: list[BaseGeometry] = []
     for adjacent in supplementary_objects:
         adjacent_line = geom.LineString(adjacent)
         if upper_polygon.intersects(adjacent_line):
-            side_a.append(adjacent_line)
+            above.append(adjacent_line)
         elif bottom_polygon.intersects(adjacent_line):
-            side_b.append(adjacent_line)
-    side_a = unary_union(side_a).buffer(1).boundary
-    side_b = unary_union(side_b).buffer(1).boundary
-
-    def closest(point: np.ndarray, intersections: object) -> object:
-        source = geom.Point(point)
-        if intersections.is_empty:
-            raise ValueError(f"No intersection with boundaries: {intersections.wkt}")
-        if intersections.geom_type == "MultiPoint":
-            return min(intersections.geoms, key=lambda item: source.distance(item))
-        if intersections.geom_type == "Point":
-            return intersections
-        if intersections.geom_type == "GeometryCollection" and len(intersections.geoms) > 0:
-            candidate = min(intersections.geoms, key=lambda item: source.distance(item))
-            return (
-                candidate
-                if candidate.geom_type == "Point"
-                else nearest_points(source, candidate)[1]
-            )
-        raise ValueError(f"No intersection with boundaries: {intersections.wkt}")
+            below.append(adjacent_line)
+    side_a = _side_boundary(upper_ends, above)
+    side_b = _side_boundary(bottom_ends, below)
 
     env_up = []
     env_bottom = []
-    # Both intersection lists are comprehensions over `interpolated_array`, so
-    # all three are the same length unless that stops being true above.
-    for point, upper, bottom in zip(
-        interpolated_array,
-        upper_intersections,
-        bottom_intersections,
-        strict=True,
-    ):
+    # Both end lists are comprehensions over `samples`, so all three are the
+    # same length unless that stops being true above.
+    for point, upper, bottom in zip(samples, upper_ends, bottom_ends, strict=True):
         env_up.append(
-            closest(point, geom.LineString([point, upper]).intersection(side_a)).coords[0]
+            _closest_intersection(
+                point, geom.LineString([point, upper]).intersection(side_a)
+            ).coords[0]
         )
         env_bottom.append(
-            closest(point, geom.LineString([point, bottom]).intersection(side_b)).coords[0]
+            _closest_intersection(
+                point, geom.LineString([point, bottom]).intersection(side_b)
+            ).coords[0]
         )
     return np.asarray(env_up, dtype="uint"), np.asarray(env_bottom, dtype="uint")
 
@@ -311,15 +309,16 @@ def calculate_polygonal_environment(
     supplementary_objects: list[list[list[int]]],
     image_features: np.ndarray,
     bounds: np.ndarray,
-    topline: bool = False,
 ) -> list[list[int]]:
-    """Extract one polygonal line environment."""
+    """Extract one polygonal line environment around a bottom baseline.
+
+    The offset is 8, the reference decoder's own value for a baseline that is
+    the line's bottom rather than its top.
+    """
 
     line = geom.LineString(baseline)
-    # ``topline`` is a ``bool`` with a default, never ``None``, so the offset
-    # is always 8: the reference decoder's own value.
     offset = 8
-    offset_line = line.parallel_offset(offset, side="left" if topline else "right")
+    offset_line = line.parallel_offset(offset, side="right")
     line_array = np.asarray(line.coords, dtype=float)
     offset_array = np.asarray(offset_line.coords, dtype=float)
     lengths = np.linalg.norm(np.diff(line_array.T), axis=0)
@@ -341,7 +340,6 @@ def calculate_polygonal_environment(
         offset_array.astype(int),
         (baseline[0], baseline[-1]),
         direction,
-        topline,
         offset,
         image_features,
     ).tolist()
