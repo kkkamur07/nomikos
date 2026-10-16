@@ -29,12 +29,14 @@ async def _throttle_session_use(request: Request) -> None:
     Refresh and logout had no limiter at all. The IP dimension carries the
     load where the peer identifies one client; where it does not, the coarse
     shared bucket sheds the excess, which is safe here because rotation never
-    locks anyone out of signing in.
+    locks anyone out of signing in. The budget is the session-rotation one,
+    not the password-guessing one: refresh fires on every app boot and every
+    401, so one NAT full of browsers would starve on a budget of 10.
     """
     settings = get_auth_settings()
     client_ip = attributable_client_ip(request)
     if client_ip is not None:
-        key, limit = f"session:{client_ip}", settings.auth_rate_limit_requests
+        key, limit = f"session:{client_ip}", settings.session_rotation_rate_limit_requests
     else:
         key, limit = "session:unattributable", UNATTRIBUTABLE_AUTH_RATE_LIMIT
     await consume_rate_limit(

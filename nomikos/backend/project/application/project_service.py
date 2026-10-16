@@ -1,6 +1,5 @@
 """Project CRUD and sharing use cases."""
 
-import logging
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -12,8 +11,6 @@ from backend.project.infrastructure.orm_models import Project
 from backend.project.infrastructure.project_repository import ProjectRepository
 from backend.users.infrastructure.orm_models import User
 from backend.users.infrastructure.user_repository import UserRepository
-
-logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -111,16 +108,13 @@ class ProjectService:
     ) -> None:
         project = await self._load_or_404(session, project_id)
         self._require_owner(project, user.id)
-        try:
-            collaborator = await self._find_collaborator(
-                session, username=username, email=email, identifier=identifier
-            )
-        except NotFoundError:
-            # Always 204: a 404 for an unknown email would let any project
-            # owner probe which addresses hold accounts. Unknown addresses are
-            # ignored rather than invited so no information leaves this branch.
-            logger.info("share_project_unknown_identifier project_id=%s", project_id)
-            return
+        # Unknown addresses stay a 404: the sharing panel treats any 2xx as
+        # "Shared with <value>", so silence would confirm a typo as success.
+        # (A silent 204 would stop account probing but lie to the UI; that
+        # tradeoff is an open design question, not a silent change.)
+        collaborator = await self._find_collaborator(
+            session, username=username, email=email, identifier=identifier
+        )
         if collaborator.id == project.owner_id:
             raise ConflictError("Cannot share project with the owner")
         if any(shared.id == collaborator.id for shared in project.shared_users):

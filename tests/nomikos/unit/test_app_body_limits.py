@@ -97,7 +97,8 @@ def test_small_multipart_passes() -> None:
     assert response.status_code == 200
 
 
-def test_real_app_rejects_a_5mb_json_body(monkeypatch) -> None:
+def test_real_app_rejects_a_20mb_json_body(monkeypatch) -> None:
+    """Over the 16 MiB middleware budget: the edge answers, not the route."""
     from backend.core.app import create_app
 
     monkeypatch.setenv("JWT_SECRET", "xQ7v2Kd9RmZ4pB6wLt1yHs3nCf8jUa5eG0oV")
@@ -105,10 +106,11 @@ def test_real_app_rejects_a_5mb_json_body(monkeypatch) -> None:
 
     response = TestClient(create_app()).post(
         "/auth/register",
-        json={"email": "a@example.org", "username": "u", "password": "x" * (5 * 1024 * 1024)},
+        json={"email": "a@example.org", "username": "u", "password": "x" * (20 * 1024 * 1024)},
     )
 
     assert response.status_code == 413
+    assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
 
 
 def test_cors_exposes_the_error_id(monkeypatch) -> None:
@@ -131,3 +133,23 @@ def test_cors_exposes_the_error_id(monkeypatch) -> None:
             "expose_headers": ["X-Error-ID"],
         }
     ]
+
+
+def test_dense_page_save_passes_the_json_budget() -> None:
+    """300 lines with two full 256-point polygons each is ~2.5-5 MB: admitted."""
+    import json
+
+    polygon = [[1234.567, 8901.234]] * 256
+    lines = [
+        {"order": i, "points": polygon, "kraken_ceiling": polygon, "text": "x" * 200}
+        for i in range(300)
+    ]
+    body = json.dumps({"lines": lines}).encode()
+
+    assert len(body) < JSON_BODY_LIMIT_BYTES
+    response = TestClient(_app()).post(
+        "/echo", content=body, headers={"content-type": "application/json"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"bytes": len(body)}

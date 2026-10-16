@@ -962,7 +962,7 @@ async def test_orphaned_project_cannot_be_published_by_a_collaborator() -> None:
 
 
 async def test_session_rotation_is_capped_per_client(monkeypatch) -> None:
-    """Refresh and logout had no limiter; they share the auth budget per IP."""
+    """Refresh and logout have their own per-IP budget, not the password one."""
     from backend.users.api import auth as auth_module
     from backend.users.api.auth import _throttle_session_use
 
@@ -978,7 +978,33 @@ async def test_session_rotation_is_capped_per_client(monkeypatch) -> None:
     monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
     await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
 
-    assert calls == [(["session:203.0.113.7"], get_auth_settings().auth_rate_limit_requests)]
+    assert calls == [
+        (["session:203.0.113.7"], get_auth_settings().session_rotation_rate_limit_requests)
+    ]
+    assert get_auth_settings().session_rotation_rate_limit_requests == 120
+
+
+async def test_session_rotation_ignores_the_password_guessing_budget(monkeypatch) -> None:
+    """AUTH_RATE_LIMIT_REQUESTS=1 still leaves refresh untouched."""
+    from backend.users.api import auth as auth_module
+    from backend.users.api.auth import _throttle_session_use
+
+    monkeypatch.setenv("TRUST_PEER_IP", "true")
+    monkeypatch.setenv("BEHIND_PROXY", "false")
+    monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
+    monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", "1")
+    _clear_platform_settings()
+    calls: list[tuple[list[str], int]] = []
+
+    async def _record(keys, *, limit, window_seconds, detail):
+        calls.append((list(keys), limit))
+
+    monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
+    await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
+    await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
+
+    assert get_auth_settings().auth_rate_limit_requests == 1
+    assert calls == [(["session:203.0.113.7"], 120), (["session:203.0.113.7"], 120)]
 
 
 async def test_session_rotation_without_an_address_uses_the_shared_bucket(monkeypatch) -> None:

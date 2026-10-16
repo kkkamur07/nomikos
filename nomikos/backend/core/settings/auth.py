@@ -71,6 +71,16 @@ class AuthSettings(BaseSettings):
         default=10,
         alias="DEVICE_PAIRING_RATE_LIMIT_REQUESTS",
     )
+    # `POST /auth/refresh` and `POST /auth/logout` have their own rate limit
+    # budget, separate from sign-in. The frontend calls refresh on every app
+    # boot and on every 401, so many browsers behind one address burn through
+    # a password-sized budget in normal use. 120 per window is sized for that
+    # shared-address traffic and is deliberately separate from the
+    # password-guessing budget.
+    session_rotation_rate_limit_requests: int = Field(
+        default=120,
+        alias="SESSION_ROTATION_RATE_LIMIT_REQUESTS",
+    )
 
     @model_validator(mode="after")
     def _validate_secret(self) -> "AuthSettings":

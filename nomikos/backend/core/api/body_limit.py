@@ -12,11 +12,25 @@ from __future__ import annotations
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-#: Ceiling for every non-multipart body. Auth payloads are a handful of short
-#: fields; pairing, project and binding payloads are bounded maps.
-JSON_BODY_LIMIT_BYTES = 2 * 1024 * 1024
+#: Ceiling for every non-multipart body. Sized against the biggest legitimate
+#: JSON payload: a page/part line save. Each line carries two bounded
+#: geometries (``points`` and ``kraken_ceiling``, at most 256 points each)
+#: plus up to 10,000 chars of text. A JSON point ``[1234.567, 8901.234]`` is
+#: ~20 bytes, budgeted at 32:
+#:
+#:   300 lines x 2 geometries x 256 points x 32 B ≈ 4.7 MB,
+#:   plus typical line text (~300 x 200 B ≈ 60 KB).
+#:
+#: A dense 300-line editor save is therefore ~2.5-5 MB; 16 MiB admits it with
+#: ~3x headroom while still refusing absurd bodies before handlers buffer
+#: them. (The 10,000-line theoretical maximum would be hundreds of MB - no
+#: legitimate client sends that; the schema bounds validate content, this
+#: constant caps transport.)
+JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024
 #: Ceiling for multipart bodies. Only the part-upload route speaks multipart,
-#: and it enforces its own 100 MB cap after decoding.
+#: and it enforces its own 100 MB cap after decoding (``MAX_PART_UPLOAD_BYTES``
+#: in ``document/application/part_service.py``), so this matches that budget
+#: with room for the multipart envelope.
 MULTIPART_BODY_LIMIT_BYTES = 100 * 1024 * 1024
 
 

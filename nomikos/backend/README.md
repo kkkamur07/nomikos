@@ -266,6 +266,7 @@ Settings are loaded by `backend/core/settings/` from environment variables and
 | `JWT_EXPIRE_MINUTES` | Access-token lifetime | `15` |
 | `AUTH_RATE_LIMIT_REQUESTS` | Login/register attempts per window per client | `10` |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Login/register rate-limit window | `60` |
+| `SESSION_ROTATION_RATE_LIMIT_REQUESTS` | Refresh/logout attempts per window per client (separate from the password budget) | `120` |
 | `CORS_ORIGINS` | Browser origins | `http://localhost:3000,http://localhost:5173` |
 | `MEDIA_ROOT` | Uploaded Document part media | `nomikos/backend/media` |
 | `ENABLE_TEST_JOB_ROUTES` | Enables dev-only noop job route | `false` in `.env.example` |
