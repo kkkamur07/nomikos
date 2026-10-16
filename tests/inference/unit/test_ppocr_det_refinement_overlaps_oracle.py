@@ -14,22 +14,19 @@ import time
 
 import numpy as np
 
-from nomikos_inference.architectures.ppocr_det.postprocessing import DetectedQuad
-from nomikos_inference.architectures.ppocr_det.reading_order import PageLayout, layout_lines
-from nomikos_inference.architectures.ppocr_det.refinement import (
+from nomikos_inference.architectures.ppocr_det.geometry import Work, baseline_distance
+from nomikos_inference.architectures.ppocr_det.merge import merge_row_fragments
+from nomikos_inference.architectures.ppocr_det.overlaps import (
     _MAX_OVERLAP_PASSES,
     DUPLICATE_SHARED_RATIO,
     _cut_pair,
     _median_line_spacing,
     _shared_over_larger,
     _shared_ratio,
-    merge_row_fragments,
     resolve_overlaps,
 )
-from nomikos_inference.architectures.ppocr_det.refinement import (
-    _baseline_distance as baseline_distance,
-)
-from nomikos_inference.architectures.ppocr_det.refinement import _Work as Work
+from nomikos_inference.architectures.ppocr_det.postprocessing import DetectedQuad
+from nomikos_inference.architectures.ppocr_det.reading_order import PageLayout, layout_lines
 
 
 def _all_pairs_resolve_overlaps(
@@ -39,7 +36,11 @@ def _all_pairs_resolve_overlaps(
     cut_threshold: float,
     median_height: float,
 ) -> list[Work]:
-    """The pre-index implementation, verbatim apart from the helper imports."""
+    """The pre-index implementation, verbatim apart from the helper imports.
+
+    The one branch dropped is the third arm after ``distance < spacing / 2``
+    and ``distance >= spacing / 2``, which only a NaN distance could reach.
+    """
     spacing = _median_line_spacing(layout, median_height)
     for _ in range(_MAX_OVERLAP_PASSES):
         pairs: list[tuple[float, int, int]] = []
