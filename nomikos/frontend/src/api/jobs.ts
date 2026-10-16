@@ -6,7 +6,6 @@
  * the routes it falls back to, and the barrel only re-exports. That keeps the
  * dependency one-way (`jobs` -> `jobSubscription` -> `http`).
  */
-import { getAccessToken } from "../auth/storage";
 import { JOB_WAIT_POLL_INTERVAL_MS } from "../utils/jobPolling";
 import { waitForSubscribedJob } from "../utils/jobSubscription";
 import { collectCursorPages } from "./cursorPagination";
@@ -57,7 +56,6 @@ export async function waitForJob(
   return waitForSubscribedJob(jobId, {
     ...options,
     eventsUrl: `${API_BASE_URL}/jobs/${encodeURIComponent(jobId)}/events`,
-    token: getAccessToken(),
     getJob: jobsApi.getJob,
     intervalMs: JOB_WAIT_POLL_INTERVAL_MS,
   });
