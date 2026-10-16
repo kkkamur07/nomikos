@@ -7,10 +7,11 @@ import {
 } from "../../../api/client";
 import { ApiError } from "../../../api/errors";
 import { isUnauthorized, redirectToLogin } from "../../../auth/session";
-import type {
-  PairingProgressSetter,
-  SetState,
-  TextLinesSetter,
+import {
+  errorMessage,
+  type PairingProgressSetter,
+  type SetState,
+  type TextLinesSetter,
 } from "./editorHookTypes";
 
 /** The caller's cancelled/stale guard around every write. */
@@ -56,7 +57,7 @@ function partialLoadMessage(
   ) {
     return unavailable;
   }
-  return error instanceof Error ? error.message : fallback;
+  return errorMessage(error, fallback);
 }
 
 /**
