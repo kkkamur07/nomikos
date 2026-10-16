@@ -14,9 +14,9 @@ import pytest
 from nomikos_inference.architectures.calamari.adapter import (
     CalamariUnavailableError,
     _load_session,
-    _response_from_decoded,
     run_calamari_transcribe_many,
 )
+from nomikos_inference.architectures.shared.transcribe import response_from_decoded
 
 # The artifact preflight cases that used to stand here - a retired ``.pt``
 # refused by suffix, a digest checked before the file is opened, a missing
@@ -26,7 +26,7 @@ from nomikos_inference.architectures.calamari.adapter import (
 
 
 def test_response_from_decoded_aligns_character_confidences() -> None:
-    response = _response_from_decoded("ܡܪܝ", [0.8, 0.9, 0.7])
+    response = response_from_decoded("ܡܪܝ", [0.8, 0.9, 0.7])
     assert response.text == "ܡܪܝ"
     assert response.confidence == pytest.approx(0.8)
     assert [entry.char for entry in response.character_confidences] == ["ܡ", "ܪ", "ܝ"]
@@ -34,7 +34,7 @@ def test_response_from_decoded_aligns_character_confidences() -> None:
 
 
 def test_response_from_decoded_fills_missing_confidences() -> None:
-    response = _response_from_decoded("ab", [0.5])
+    response = response_from_decoded("ab", [0.5])
     assert response.text == "ab"
     assert [entry.confidence for entry in response.character_confidences] == [0.5, 0.5]
 

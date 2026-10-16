@@ -40,7 +40,6 @@ from nomikos_inference.architectures.calamari.preprocessing import (
     crop_line_on_white,
     preprocess_line_array_to_calamari_tensor,
     preprocess_line_image_bytes_to_calamari_tensor,
-    preprocess_line_image_to_calamari_tensor,
 )
 from nomikos_inference.contracts.common import LineCrop
 from nomikos_inference.registry import RegistryDocument
@@ -252,7 +251,7 @@ def _grayscale_crop(height: int, width: int, seed: int) -> np.ndarray:
 def test_serving_tensor_is_byte_identical_to_the_training_loader(
     tmp_path: Path, height: int, width: int
 ) -> None:
-    """All three serving entry points must equal ``_load_line_image`` exactly."""
+    """Both serving entry points must equal ``_load_line_image`` exactly."""
     pytest.importorskip("torch")
     load_line_image = _load_training_line_loader()
 
@@ -263,13 +262,12 @@ def test_serving_tensor_is_byte_identical_to_the_training_loader(
     expected = load_line_image(path, _LINE_HEIGHT).numpy()[None]
     assert expected.dtype == np.uint8
 
-    from_path = preprocess_line_image_to_calamari_tensor(path, line_height=_LINE_HEIGHT)
     from_bytes = preprocess_line_image_bytes_to_calamari_tensor(
         path.read_bytes(), line_height=_LINE_HEIGHT
     )
     from_array = preprocess_line_array_to_calamari_tensor(array, line_height=_LINE_HEIGHT)
 
-    for label, actual in (("path", from_path), ("bytes", from_bytes), ("array", from_array)):
+    for label, actual in (("bytes", from_bytes), ("array", from_array)):
         assert actual.dtype == np.uint8, label
         assert actual.shape == expected.shape, label
         np.testing.assert_array_equal(
@@ -287,7 +285,9 @@ def test_recipe_properties_on_a_real_manuscript_line() -> None:
     with Image.open(TRANSCRIBE_LINE) as source:
         width, height = source.size
 
-    tensor = preprocess_line_image_to_calamari_tensor(TRANSCRIBE_LINE, line_height=_LINE_HEIGHT)
+    tensor = preprocess_line_image_bytes_to_calamari_tensor(
+        TRANSCRIBE_LINE.read_bytes(), line_height=_LINE_HEIGHT
+    )
     expected_width = round(width * _LINE_HEIGHT / height)
 
     assert tensor.dtype == np.uint8

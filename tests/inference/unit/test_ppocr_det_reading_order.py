@@ -258,3 +258,18 @@ def test_measured_pages_read_identically_under_shuffling() -> None:
             permutation = _shuffled(len(quads), seed)
             rerun = [permutation[i] for i in order_lines([quads[i] for i in permutation])]
             assert rerun == base, f"{path.name} seed={seed}"
+
+
+def test_ten_thousand_stacked_lines_lay_out_in_seconds() -> None:
+    """The admitted ``max_candidates`` ceiling: the all-pairs union took 28 s."""
+    import time
+
+    quads = [_quad(0, float(i), 100, float(i + 1)) for i in range(10000)]
+
+    started = time.perf_counter()
+    layout = layout_lines(quads)
+    elapsed = time.perf_counter() - started
+
+    assert len(layout.columns) == 1
+    assert layout.columns[0].sequence == tuple(range(10000))
+    assert elapsed < 5.0

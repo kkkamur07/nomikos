@@ -88,7 +88,6 @@ def test_single_column_line_environment_does_not_divide_by_zero() -> None:
         supplementary_objects=[],
         image_features=features,
         bounds=bounds,
-        topline=False,
     )
 
     assert len(polygon) >= 4

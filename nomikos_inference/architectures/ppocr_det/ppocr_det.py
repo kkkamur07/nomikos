@@ -13,7 +13,8 @@ import os
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import SupportsFloat, SupportsIndex, SupportsInt
 
 import numpy as np
 
@@ -34,6 +35,7 @@ from nomikos_inference.architectures.ppocr_det.response import (
     build_ppocr_det_response,
     build_refined_ppocr_det_response,
 )
+from nomikos_inference.architectures.shared.onnx_session import OnnxSession, open_checked_session
 from nomikos_inference.contracts.segment import SegmentRunResponse
 
 PPOCR_DET_ARTIFACT_SUFFIXES = frozenset({".onnx"})
@@ -91,49 +93,50 @@ def _session_threads() -> int:
     return threads
 
 
+def _session_options(ort: ModuleType) -> object:
+    """Sequential EXTENDED-optimised session, one inter-op thread."""
+    options = ort.SessionOptions()
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.inter_op_num_threads = 1
+    options.intra_op_num_threads = _session_threads()
+    return options
+
+
+def _checked_ppocr_det_session(session: OnnxSession) -> tuple[OnnxSession, str, str]:
+    """The input and output names of a graph this decoder can read."""
+    inputs = session.get_inputs()
+    outputs = session.get_outputs()
+    if len(inputs) != 1 or len(outputs) != 1:
+        raise PPOCRDetUnavailableError("PP-OCRv6 det ONNX graph must have one input and output")
+    if len(inputs[0].shape) != 4 or len(outputs[0].shape) != 4:
+        raise PPOCRDetUnavailableError("PP-OCRv6 det ONNX graph must use 4D tensors")
+    return session, inputs[0].name, outputs[0].name
+
+
 @lru_cache(maxsize=4)
 def _load_ppocr_det_session(
     model_path: str,
     fingerprint: tuple[int, int] | None = None,
-) -> tuple[Any, str, str]:
+) -> tuple[OnnxSession, str, str]:
     """Open a session and read the tensor names this decoder needs.
 
     ``fingerprint`` is part of the cache key rather than an argument the loader
     reads: it is what makes a *replaced* artifact file miss the cache instead of
     serving the previous model for the life of the process.
     """
-    try:
-        import onnxruntime as ort
-
-        options = ort.SessionOptions()
-        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        options.inter_op_num_threads = 1
-        options.intra_op_num_threads = _session_threads()
-        session = ort.InferenceSession(
-            model_path,
-            sess_options=options,
-            providers=["CPUExecutionProvider"],
-        )
-        inputs = session.get_inputs()
-        outputs = session.get_outputs()
-        if len(inputs) != 1 or len(outputs) != 1:
-            raise PPOCRDetUnavailableError("PP-OCRv6 det ONNX graph must have one input and output")
-        if len(inputs[0].shape) != 4 or len(outputs[0].shape) != 4:
-            raise PPOCRDetUnavailableError("PP-OCRv6 det ONNX graph must use 4D tensors")
-        return session, inputs[0].name, outputs[0].name
-    except PPOCRDetUnavailableError:
-        raise
-    except ImportError as error:
-        raise PPOCRDetUnavailableError(
-            "onnxruntime is required for the PP-OCRv6 det runtime"
-        ) from error
-    except Exception as error:
-        raise PPOCRDetUnavailableError("unable to load PP-OCRv6 det ONNX model") from error
+    return open_checked_session(
+        model_path,
+        unavailable=PPOCRDetUnavailableError,
+        missing_runtime_message="onnxruntime is required for the PP-OCRv6 det runtime",
+        load_failure_message="unable to load PP-OCRv6 det ONNX model",
+        check=_checked_ppocr_det_session,
+        session_options=_session_options,
+    )
 
 
 def _bounded_float_param(
-    params: Mapping[str, Any], key: str, default: float, minimum: float, maximum: float
+    params: Mapping[str, object], key: str, default: float, minimum: float, maximum: float
 ) -> float:
     """Parse a caller-supplied number inside documented bounds.
 
@@ -142,82 +145,88 @@ def _bounded_float_param(
     param and the bound, instead of failing the page silently later (``inf``
     thresholds empty the page, ``inf`` unclip ratios crash the offsetter).
     """
+    message = f"{key} must be a number between {minimum} and {maximum}"
     value = params.get(key, default)
-    if isinstance(value, bool):
-        raise ValueError(f"{key} must be a number between {minimum} and {maximum}")
+    if isinstance(value, bool) or not isinstance(
+        value, str | bytes | SupportsFloat | SupportsIndex
+    ):
+        raise ValueError(message)
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        raise ValueError(f"{key} must be a number between {minimum} and {maximum}") from None
+        raise ValueError(message) from None
     if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
-        raise ValueError(f"{key} must be a number between {minimum} and {maximum}")
+        raise ValueError(message)
     return parsed
 
 
-def _limit_side_len(params: Mapping[str, Any]) -> int:
-    value = params.get("limit_side_len", DEFAULT_LIMIT_SIDE_LEN)
-    if isinstance(value, bool):
-        raise ValueError("limit_side_len must be an integer")
+def _bounded_int_param(
+    params: Mapping[str, object],
+    key: str,
+    default: int,
+    bounds: tuple[int, int],
+    *,
+    type_message: str,
+    range_message: str,
+) -> int:
+    """Parse a caller-supplied integer inside ``bounds``, inclusive.
+
+    A bool, a non-numeric value or a float with a fractional part raises
+    ``type_message``; an integer outside the bounds raises ``range_message``.
+    """
+    value = params.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, str | bytes | SupportsInt | SupportsIndex):
+        raise ValueError(type_message)
     try:
         parsed = int(value)
     except (TypeError, ValueError, OverflowError):
-        raise ValueError("limit_side_len must be an integer") from None
+        raise ValueError(type_message) from None
     if isinstance(value, float) and float(parsed) != value:
-        raise ValueError("limit_side_len must be an integer")
-    if parsed < MIN_LIMIT_SIDE_LEN or parsed > MAX_LIMIT_SIDE_LEN:
-        raise ValueError(
+        raise ValueError(type_message)
+    if not bounds[0] <= parsed <= bounds[1]:
+        raise ValueError(range_message)
+    return parsed
+
+
+def _limit_side_len(params: Mapping[str, object]) -> int:
+    return _bounded_int_param(
+        params,
+        "limit_side_len",
+        DEFAULT_LIMIT_SIDE_LEN,
+        (MIN_LIMIT_SIDE_LEN, MAX_LIMIT_SIDE_LEN),
+        type_message="limit_side_len must be an integer",
+        range_message=(
             f"limit_side_len must be between {MIN_LIMIT_SIDE_LEN} and {MAX_LIMIT_SIDE_LEN}"
-        )
-    return parsed
+        ),
+    )
 
 
-def _max_candidates(params: Mapping[str, Any]) -> int:
-    value = params.get("max_candidates", DEFAULT_MAX_CANDIDATES)
-    if isinstance(value, bool):
-        raise ValueError("max_candidates must be an integer between 1 and 10000")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError("max_candidates must be an integer between 1 and 10000") from None
-    if isinstance(value, float) and float(parsed) != value:
-        raise ValueError("max_candidates must be an integer between 1 and 10000")
-    if not 1 <= parsed <= 10000:
-        raise ValueError("max_candidates must be an integer between 1 and 10000")
-    return parsed
+def _max_candidates(params: Mapping[str, object]) -> int:
+    message = "max_candidates must be an integer between 1 and 10000"
+    return _bounded_int_param(
+        params,
+        "max_candidates",
+        DEFAULT_MAX_CANDIDATES,
+        (1, 10000),
+        type_message=message,
+        range_message=message,
+    )
 
 
-def _baseline_fraction(params: Mapping[str, Any]) -> float:
-    value = params.get("baseline_fraction", DEFAULT_BASELINE_FRACTION)
-    if isinstance(value, bool):
-        raise ValueError("baseline_fraction must be a number between 0 and 1")
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        raise ValueError("baseline_fraction must be a number between 0 and 1") from None
-    if not math.isfinite(parsed) or not 0 <= parsed <= 1:
-        raise ValueError("baseline_fraction must be a number between 0 and 1")
-    return parsed
+def _choice_param(
+    params: Mapping[str, object], key: str, default: str, choices: tuple[str, ...], message: str
+) -> str:
+    value = params.get(key, default)
+    if isinstance(value, str) and value in choices:
+        return value
+    raise ValueError(message)
 
 
-def _reading_direction(params: Mapping[str, Any]) -> str:
-    direction = params.get("reading_direction", "ltr")
-    if direction not in ("ltr", "rtl"):
-        raise ValueError('reading_direction must be "ltr" or "rtl"')
-    return direction
-
-
-def _bool_param(params: Mapping[str, Any], key: str, default: bool) -> bool:
+def _bool_param(params: Mapping[str, object], key: str, default: bool) -> bool:
     value = params.get(key, default)
     if isinstance(value, bool):
         return value
     raise ValueError(f"{key} must be true or false")
-
-
-def _noise_policy(params: Mapping[str, Any]) -> str:
-    policy = params.get("noise_policy", "flag")
-    if policy in ("flag", "drop", "off"):
-        return policy
-    raise ValueError('noise_policy must be "flag", "drop" or "off"')
 
 
 def run_ppocr_det_segment(
@@ -225,25 +234,36 @@ def run_ppocr_det_segment(
     *,
     model_path: Path,
     artifact_sha256: str | None = None,
-    params: dict[str, Any] | None = None,
+    params: Mapping[str, object] | None = None,
 ) -> SegmentRunResponse:
     """Run PP-OCRv6 detection and return the segment contract in reading order."""
 
-    # Resolved once here so a missing, mis-suffixed or tampered artifact fails
-    # before the resize is paid for; the session loader re-resolves from a
-    # memoized digest, which costs a ``stat``.
-    _resolve_ppocr_det_artifact(model_path, artifact_sha256)
+    # Resolved once, up front, so a missing, mis-suffixed or tampered artifact
+    # fails before the resize is paid for; the same handle opens the session.
+    handle = _resolve_ppocr_det_artifact(model_path, artifact_sha256)
     resolved = params or {}
     limit = _limit_side_len(resolved)
     thresh = _bounded_float_param(resolved, "thresh", DEFAULT_THRESH, 0, 1)
     box_thresh = _bounded_float_param(resolved, "box_thresh", DEFAULT_BOX_THRESH, 0, 1)
     unclip_ratio = _bounded_float_param(resolved, "unclip_ratio", DEFAULT_UNCLIP_RATIO, 0, 5)
     max_candidates = _max_candidates(resolved)
-    fraction = _baseline_fraction(resolved)
-    direction = _reading_direction(resolved)
+    fraction = _bounded_float_param(resolved, "baseline_fraction", DEFAULT_BASELINE_FRACTION, 0, 1)
+    direction = _choice_param(
+        resolved,
+        "reading_direction",
+        "ltr",
+        ("ltr", "rtl"),
+        'reading_direction must be "ltr" or "rtl"',
+    )
     merge_fragments = _bool_param(resolved, "merge_fragments", True)
     resolve_overlaps = _bool_param(resolved, "resolve_overlaps", True)
-    noise_policy = _noise_policy(resolved)
+    noise_policy = _choice_param(
+        resolved,
+        "noise_policy",
+        "flag",
+        ("flag", "drop", "off"),
+        'noise_policy must be "flag", "drop" or "off"',
+    )
     merge_gap_ratio = _bounded_float_param(
         resolved, "merge_gap_ratio", DEFAULT_MERGE_GAP_RATIO, 0, 10
     )
@@ -263,7 +283,6 @@ def run_ppocr_det_segment(
         tensor, meta = preprocess_ppocr_det_image(image, limit_side_len=limit)
         _, _, resized_height, resized_width = tensor.shape
 
-        handle = _resolve_ppocr_det_artifact(model_path, artifact_sha256)
         session, input_name, output_name = _load_ppocr_det_session(handle.path, handle.fingerprint)
         outputs = session.run([output_name], {input_name: np.ascontiguousarray(tensor)})
         prob = np.asarray(outputs[0], dtype=np.float32)

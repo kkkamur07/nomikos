@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
+from typing import Protocol
 
 import numpy as np
 from scipy.ndimage import maximum_filter
 from scipy.signal import convolve2d
 from shapely import geometry as geom
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, unary_union
 from skimage import filters
 from skimage.graph import MCP_Connect
@@ -16,6 +19,22 @@ from skimage.measure import approximate_polygon, label, regionprops
 from skimage.morphology import skeletonize
 
 logger = logging.getLogger(__name__)
+
+Baseline = list[list[int]]
+#: Read-only points, so the reading order takes integer and float lines alike.
+Points = Sequence[Sequence[float]]
+#: A box as ``(rows, columns)`` slices, the shape the reading order compares.
+Slices = tuple[slice, slice]
+
+# A skeleton pixel with exactly one skeleton neighbour scores 10 + 1.
+_ENDPOINT_KERNEL = np.array([[1, 1, 1], [1, 10, 1], [1, 1, 1]])
+
+
+class _Region(Protocol):
+    """The part of ``skimage.measure`` region properties tracing reads."""
+
+    @property
+    def coords(self) -> np.ndarray: ...
 
 
 class _LineMCP(MCP_Connect):
@@ -71,8 +90,8 @@ def _moore_neighborhood(current: np.ndarray, backtrack: np.ndarray) -> np.ndarra
     return np.empty((0, 2), dtype=int)
 
 
-def _boundary_tracing(region: object) -> np.ndarray:
-    coords = region.coords  # type: ignore[attr-defined]
+def _boundary_tracing(region: _Region) -> np.ndarray:
+    coords = region.coords
     mins = np.amin(coords, axis=0)
     maxs = np.amax(coords, axis=0)
     binary = np.zeros((maxs[0] - mins[0] + 3, maxs[1] - mins[1] + 3))
@@ -108,13 +127,10 @@ def _boundary_tracing(region: object) -> np.ndarray:
     return np.asarray(boundary) + [mins[0] - 1, mins[1] - 1]
 
 
-def _extend_boundaries(
-    baselines: list[list[list[int]]],
-    baseline_map: np.ndarray,
-) -> list[list[list[int]]]:
-    labelled = label(baseline_map)
-    boundaries: list[object] = []
-    for region in regionprops(labelled):
+def _region_boundaries(baseline_map: np.ndarray) -> list[BaseGeometry]:
+    """Closed outlines of the baseline map's components, for extending ends."""
+    boundaries: list[BaseGeometry] = []
+    for region in regionprops(label(baseline_map)):
         if region.area < 6:
             continue
         try:
@@ -128,56 +144,112 @@ def _extend_boundaries(
             # baselines.
             logger.debug("boundary tracing skipped a region: %s", error)
             continue
+    return boundaries
 
+
+def _extend_end(baseline: Baseline, end: int, inner: int, outline: BaseGeometry) -> None:
+    """Move ``baseline[end]`` out to ``outline`` along the ``inner`` to ``end`` direction.
+
+    The point lands where a ray ten segments long meets the outline, or on the
+    outline's nearest point when the ray does not meet it in one point.
+    """
+    point = baseline[end]
+    if not outline.contains(geom.Point(point)):
+        return
+    ray = geom.LineString(
+        [
+            (
+                point[0] - 10 * (baseline[inner][0] - point[0]),
+                point[1] - 10 * (baseline[inner][1] - point[1]),
+            ),
+            point,
+        ]
+    )
+    intersection = outline.boundary.intersection(ray)
+    if intersection.geom_type != "Point":
+        intersection = nearest_points(geom.Point(point), outline)[1]
+    baseline[end] = np.asarray(intersection.coords[0], dtype=int).tolist()
+
+
+def _extend_boundaries(baselines: list[Baseline], baseline_map: np.ndarray) -> list[Baseline]:
+    """Extend each baseline's ends to the outline of the component holding it."""
+    boundaries = _region_boundaries(baseline_map)
     for baseline in baselines:
         line = geom.LineString(baseline)
-        try:
-            boundary_polygon = next(
-                candidate for candidate in boundaries if candidate.contains(line)
-            )
-        except StopIteration:
+        outline = next((candidate for candidate in boundaries if candidate.contains(line)), None)
+        if outline is None:
             continue
-
-        if boundary_polygon.contains(geom.Point(baseline[0])):
-            intersection = boundary_polygon.boundary.intersection(
-                geom.LineString(
-                    [
-                        (
-                            baseline[0][0] - 10 * (baseline[1][0] - baseline[0][0]),
-                            baseline[0][1] - 10 * (baseline[1][1] - baseline[0][1]),
-                        ),
-                        baseline[0],
-                    ]
-                )
-            )
-            if intersection.geom_type != "Point":
-                baseline[0] = np.asarray(
-                    nearest_points(geom.Point(baseline[0]), boundary_polygon)[1].coords[0],
-                    dtype=int,
-                ).tolist()
-            else:
-                baseline[0] = np.asarray(intersection.coords[0], dtype=int).tolist()
-
-        if boundary_polygon.contains(geom.Point(baseline[-1])):
-            intersection = boundary_polygon.boundary.intersection(
-                geom.LineString(
-                    [
-                        (
-                            baseline[-1][0] - 10 * (baseline[-2][0] - baseline[-1][0]),
-                            baseline[-1][1] - 10 * (baseline[-2][1] - baseline[-1][1]),
-                        ),
-                        baseline[-1],
-                    ]
-                )
-            )
-            if intersection.geom_type != "Point":
-                baseline[-1] = np.asarray(
-                    nearest_points(geom.Point(baseline[-1]), boundary_polygon)[1].coords[0],
-                    dtype=int,
-                ).tolist()
-            else:
-                baseline[-1] = np.asarray(intersection.coords[0], dtype=int).tolist()
+        _extend_end(baseline, 0, 1, outline)
+        _extend_end(baseline, -1, -2, outline)
     return baselines
+
+
+def _endpoint_budget(
+    components: set[int],
+    endpoint_counts: dict[int, int],
+    skeleton_labels: np.ndarray,
+    max_endpoints: int,
+) -> set[int]:
+    """The largest components whose endpoints fit in ``max_endpoints`` together."""
+    component_sizes = np.bincount(skeleton_labels.ravel())
+    by_size = sorted(
+        components,
+        key=lambda component_id: component_sizes[component_id],
+        reverse=True,
+    )
+    kept: set[int] = set()
+    budget = 0
+    for component_id in by_size:
+        endpoints = endpoint_counts[component_id]
+        if budget + endpoints > max_endpoints:
+            break
+        kept.add(component_id)
+        budget += endpoints
+    return kept
+
+
+def _prune_endpoints(
+    extrema: np.ndarray, line_skeleton: np.ndarray, max_endpoints: int
+) -> np.ndarray:
+    """Drop the endpoints of noisy skeleton components until the budget holds.
+
+    A component with more than ten endpoints is noise, not a line; if the
+    rest still exceed ``max_endpoints``, the largest components are kept.
+    """
+    skeleton_labels = label(line_skeleton)
+    extrema_components = skeleton_labels[extrema[:, 0], extrema[:, 1]]
+    component_ids, component_counts = np.unique(extrema_components, return_counts=True)
+    # `np.unique(..., return_counts=True)` returns the two arrays paired
+    # element-for-element, so a length mismatch here would mean numpy broke.
+    endpoint_counts = dict(zip(component_ids.tolist(), component_counts.tolist(), strict=True))
+    valid_components = {
+        component_id for component_id, count in endpoint_counts.items() if count <= 10
+    }
+    remaining_endpoints = sum(endpoint_counts[component_id] for component_id in valid_components)
+    if remaining_endpoints > max_endpoints:
+        valid_components = _endpoint_budget(
+            valid_components, endpoint_counts, skeleton_labels, max_endpoints
+        )
+    return extrema[np.isin(extrema_components, list(valid_components))]
+
+
+def _oriented(baseline: Baseline, filtered_start: np.ndarray, filtered_end: np.ndarray) -> Baseline:
+    """Point the baseline from its start-heavy end to its end-heavy end.
+
+    When the start and end maps do not agree, the line runs top to bottom in
+    image rows, the reference decoder's horizontal fallback.
+    """
+    first = tuple(baseline[0])
+    last = tuple(baseline[-1])
+    first_lean = filtered_start[first] - filtered_end[first]
+    last_lean = filtered_start[last] - filtered_end[last]
+    if first_lean > 0.2 and last_lean < -0.2:
+        return baseline
+    if first_lean < -0.2 and last_lean > 0.2:
+        return baseline[::-1]
+    if baseline[0][1] > baseline[-1][1]:
+        return baseline[::-1]
+    return baseline
 
 
 def vectorize_lines(
@@ -185,54 +257,19 @@ def vectorize_lines(
     *,
     threshold: float,
     min_length: float,
-    text_direction: str = "horizontal",
     max_endpoints: int = 400,
-) -> list[list[list[int]]]:
+) -> list[Baseline]:
     """Apply baseline skeletonization and endpoint connection."""
-
-    if text_direction not in {"horizontal", "vertical"}:
-        raise ValueError(f"Invalid text direction {text_direction!r}")
 
     start_map, end_map, baseline_map = channels[:3]
     filtered_baseline = filters.sato(baseline_map, black_ridges=False, mode="constant")
     binary_baseline = filtered_baseline > threshold
     line_skeleton = skeletonize(binary_baseline)
-    kernel = np.array([[1, 1, 1], [1, 10, 1], [1, 1, 1]])
     extrema = np.transpose(
-        np.where((convolve2d(line_skeleton, kernel, mode="same") == 11) * line_skeleton)
+        np.where((convolve2d(line_skeleton, _ENDPOINT_KERNEL, mode="same") == 11) * line_skeleton)
     )
-
     if len(extrema) > max_endpoints:
-        skeleton_labels = label(line_skeleton)
-        extrema_components = skeleton_labels[extrema[:, 0], extrema[:, 1]]
-        component_ids, component_counts = np.unique(extrema_components, return_counts=True)
-        # `np.unique(..., return_counts=True)` returns the two arrays paired
-        # element-for-element, so a length mismatch here would mean numpy broke.
-        endpoint_counts = dict(zip(component_ids.tolist(), component_counts.tolist(), strict=True))
-        valid_components = {
-            component_id for component_id, count in endpoint_counts.items() if count <= 10
-        }
-        remaining_endpoints = sum(
-            endpoint_counts[component_id] for component_id in valid_components
-        )
-        if remaining_endpoints > max_endpoints:
-            component_sizes = np.bincount(skeleton_labels.ravel())
-            sorted_components = sorted(
-                valid_components,
-                key=lambda component_id: component_sizes[component_id],
-                reverse=True,
-            )
-            budget_components: set[int] = set()
-            budget = 0
-            for component_id in sorted_components:
-                endpoints = endpoint_counts[component_id]
-                if budget + endpoints > max_endpoints:
-                    break
-                budget_components.add(component_id)
-                budget += endpoints
-            valid_components = budget_components
-        extrema = extrema[np.isin(extrema_components, list(valid_components))]
-
+        extrema = _prune_endpoints(extrema, line_skeleton, max_endpoints)
     if len(extrema) < 2:
         return []
 
@@ -247,25 +284,11 @@ def vectorize_lines(
     filtered_start = maximum_filter(start_map, size=20)
     filtered_end = maximum_filter(end_map, size=20)
 
-    oriented: list[list[list[int]]] = []
+    oriented: list[Baseline] = []
     for baseline in lines:
-        first = tuple(baseline[0])
-        last = tuple(baseline[-1])
-        if filtered_start[first] - filtered_end[first] > 0.2 and (
-            filtered_start[last] - filtered_end[last] < -0.2
-        ):
-            pass
-        elif filtered_start[first] - filtered_end[first] < -0.2 and (
-            filtered_start[last] - filtered_end[last] > 0.2
-        ):
-            baseline = baseline[::-1]
-        elif text_direction == "horizontal":
-            if baseline[0][1] > baseline[-1][1]:
-                baseline = baseline[::-1]
-        elif baseline[0][0] > baseline[-1][0]:
-            baseline = baseline[::-1]
-        if geom.LineString(baseline).length >= min_length:
-            oriented.append([point[::-1] for point in baseline])
+        directed = _oriented(baseline, filtered_start, filtered_end)
+        if geom.LineString(directed).length >= min_length:
+            oriented.append([point[::-1] for point in directed])
     return oriented
 
 
@@ -306,46 +329,35 @@ def is_in_region(line: geom.LineString, region: geom.Polygon) -> bool:
     return region.contains(midpoint)
 
 
-def _reading_order(
-    lines: list[tuple[slice, slice]],
-    *,
-    text_direction: str = "lr",
-) -> np.ndarray:
-    order = np.zeros((len(lines), len(lines)), dtype="uint8")
+def _x_overlaps(first: Slices, second: Slices) -> bool:
+    return first[1].start < second[1].stop and first[1].stop > second[1].start
 
-    def x_overlaps(first: tuple[slice, slice], second: tuple[slice, slice]) -> bool:
-        return first[1].start < second[1].stop and first[1].stop > second[1].start
 
-    def above(first: tuple[slice, slice], second: tuple[slice, slice]) -> bool:
+def _separates(middle: Slices, first: Slices, second: Slices) -> bool:
+    """``middle`` sits between the pair in rows and spans the gap in columns."""
+    if middle in (first, second):
+        return False
+    if middle[0].stop < min(first[0].start, second[0].start):
+        return False
+    if middle[0].start > max(first[0].stop, second[0].stop):
+        return False
+    return middle[1].start < first[1].stop and middle[1].stop > second[1].start
+
+
+def _precedes(first: Slices, second: Slices, lines: list[Slices]) -> bool:
+    """Column mates read top to bottom; others left to right unless separated."""
+    if _x_overlaps(first, second):
         return first[0].start < second[0].start
-
-    def left_of(first: tuple[slice, slice], second: tuple[slice, slice]) -> bool:
-        return first[1].stop < second[1].start
-
-    def separates(
-        middle: tuple[slice, slice],
-        first: tuple[slice, slice],
-        second: tuple[slice, slice],
-    ) -> bool:
-        if middle in (first, second):
-            return False
-        if middle[0].stop < min(first[0].start, second[0].start):
-            return False
-        if middle[0].start > max(first[0].stop, second[0].stop):
-            return False
-        return middle[1].start < first[1].stop and middle[1].stop > second[1].start
-
-    horizontal_order = (
-        (lambda first, second: not left_of(first, second)) if text_direction == "rl" else left_of
+    return first[1].stop < second[1].start and not any(
+        _separates(middle, first, second) for middle in lines
     )
+
+
+def _reading_order(lines: list[Slices]) -> np.ndarray:
+    order = np.zeros((len(lines), len(lines)), dtype="uint8")
     for first_index, first in enumerate(lines):
         for second_index, second in enumerate(lines):
-            if x_overlaps(first, second):
-                if above(first, second):
-                    order[first_index, second_index] = 1
-            elif not any(separates(middle, first, second) for middle in lines) and horizontal_order(
-                first, second
-            ):
+            if _precedes(first, second, lines):
                 order[first_index, second_index] = 1
     return order
 
@@ -368,50 +380,62 @@ def _topological_sort(order: np.ndarray) -> list[int]:
     return result
 
 
-def reading_order_indices(
-    baselines: list[list[list[int]]],
-    regions: list[list[list[int]]] | None = None,
-) -> list[int]:
-    """Return polygon-aware reading-order indices."""
+def _line_slices(baseline: Points) -> Slices:
+    bounds = geom.LineString(baseline).bounds
+    return slice(bounds[1], bounds[3]), slice(bounds[0], bounds[2])
 
-    if not regions:
-        slices = [
-            (
-                slice(geom.LineString(line).bounds[1], geom.LineString(line).bounds[3]),
-                slice(geom.LineString(line).bounds[0], geom.LineString(line).bounds[2]),
-            )
-            for line in baselines
-        ]
-        return _topological_sort(_reading_order(slices))
 
-    region_polygons = [geom.Polygon(region) for region in regions]
-    region_lines: list[list[tuple[int, tuple[slice, slice]]]] = [[] for _ in region_polygons]
-    bounds: list[tuple[slice, slice]] = []
-    indices: dict[int, tuple[str, object]] = {}
+def _ordered_within(items: list[tuple[int, Slices]]) -> list[int]:
+    """Line indices of one region, in their reading order."""
+    order = _topological_sort(_reading_order([item[1] for item in items]))
+    return [items[position][0] for position in order]
+
+
+def _assign_to_regions(
+    baselines: Sequence[Points], region_polygons: list[geom.Polygon]
+) -> tuple[list[list[tuple[int, Slices]]], list[Slices], dict[int, int | None]]:
+    """Each line's first containing region, or the line on its own.
+
+    Returns the lines per region, the boxes of the lines outside every region,
+    and those lines' indices, each mapped to ``None`` for "no region".
+    """
+    region_lines: list[list[tuple[int, Slices]]] = [[] for _ in region_polygons]
+    bounds: list[Slices] = []
+    members: dict[int, int | None] = {}
     for line_index, baseline in enumerate(baselines):
         line = geom.LineString(baseline)
-        line_slices = (
-            slice(line.bounds[1], line.bounds[3]),
-            slice(line.bounds[0], line.bounds[2]),
+        home = next(
+            (index for index, region in enumerate(region_polygons) if is_in_region(line, region)),
+            None,
         )
-        for region_index, region in enumerate(region_polygons):
-            if is_in_region(line, region):
-                region_lines[region_index].append((line_index, line_slices))
-                break
+        if home is None:
+            bounds.append(_line_slices(baseline))
+            members[line_index] = None
         else:
-            bounds.append(line_slices)
-            indices[line_index] = ("line", baseline)
+            region_lines[home].append((line_index, _line_slices(baseline)))
+    return region_lines, bounds, members
 
+
+def reading_order_indices(
+    baselines: Sequence[Points],
+    regions: Sequence[Points] | None = None,
+) -> list[int]:
+    """Return polygon-aware reading-order indices.
+
+    Lines outside every region and the regions themselves are ordered as boxes
+    on the page; each region then expands into its own lines' order.
+    """
+
+    if not regions:
+        return _topological_sort(_reading_order([_line_slices(line) for line in baselines]))
+
+    region_polygons = [geom.Polygon(region) for region in regions]
+    region_lines, bounds, members = _assign_to_regions(baselines, region_polygons)
     intra_region_order: list[list[int]] = [[] for _ in region_polygons]
     last_line_index = len(baselines) - 1
     for region_index, region in enumerate(region_polygons):
         if region_lines[region_index]:
-            region_order = _topological_sort(
-                _reading_order([item[1] for item in region_lines[region_index]])
-            )
-            intra_region_order[region_index] = [
-                region_lines[region_index][position][0] for position in region_order
-            ]
+            intra_region_order[region_index] = _ordered_within(region_lines[region_index])
             region_bounds = region.bounds
             bounds.append(
                 (
@@ -419,16 +443,15 @@ def reading_order_indices(
                     slice(region_bounds[0], region_bounds[2]),
                 )
             )
-            indices[last_line_index + region_index + 1] = ("region", region_index)
+            members[last_line_index + region_index + 1] = region_index
 
-    order = _topological_sort(_reading_order(bounds))
-    sorted_indices = sorted(indices)
-    sorted_indices = [sorted_indices[position] for position in order]
+    keys = sorted(members)
     ordered: list[int] = []
-    for index in sorted_indices:
-        kind, value = indices[index]
-        if kind == "line":
-            ordered.append(index)
+    for position in _topological_sort(_reading_order(bounds)):
+        key = keys[position]
+        home = members[key]
+        if home is None:
+            ordered.append(key)
         else:
-            ordered.extend(intra_region_order[int(value)])
+            ordered.extend(intra_region_order[home])
     return ordered

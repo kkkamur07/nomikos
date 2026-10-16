@@ -11,7 +11,10 @@ band between the rows above and below it.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
+
+import numpy as np
 
 from nomikos_inference.architectures.ppocr_det.postprocessing import DetectedQuad
 
@@ -63,13 +66,6 @@ def _extents(quads: list[DetectedQuad]) -> list[tuple[float, ...]]:
     return extents
 
 
-def _find(roots: list[int], index: int) -> int:
-    while roots[index] != index:
-        roots[index] = roots[roots[index]]
-        index = roots[index]
-    return index
-
-
 def _overlap(min_a: float, max_a: float, min_b: float, max_b: float) -> float:
     return min(max_a, max_b) - max(min_a, min_b)
 
@@ -83,18 +79,10 @@ def _nearest_column(ranges: list[tuple[float, float]], xmin: float, xmax: float)
     return best
 
 
-def _shares_row(
-    xmin: float,
-    xmax: float,
-    ymin: float,
-    ymax: float,
-    height: float,
-    row_xmin: float,
-    row_xmax: float,
-    row_ymin: float,
-    row_ymax: float,
-) -> bool:
-    """Whether a quad belongs to a row with the given x and y ranges."""
+def _shares_row(quad: tuple[float, ...], row: list[float]) -> bool:
+    """Whether a quad (its extents) belongs to a row ``[ymin, ymax, xmin, xmax]``."""
+    xmin, xmax, ymin, ymax, height = quad[0], quad[1], quad[5], quad[6], quad[7]
+    row_ymin, row_ymax, row_xmin, row_xmax = row
     shorter_h = min(height, row_ymax - row_ymin)
     if _overlap(ymin, ymax, row_ymin, row_ymax) < ROW_OVERLAP_FRACTION * shorter_h:
         return False
@@ -102,6 +90,36 @@ def _shares_row(
     # rule: stacked quads sharing an x range are separate lines.
     narrower_w = min(xmax - xmin, row_xmax - row_xmin)
     return _overlap(xmin, xmax, row_xmin, row_xmax) < COLUMN_OVERLAP_FRACTION * narrower_w
+
+
+def _place_in_rows(
+    index: int,
+    quad: tuple[float, ...],
+    tall: bool,
+    rows: list[list[int]],
+    row_ranges: list[list[float]],
+) -> None:
+    """Add one quad to the row it shares, or open a new row.
+
+    A tall quad joins the first row it shares without extending it; any
+    other quad is compared with the current (last) row only and widens it.
+    """
+    xmin, xmax, ymin, ymax = quad[0], quad[1], quad[5], quad[6]
+    if tall:
+        target = next(
+            (position for position, row in enumerate(row_ranges) if _shares_row(quad, row)), None
+        )
+        if target is not None:
+            rows[target].append(index)
+            return
+    elif row_ranges and _shares_row(quad, row_ranges[-1]):
+        rows[-1].append(index)
+        last = row_ranges[-1]
+        last[0], last[1] = min(last[0], ymin), max(last[1], ymax)
+        last[2], last[3] = min(last[2], xmin), max(last[3], xmax)
+        return
+    rows.append([index])
+    row_ranges.append([ymin, ymax, xmin, xmax])
 
 
 def _row_groups(
@@ -126,41 +144,8 @@ def _row_groups(
     rows: list[list[int]] = []
     row_ranges: list[list[float]] = []
     for index in by_y:
-        xmin, xmax = extents[index][0], extents[index][1]
-        ymin, ymax, height = extents[index][5], extents[index][6], extents[index][7]
-        if median_height > 0 and height > TALL_HEIGHT_FRACTION * median_height:
-            target = None
-            for position, row_range in enumerate(row_ranges):
-                if _shares_row(
-                    xmin,
-                    xmax,
-                    ymin,
-                    ymax,
-                    height,
-                    row_range[2],
-                    row_range[3],
-                    row_range[0],
-                    row_range[1],
-                ):
-                    target = position
-                    break
-            if target is None:
-                rows.append([index])
-                row_ranges.append([ymin, ymax, xmin, xmax])
-            else:
-                rows[target].append(index)
-            continue
-        if row_ranges:
-            row_ymin, row_ymax, row_xmin, row_xmax = row_ranges[-1]
-            if _shares_row(xmin, xmax, ymin, ymax, height, row_xmin, row_xmax, row_ymin, row_ymax):
-                rows[-1].append(index)
-                row_ranges[-1][0] = min(row_ymin, ymin)
-                row_ranges[-1][1] = max(row_ymax, ymax)
-                row_ranges[-1][2] = min(row_xmin, xmin)
-                row_ranges[-1][3] = max(row_xmax, xmax)
-                continue
-        rows.append([index])
-        row_ranges.append([ymin, ymax, xmin, xmax])
+        tall = median_height > 0 and extents[index][7] > TALL_HEIGHT_FRACTION * median_height
+        _place_in_rows(index, extents[index], tall, rows, row_ranges)
     # Rows read by their top-most centre y, ties broken geometrically.
     ranked = sorted(
         range(len(rows)),
@@ -171,27 +156,10 @@ def _row_groups(
             tuple(sorted(geoms[i] for i in rows[position])),
         ),
     )
-    grouped = []
-    for position in ranked:
-        if direction == "ltr":
-            grouped.append(sorted(rows[position], key=lambda i: (extents[i][2], geoms[i])))
-        else:
-            grouped.append(sorted(rows[position], key=lambda i: (-extents[i][2], geoms[i])))
-    return grouped
-
-
-def _row_order(
-    members: list[int],
-    extents: list[tuple[float, ...]],
-    geoms: list[tuple[float, ...]],
-    column_builders: set[int],
-    direction: str,
-) -> list[int]:
-    """Order one column's members top to bottom, row by row."""
+    sign = 1.0 if direction == "ltr" else -1.0
     return [
-        index
-        for row in _row_groups(members, extents, geoms, column_builders, direction)
-        for index in row
+        sorted(rows[position], key=lambda i: (sign * extents[i][2], geoms[i]))
+        for position in ranked
     ]
 
 
@@ -223,6 +191,101 @@ class PageLayout:
     centre_y: tuple[float, ...]
 
 
+def _width_classes(extents: list[tuple[float, ...]]) -> tuple[list[int], list[int], list[int]]:
+    """Split quad indices into (narrow, wide, builders) by the median width."""
+    widths = sorted(extent[4] for extent in extents)
+    median_width = widths[len(extents) // 2]
+    narrow: list[int] = []
+    wide: list[int] = []
+    builders: list[int] = []
+    for index, extent in enumerate(extents):
+        if median_width > 0 and extent[4] < NARROW_WIDTH_FRACTION * median_width:
+            narrow.append(index)
+        elif median_width > 0 and extent[4] > WIDE_WIDTH_FRACTION * median_width:
+            wide.append(index)
+        else:
+            builders.append(index)
+    return narrow, wide, builders
+
+
+def _builder_components(builders: list[int], extents: list[tuple[float, ...]]) -> list[list[int]]:
+    """Connected components of builders that share a column, in builder order.
+
+    Two builders share a column when their x ranges overlap by at least
+    ``COLUMN_OVERLAP_FRACTION`` of the narrower width, merged transitively.
+    A breadth-first walk tests each reached builder against all unreached
+    ones at once with numpy, so a page of N stacked lines costs N vector
+    passes rather than N squared Python comparisons; the components are the
+    same whatever order the relation is explored in. Each component lists
+    its members in ``builders`` order, and components come in the order of
+    their first member.
+    """
+    xmins = np.array([extents[i][0] for i in builders], dtype=float)
+    xmaxs = np.array([extents[i][1] for i in builders], dtype=float)
+    widths = np.array([extents[i][4] for i in builders], dtype=float)
+    component = np.full(len(builders), -1, dtype=int)
+    for seed in range(len(builders)):
+        if component[seed] >= 0:
+            continue
+        component[seed] = seed
+        frontier = [seed]
+        while frontier:
+            current = frontier.pop()
+            unreached = np.flatnonzero(component < 0)
+            overlap = np.minimum(xmaxs[current], xmaxs[unreached]) - np.maximum(
+                xmins[current], xmins[unreached]
+            )
+            narrower = np.minimum(widths[current], widths[unreached])
+            joined = unreached[overlap >= COLUMN_OVERLAP_FRACTION * narrower]
+            component[joined] = seed
+            frontier.extend(joined.tolist())
+    grouped: dict[int, list[int]] = {}
+    for position, index in enumerate(builders):
+        grouped.setdefault(int(component[position]), []).append(index)
+    return list(grouped.values())
+
+
+def _column_range(extents: list[tuple[float, ...]], members: list[int]) -> tuple[float, float]:
+    return min(extents[i][0] for i in members), max(extents[i][1] for i in members)
+
+
+def _column_key(
+    extents: list[tuple[float, ...]], members: list[int], xmin: float, xmax: float
+) -> tuple[float, float, tuple[tuple[float, float], ...]]:
+    # Member centres break range ties without depending on input order.
+    return (xmin, xmax, tuple(sorted((extents[i][2], extents[i][3]) for i in members)))
+
+
+def _attach_wide(
+    wide: list[int],
+    columns: list[list[int]],
+    ranges: list[tuple[float, float]],
+    extents: list[tuple[float, ...]],
+) -> list[int]:
+    """Attach wide quads in place and return the ones that span columns.
+
+    Wide quads never merge columns: one overlapped column means membership,
+    two or more means a band of its own. ``ranges`` follows each attachment,
+    so a later wide quad sees the column as the earlier ones widened it.
+    """
+    spanning: list[int] = []
+    for index in wide:
+        xmin, xmax = extents[index][0], extents[index][1]
+        qualifying = [
+            position
+            for position, (low, high) in enumerate(ranges)
+            if _overlap(xmin, xmax, low, high) > SPANNING_OVERLAP_FRACTION * (high - low)
+        ]
+        if len(qualifying) >= 2:
+            spanning.append(index)
+            continue
+        target = qualifying[0] if qualifying else _nearest_column(ranges, xmin, xmax)
+        columns[target].append(index)
+        low, high = ranges[target]
+        ranges[target] = (min(low, xmin), max(high, xmax))
+    return spanning
+
+
 def layout_lines(quads: list[DetectedQuad], *, direction: str = "ltr") -> PageLayout:
     """Group quads into columns and rows, shared by ordering and refinement.
 
@@ -235,137 +298,47 @@ def layout_lines(quads: list[DetectedQuad], *, direction: str = "ltr") -> PageLa
 
     if direction not in ("ltr", "rtl"):
         raise ValueError('reading direction must be "ltr" or "rtl"')
-    count = len(quads)
-    if count == 0:
+    if not quads:
         return PageLayout(
             columns=(), column_order=(), spanning=(), direction=direction, centre_y=()
         )
     extents = _extents(quads)
     geoms = [tuple(float(c) for point in quad.points for c in point) for quad in quads]
-    widths = sorted(extent[4] for extent in extents)
-    median_width = widths[count // 2]
     # The median quad itself can never be narrow or wide, so at least one
     # column builder always exists for the rest to attach to.
-    narrow = {
-        index
-        for index, extent in enumerate(extents)
-        if median_width > 0 and extent[4] < NARROW_WIDTH_FRACTION * median_width
-    }
-    wide = {
-        index
-        for index, extent in enumerate(extents)
-        if median_width > 0 and extent[4] > WIDE_WIDTH_FRACTION * median_width
-    }
-    builders = [index for index in range(count) if index not in narrow and index not in wide]
-
-    roots = list(range(count))
-    for position, left in enumerate(builders):
-        for right in builders[position + 1 :]:
-            overlap = _overlap(
-                extents[left][0], extents[left][1], extents[right][0], extents[right][1]
-            )
-            narrower = min(extents[left][4], extents[right][4])
-            if overlap >= COLUMN_OVERLAP_FRACTION * narrower:
-                left_root, right_root = _find(roots, left), _find(roots, right)
-                if left_root != right_root:
-                    roots[max(left_root, right_root)] = min(left_root, right_root)
-
-    columns: dict[int, list[int]] = {}
-    for index in builders:
-        columns.setdefault(_find(roots, index), []).append(index)
-
-    def _column_key(
-        members: list[int], xmin: float, xmax: float
-    ) -> tuple[float, float, tuple[tuple[float, float], ...]]:
-        # Member centres break range ties without depending on input order.
-        return (
-            xmin,
-            xmax,
-            tuple(sorted((extents[i][2], extents[i][3]) for i in members)),
-        )
-
-    keyed = sorted(
-        columns.items(),
-        key=lambda item: _column_key(
-            item[1],
-            min(extents[i][0] for i in item[1]),
-            max(extents[i][1] for i in item[1]),
-        ),
+    narrow, wide, builders = _width_classes(extents)
+    ordered_columns = sorted(
+        _builder_components(builders, extents),
+        key=lambda members: _column_key(extents, members, *_column_range(extents, members)),
     )
-    ordered_columns = [members for _, members in keyed]
     builder_sets = [set(members) for members in ordered_columns]
-
-    # Wide quads never merge columns: one overlapped column means membership,
-    # two or more means a band of its own.
-    spanning: list[int] = []
-    for index in sorted(wide):
-        xmin, xmax = extents[index][0], extents[index][1]
-        qualifying = [
-            position
-            for position, members in enumerate(ordered_columns)
-            if _overlap(
-                xmin,
-                xmax,
-                min(extents[i][0] for i in members),
-                max(extents[i][1] for i in members),
-            )
-            > SPANNING_OVERLAP_FRACTION
-            * (max(extents[i][1] for i in members) - min(extents[i][0] for i in members))
-        ]
-        if len(qualifying) >= 2:
-            spanning.append(index)
-        elif len(qualifying) == 1:
-            ordered_columns[qualifying[0]].append(index)
-        else:
-            ranges = [
-                (
-                    min(extents[i][0] for i in members),
-                    max(extents[i][1] for i in members),
-                )
-                for members in ordered_columns
-            ]
-            ordered_columns[_nearest_column(ranges, xmin, xmax)].append(index)
-
-    ranges = [
-        (
-            min(extents[i][0] for i in members),
-            max(extents[i][1] for i in members),
-        )
-        for members in ordered_columns
-    ]
-    for index in sorted(narrow):
+    ranges = [_column_range(extents, members) for members in ordered_columns]
+    spanning = _attach_wide(wide, ordered_columns, ranges, extents)
+    for index in narrow:
         ordered_columns[_nearest_column(ranges, extents[index][0], extents[index][1])].append(index)
 
     column_order = sorted(
         range(len(ordered_columns)),
-        key=lambda position: _column_key(
-            ordered_columns[position], ranges[position][0], ranges[position][1]
-        ),
+        key=lambda position: _column_key(extents, ordered_columns[position], *ranges[position]),
         reverse=(direction == "rtl"),
     )
-    sequenced = [
-        _row_order(members, extents, geoms, builder_sets[position], direction)
-        for position, members in enumerate(ordered_columns)
-    ]
-    spanning_sorted = sorted(spanning, key=lambda i: (extents[i][3], extents[i][2], geoms[i]))
-    built_columns = tuple(
-        ColumnLayout(
-            members=tuple(members),
-            builders=tuple(sorted(builder_sets[position])),
-            rows=tuple(
-                tuple(row)
-                for row in _row_groups(members, extents, geoms, builder_sets[position], direction)
-            ),
-            sequence=tuple(sequenced[position]),
-            xmin=ranges[position][0],
-            xmax=ranges[position][1],
+    built_columns = []
+    for position, members in enumerate(ordered_columns):
+        rows = _row_groups(members, extents, geoms, builder_sets[position], direction)
+        built_columns.append(
+            ColumnLayout(
+                members=tuple(members),
+                builders=tuple(sorted(builder_sets[position])),
+                rows=tuple(tuple(row) for row in rows),
+                sequence=tuple(index for row in rows for index in row),
+                xmin=ranges[position][0],
+                xmax=ranges[position][1],
+            )
         )
-        for position, members in enumerate(ordered_columns)
-    )
     return PageLayout(
-        columns=built_columns,
+        columns=tuple(built_columns),
         column_order=tuple(column_order),
-        spanning=tuple(spanning_sorted),
+        spanning=tuple(sorted(spanning, key=lambda i: (extents[i][3], extents[i][2], geoms[i]))),
         direction=direction,
         centre_y=tuple(extent[3] for extent in extents),
     )
@@ -384,32 +357,20 @@ def order_lines(quads: list[DetectedQuad], *, direction: str = "ltr") -> list[in
     """
 
     layout = layout_lines(quads, direction=direction)
-    sequenced = [list(column.sequence) for column in layout.columns]
-    if not layout.spanning:
-        return [index for position in layout.column_order for index in sequenced[position]]
-
     # Spanning quads split the page into horizontal bands: everything above a
-    # band's centre reads first, then the band, then everything below.
+    # band's centre reads first, then the band, then everything below. The
+    # spanning quads are sorted by centre y, so a line's band is the number
+    # of band centres strictly above its own.
     span_cys = [layout.centre_y[i] for i in layout.spanning]
-
-    def _segment(index: int) -> int:
-        band = 0
-        for centre_y in span_cys:
-            if centre_y < layout.centre_y[index]:
-                band += 1
-            else:
-                break
-        return band
-
-    reading: list[int] = []
-    for band, span in enumerate(layout.spanning):
-        for position in layout.column_order:
-            reading.extend(index for index in sequenced[position] if _segment(index) == band)
-        reading.append(span)
+    bands: list[list[int]] = [[] for _ in range(len(layout.spanning) + 1)]
     for position in layout.column_order:
-        reading.extend(
-            index for index in sequenced[position] if _segment(index) == len(layout.spanning)
-        )
+        for index in layout.columns[position].sequence:
+            bands[bisect_left(span_cys, layout.centre_y[index])].append(index)
+    reading: list[int] = []
+    for band, members in enumerate(bands):
+        reading.extend(members)
+        if band < len(layout.spanning):
+            reading.append(layout.spanning[band])
     return reading
 
 
