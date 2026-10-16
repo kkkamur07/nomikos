@@ -66,6 +66,16 @@ function movedVertexEdit(
  * `onSegmentPointsChange` therefore neither re-runs the commit effect (which
  * would cancel a press in progress) nor re-renders the memoised canvas.
  */
+/** The selected segment's points: the edit in progress, else as saved. */
+function pointsOnScreen(
+  vertexEdit: VertexEdit | null,
+  selectedSegmentId: string | null,
+  lines: LineResponse[],
+): LinePoint[] | null {
+  if (vertexEdit?.segmentId === selectedSegmentId) return vertexEdit.points;
+  return lines.find((line) => line.id === selectedSegmentId)?.points ?? null;
+}
+
 export function useVertexEdit({
   lines,
   selectedSegmentId,
@@ -79,11 +89,7 @@ export function useVertexEdit({
   const vertexInteractingRef = useRef(false);
   const vertexEditRef = useRef(vertexEdit);
   vertexEditRef.current = vertexEdit;
-  const selectedSegment = lines.find((line) => line.id === selectedSegmentId);
-  const vertexEditPoints =
-    vertexEdit?.segmentId === selectedSegmentId
-      ? vertexEdit.points
-      : (selectedSegment?.points ?? null);
+  const vertexEditPoints = pointsOnScreen(vertexEdit, selectedSegmentId, lines);
   const draggedVertexIndex = vertexEdit?.draggedIndex ?? null;
   const pendingVertexIndex = vertexEdit?.pendingVertexIndex ?? null;
   const isVertexInteracting =
@@ -165,17 +171,13 @@ export function useVertexEdit({
   const onVertexPointerDown = useStableCallback(
     (vertexIndex: number, event: PointerEvent<SVGCircleElement>) => {
       if (!selectedSegmentId) return;
-      const basePoints =
-        vertexEdit?.segmentId === selectedSegmentId
-          ? vertexEdit.points
-          : selectedSegment?.points;
-      if (!basePoints || basePoints.length < 3) return;
+      if (!vertexEditPoints || vertexEditPoints.length < 3) return;
       vertexInteractingRef.current = true;
       event.currentTarget.setPointerCapture?.(event.pointerId);
       selectVertex(vertexIndex);
       setVertexEdit({
         segmentId: selectedSegmentId,
-        points: [...basePoints],
+        points: [...vertexEditPoints],
         draggedIndex: null,
         pendingVertexIndex: vertexIndex,
       });
