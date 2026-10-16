@@ -19,7 +19,6 @@ from nomikos_inference.architectures.blla.blla_decoder.lines import (
 from nomikos_inference.architectures.blla.blla_decoder.polygon import (
     calculate_polygonal_environment,
 )
-from nomikos_inference.architectures.blla.blla_decoder.simple import decode_simple_heatmaps
 from nomikos_inference.architectures.blla.blla_decoder.types import DecodedBLLALine
 from nomikos_inference.architectures.isolation import reraise_if_none_survived
 
@@ -41,14 +40,12 @@ def decode_blla_heatmaps(
     threshold: float = 0.17,
     min_length: float = 5.0,
     raw_logits: bool = False,
-    scaled_gray: np.ndarray | None = None,
+    scaled_gray: np.ndarray,
 ) -> list[DecodedBLLALine]:
     """Decode BLLA channels into image-space baselines and polygons.
 
-    Production inference follows the reference BLLA decoder when
-    ``scaled_gray`` is supplied. The small connected-component path remains
-    available for focused decoder tests that provide synthetic probabilities
-    without an image.
+    Follows the reference BLLA decoder: heatmaps resized to ``scaled_gray``,
+    skeletonised into baselines, polygonised against its Sobel features.
     """
 
     if not 0.0 < threshold < 1.0:
@@ -56,13 +53,6 @@ def decode_blla_heatmaps(
     width, height = image_size
     if width <= 0 or height <= 0:
         raise ValueError("image_size must be positive")
-    if scaled_gray is None:
-        return decode_simple_heatmaps(
-            heatmaps,
-            image_size=image_size,
-            threshold=threshold,
-            min_length=min_length,
-        )
     return _decode_reference_pipeline(
         heatmaps,
         image_size=image_size,

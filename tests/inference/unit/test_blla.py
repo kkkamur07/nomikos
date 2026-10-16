@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from nomikos_inference.architectures.blla.blla_decoder import decode_blla_heatmaps
 from nomikos_inference.architectures.blla.blla_decoder.common import resize_heatmaps_nearest
 from nomikos_inference.architectures.blla.blla_preprocessing import (
     MAX_WIDTH_TO_HEIGHT_RATIO,
@@ -82,23 +81,6 @@ def test_blla_preprocessing_is_proportional_below_the_width_cap() -> None:
     prepared = preprocess_blla_image(image, input_height=90)
 
     assert prepared.array.shape == (3, 90, 180)
-
-
-def test_blla_decoder_turns_separator_ridge_into_line_polygon() -> None:
-    heatmaps = np.zeros((4, 80, 100), dtype=np.float32)
-    heatmaps[0, 38:43, 10:91] = 1.0
-    heatmaps[1, 38:43, 10:91] = 1.0
-    heatmaps[2, 38:43, 10:91] = 1.0
-    heatmaps[3, 30:51, 10:91] = 1.0
-
-    lines = decode_blla_heatmaps(heatmaps, image_size=(100, 80))
-
-    assert len(lines) == 1
-    assert lines[0].baseline[0][0] == pytest.approx(10.0)
-    assert lines[0].baseline[-1][0] == pytest.approx(90.0)
-    ys = [point[1] for point in lines[0].polygon]
-    assert min(ys) == pytest.approx(30.0)
-    assert max(ys) == pytest.approx(50.0)
 
 
 def test_nearest_resize_repeats_source_pixels_rather_than_blending() -> None:
