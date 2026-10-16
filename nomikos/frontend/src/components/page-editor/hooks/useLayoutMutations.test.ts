@@ -15,10 +15,12 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../../api/errors";
+import type { JobCompletionEvent } from "../../../context/BackgroundJobsContext";
 import { queryClient, taggedMeta } from "../../../api/queryClient";
 import { resourceTags } from "../../../api/resources";
 import { platformNoCapacityMessage } from "../../../inference/platformMessages";
 import { useLayoutMutations } from "./useLayoutMutations";
+import type { api } from "../../../api/client";
 
 const segmentPart = vi.fn();
 const listPartLines = vi.fn();
@@ -28,11 +30,16 @@ const createPartLine = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    segmentPart: (...args: unknown[]) => segmentPart(...args),
-    listPartLines: (...args: unknown[]) => listPartLines(...args),
-    getPartLayout: (...args: unknown[]) => getPartLayout(...args),
-    getPagePairing: (...args: unknown[]) => getPagePairing(...args),
-    createPartLine: (...args: unknown[]) => createPartLine(...args),
+    segmentPart: (...args: Parameters<typeof api.segmentPart>) =>
+      segmentPart(...args),
+    listPartLines: (...args: Parameters<typeof api.listPartLines>) =>
+      listPartLines(...args),
+    getPartLayout: (...args: Parameters<typeof api.getPartLayout>) =>
+      getPartLayout(...args),
+    getPagePairing: (...args: Parameters<typeof api.getPagePairing>) =>
+      getPagePairing(...args),
+    createPartLine: (...args: Parameters<typeof api.createPartLine>) =>
+      createPartLine(...args),
   },
 }));
 
@@ -43,9 +50,9 @@ function setup() {
   const trackJobAndWait = vi.fn().mockResolvedValue({ status: "done" });
   // Captures the listener so a test can fire a completion that this hook did
   // not start, which is the case the background refresh introduced.
-  const jobCompletionListeners: ((event: unknown) => void)[] = [];
+  const jobCompletionListeners: ((event: JobCompletionEvent) => void)[] = [];
   const subscribeToJobCompletion = vi.fn(
-    (listener: (event: unknown) => void) => {
+    (listener: (event: JobCompletionEvent) => void) => {
       jobCompletionListeners.push(listener);
       return () => {
         const at = jobCompletionListeners.indexOf(listener);
