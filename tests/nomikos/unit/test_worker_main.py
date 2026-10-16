@@ -28,7 +28,7 @@ def test_main_checks_settings_before_the_worker_starts(monkeypatch: pytest.Monke
     monkeypatch.setattr(worker_main, "get_job_settings", lambda: events.append("job"))
 
     async def _loop(stop_event: asyncio.Event) -> None:
-        events.append("loop")
+        events.append("loop" if not stop_event.is_set() else "loop already stopped")
 
     monkeypatch.setattr(worker_main, "worker_loop", _loop)
 

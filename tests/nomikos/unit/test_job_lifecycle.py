@@ -438,9 +438,8 @@ async def test_read_clears_a_stale_callback_claim_so_cancel_works(
     assert job.status == JobStatus.cancelled
 
 
-async def test_sweep_skips_when_another_replica_holds_the_lock(
-    monkeypatch: pytest.MonkeyPatch, job_env
-):
+@pytest.mark.usefixtures("job_env")
+async def test_sweep_skips_when_another_replica_holds_the_lock(monkeypatch: pytest.MonkeyPatch):
     job = _readable_job(updated_at=datetime.now(UTC) - timedelta(seconds=600))
     store = _install_sweep_store(monkeypatch, job, lock_granted=False)
     notified = _record_notifications(monkeypatch)
