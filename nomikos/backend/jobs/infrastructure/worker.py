@@ -14,16 +14,15 @@ from typing import TYPE_CHECKING
 from backend.core.settings.device import get_device_settings
 from backend.core.settings.job import JobSettings, get_job_settings
 from backend.jobs.infrastructure.handlers import TestJobHandlerError, run_test_handler
-from backend.jobs.infrastructure.job_claim_engine import (
-    claim_next_pending_job,
+from backend.jobs.infrastructure.job_claim_engine import claim_next_pending_job
+from backend.jobs.infrastructure.job_sweeps import (
     clear_stale_callback_claims,
     fail_stale_waiting_jobs,
-    mark_job_done,
-    mark_job_failed,
     reclaim_stale_running_jobs,
     release_expired_device_leases,
     seconds_until_next_stale_waiting_job,
 )
+from backend.jobs.infrastructure.job_terminal import mark_job_done, mark_job_failed
 from backend.jobs.infrastructure.orm_models import Job
 
 if TYPE_CHECKING:

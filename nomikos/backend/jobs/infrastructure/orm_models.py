@@ -123,7 +123,7 @@ class Job(Base):
     # sweep takes the claim back, reset by a successful terminal write. Without
     # it a page that reliably kills whatever runs it cycles pending -> waiting ->
     # pending forever and never reaches a terminal status; see
-    # ``job_claim_engine.MAX_CLAIM_ATTEMPTS``.
+    # ``job_sweeps.MAX_CLAIM_ATTEMPTS``.
     claim_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0", default=0
     )

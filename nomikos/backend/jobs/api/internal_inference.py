@@ -48,7 +48,7 @@ from backend.core.exceptions import InvalidCredentialsError
 from backend.jobs.api.dependencies import require_inference_webhook_secret
 from backend.jobs.application.job_callback_service import JobCallbackService
 from backend.jobs.application.job_claim_service import job_is_held_by
-from backend.jobs.infrastructure.job_claim_engine import AGENT_CLAIM_PREFIX
+from backend.jobs.infrastructure.job_sql import AGENT_CLAIM_PREFIX
 from backend.jobs.infrastructure.orm_models import Job
 from backend.ml.application.agent_credentials import (
     SERVICE_TOKEN_HEADER,

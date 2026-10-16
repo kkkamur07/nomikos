@@ -40,7 +40,7 @@ CALLBACK_PROCESSING_ERROR = "Callback processing failed"
 # exists because the string is rendered whole in a toast and a traceback-length
 # message there is unreadable. The ``INFERENCE_FAILURE_ERROR`` prefix stays
 # stable so callers can still recognise the class of failure, same contract as
-# ``job_claim_engine.WAITING_TIMEOUT_ERROR``.
+# ``job_sweeps.WAITING_TIMEOUT_ERROR``.
 _MAX_PUBLIC_ERROR_CHARS = 200
 
 # Ordered: URLs are swallowed whole before the path rule can nibble at their
