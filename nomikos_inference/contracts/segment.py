@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -12,6 +11,7 @@ from nomikos_inference.contracts.common import (
     MAX_KRAKEN_CEILING_POINTS,
     MAX_SEGMENT_BLOCKS,
     MAX_SEGMENT_LINES,
+    JsonValue,
 )
 
 
@@ -29,21 +29,21 @@ def _validate_point_pairs(value: list[list[float]]) -> list[list[float]]:
 class SegmentBlock(BaseModel):
     external_id: str = Field(min_length=1)
     order: int = Field(ge=0)
-    box: dict[str, Any]
+    box: dict[str, JsonValue]
 
 
 class SegmentLine(BaseModel):
     external_id: str = Field(min_length=1)
     order: int = Field(ge=0)
     block_external_id: str | None = None
-    baseline: dict[str, Any]
-    mask: dict[str, Any] | None = None
+    baseline: dict[str, JsonValue]
+    mask: dict[str, JsonValue] | None = None
     kind: SegmentGeometryKind = SegmentGeometryKind.polygon
     points: list[list[float]] = Field(min_length=4, max_length=MAX_GEOMETRY_POINTS)
     kraken_ceiling: list[list[float]] | None = Field(
         default=None, max_length=MAX_KRAKEN_CEILING_POINTS
     )
-    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    source_metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("points")
     @classmethod

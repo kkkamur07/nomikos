@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
 from nomikos_inference.admission import validate_job_payload
-from nomikos_inference.contracts.common import ImageBytes, InferenceJobStatus, InferenceTask
+from nomikos_inference.contracts.common import (
+    ImageBytes,
+    InferenceJobStatus,
+    InferenceTask,
+    JsonValue,
+)
 from nomikos_inference.contracts.segment import SegmentRunResponse
 from nomikos_inference.contracts.transcribe import TranscribeBatchRunResponse
 from nomikos_inference.settings import get_inference_settings
@@ -22,7 +27,7 @@ class JobSubmitRequest(BaseModel):
     registry_tag: str = Field(default="stable", min_length=1)
     product_job_id: UUID
     image_bytes: ImageBytes
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, JsonValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_supported_task(self) -> JobSubmitRequest:

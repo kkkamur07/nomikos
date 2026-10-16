@@ -5,9 +5,9 @@ from __future__ import annotations
 import base64
 import binascii
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated
 
-from pydantic import PlainSerializer, PlainValidator
+from pydantic import JsonValue, PlainSerializer, PlainValidator
 
 from nomikos_inference.admission import CLIENT_INPUT_ERROR, validate_encoded_image
 from nomikos_inference.settings import get_inference_settings
@@ -96,7 +96,7 @@ MAX_SEGMENT_LINES = 10_000
 MAX_SEGMENT_BLOCKS = 1_000
 
 
-def _coerce_image_bytes(value: Any) -> bytes:
+def _coerce_image_bytes(value: object) -> bytes:
     settings = get_inference_settings()
     raw_bytes = validate_encoded_image(value, settings)
     if isinstance(value, bytes):
@@ -132,6 +132,7 @@ __all__ = [
     "ImageBytes",
     "InferenceJobStatus",
     "InferenceTask",
+    "JsonValue",
     "LineCrop",
     "MAX_GEOMETRY_POINTS",
     "MAX_KRAKEN_CEILING_POINTS",
