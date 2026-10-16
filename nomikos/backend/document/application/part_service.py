@@ -72,18 +72,6 @@ class DocumentPartService:
         """
         return self._injected_media or get_media_store()
 
-    async def list_parts(
-        self,
-        session: AsyncSession,
-        user: User,
-        project_id: UUID,
-        document_id: UUID,
-    ) -> list[DocumentPart]:
-        context = await self._access.require_document(session, user, project_id, document_id)
-        parts = sorted(context.document.parts, key=lambda p: p.order)
-        await self.backfill_part_dimensions(session, parts)
-        return parts
-
     async def upload_part(
         self,
         session: AsyncSession,
