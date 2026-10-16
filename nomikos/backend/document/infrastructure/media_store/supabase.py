@@ -110,8 +110,7 @@ class SupabaseMediaStore:
         try:
             return self._client.storage.from_(self._bucket).download(image_key)
         except Exception as exc:
-            message = str(exc).lower()
-            if "not found" in message or "404" in message or "object not found" in message:
+            if _is_not_found(exc):
                 raise FileNotFoundError(image_key) from exc
             raise
 
@@ -130,18 +129,39 @@ class SupabaseMediaStore:
                 options={"search": name, "limit": 100},
             )
         except Exception as exc:
-            message = str(exc).lower()
-            if "not found" in message or "404" in message:
+            if _is_not_found(exc):
                 raise FileNotFoundError(image_key) from exc
             raise
-        for entry in entries or []:
-            if entry.get("name") == name:
-                metadata = entry.get("metadata") or {}
-                stored = metadata.get("size", metadata.get("contentLength"))
-                if stored is not None:
-                    return int(stored)
-        raise FileNotFoundError(image_key)
+        stored = _listed_size(entries or [], name)
+        if stored is None:
+            raise FileNotFoundError(image_key)
+        return stored
 
     def delete(self, image_key: str) -> None:
         validate_image_key(image_key)
         self._client.storage.from_(self._bucket).remove([image_key])
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """Whether a Storage error means the object is missing.
+
+    The status code wins where the SDK carries one (``StorageApiError.status``). The
+    message is still checked because Storage also answers a missing object with a
+    400 whose message says "not found", and older SDK errors carry no status at all.
+    """
+    if str(getattr(exc, "status", "")) == "404":
+        return True
+    message = str(exc).lower()
+    return "not found" in message or "404" in message
+
+
+def _listed_size(entries: list[dict], name: str) -> int | None:
+    """``metadata.size`` (or ``contentLength``) of the entry called exactly ``name``."""
+    for entry in entries:
+        if entry.get("name") != name:
+            continue
+        metadata = entry.get("metadata") or {}
+        stored = metadata.get("size", metadata.get("contentLength"))
+        if stored is not None:
+            return int(stored)
+    return None

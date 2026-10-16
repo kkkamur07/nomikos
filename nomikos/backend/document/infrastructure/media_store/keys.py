@@ -57,3 +57,20 @@ def derived_image_key(image_key: str, *, width: int, encoder_version: str) -> st
     derived = f"{folder}/{part_id}/{variant}.webp"
     validate_image_key(derived)
     return derived
+
+
+def is_pending_key(image_key: str) -> bool:
+    """Whether a part row is still waiting for its direct upload to be finalized."""
+    return image_key.startswith("pending")
+
+
+def minted_pending_key(image_key: str) -> str | None:
+    """The object key a pending row's ``pending:<key>`` sentinel carries, if any.
+
+    A bare ``pending`` row never minted a key, so it has no blob to delete; anything
+    that is not a sentinel at all is not a pending key either.
+    """
+    minted = image_key.removeprefix("pending:")
+    if not minted or minted == image_key:
+        return None
+    return minted

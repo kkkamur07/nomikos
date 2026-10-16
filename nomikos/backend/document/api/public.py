@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -14,17 +13,17 @@ from backend.annotation.application.page_xml_export_service import PageXmlExport
 from backend.annotation.application.transcription_pdf_service import TranscriptionPdfService
 from backend.core.api.content_disposition import attachment_disposition
 from backend.core.api.pagination import MAX_CURSOR_LENGTH, decode_cursor, paginate_rows
+from backend.document.api.line_responses import public_line_response
+from backend.document.api.openapi_responses import PDF_RESPONSE, XML_RESPONSE, ZIP_RESPONSE
 from backend.document.api.public_rate_limit import throttle_public_export, throttle_public_read
 from backend.document.api.responses import public_document_with_parts_response
 from backend.document.api.schemas import (
     DEFAULT_PUBLIC_LAYOUT_LINES,
     MAX_PUBLIC_LAYOUT_LINES,
     MAX_SHARE_TOKEN_LENGTH,
-    LineTranscriptionResponse,
     PublicBlockResponse,
     PublicDocumentWithPartsResponse,
     PublicLayoutResponse,
-    PublicLineResponse,
     PublicTranscriptionLayerResponse,
 )
 from backend.document.application.document_catalog import DocumentCatalog
@@ -42,44 +41,6 @@ router = APIRouter(
 _service = DocumentCatalog()
 _transcription_pdf_service = TranscriptionPdfService()
 _page_xml_export_service = PageXmlExportService()
-
-PDF_RESPONSE: dict[int | str, dict[str, Any]] = {
-    200: {
-        "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}},
-        "description": "Transcription PDF bytes",
-    }
-}
-XML_RESPONSE: dict[int | str, dict[str, Any]] = {
-    200: {
-        "content": {"application/xml": {"schema": {"type": "string", "format": "binary"}}},
-        "description": "PAGE XML bytes",
-    }
-}
-ZIP_RESPONSE: dict[int | str, dict[str, Any]] = {
-    200: {
-        "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
-        "description": "Zip of the PAGE XML and the full-resolution page image it describes",
-    }
-}
-
-
-def _public_line_response(line) -> PublicLineResponse:
-    return PublicLineResponse(
-        id=line.id,
-        part_id=line.part_id,
-        order=line.order,
-        points=line.points,
-        line_transcriptions=[
-            LineTranscriptionResponse(
-                id=transcription.id,
-                transcription_id=transcription.transcription_id,
-                transcription_kind=transcription.transcription.kind,
-                text=transcription.text,
-                confidence=transcription.confidence,
-            )
-            for transcription in line.transcriptions
-        ],
-    )
 
 
 @router.get(
@@ -142,7 +103,7 @@ async def get_published_layout(
             for block in layout.blocks
         ],
         blocks_truncated=layout.blocks_truncated,
-        lines=[_public_line_response(line) for line in page],
+        lines=[public_line_response(line) for line in page],
         next_cursor=next_cursor,
     )
 
