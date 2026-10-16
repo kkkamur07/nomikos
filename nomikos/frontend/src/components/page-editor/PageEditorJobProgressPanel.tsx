@@ -18,6 +18,74 @@ function statusClass(status: TrackedBackgroundJob["status"]): string {
   return "pe-job-item--active";
 }
 
+function counted(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function CollapsedJobPanel({
+  activeCount,
+  completedCount,
+  onExpand,
+}: {
+  activeCount: number;
+  completedCount: number;
+  onExpand: () => void;
+}) {
+  const count = activeCount > 0 ? activeCount : completedCount;
+  const state = activeCount > 0 ? "running" : "finished";
+  return (
+    <button
+      type="button"
+      className="pe-job-panel pe-job-panel--collapsed"
+      aria-label={`${counted(count, "background job")} ${state}`}
+      onClick={onExpand}
+    >
+      <span className="pe-job-panel__pulse" aria-hidden="true" />
+      {`${counted(count, "job")} ${state}`}
+    </button>
+  );
+}
+
+function JobItem({
+  job,
+  onCancel,
+}: {
+  job: TrackedBackgroundJob;
+  onCancel: (jobId: string) => void;
+}) {
+  const running = !isTerminalJobStatus(job.status);
+  return (
+    <li className={`pe-job-item ${statusClass(job.status)}`}>
+      {running && <span className="pe-job-item__spinner" aria-hidden="true" />}
+      <div className="pe-job-item__body">
+        <div className="pe-job-item__row">
+          <span className="pe-job-item__kind">
+            {pageEditorJobKindLabel(job.kind)}
+          </span>
+          <span className="pe-job-item__status">{job.progressLabel}</span>
+        </div>
+        <strong className="pe-job-item__label">{job.label}</strong>
+        <JobExecutionAnnouncement
+          execution={job.execution}
+          className="pe-job-item__host"
+        />
+        {job.error && <p className="pe-job-item__error">{job.error}</p>}
+        {running && (
+          <div className="pe-job-item__actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs"
+              onClick={() => onCancel(job.id)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
 export function PageEditorJobProgressPanel({
   jobs,
   activeCount,
@@ -33,22 +101,12 @@ export function PageEditorJobProgressPanel({
   ).length;
 
   if (!expanded) {
-    const statusLabel =
-      activeCount > 0
-        ? `${activeCount} background job${activeCount === 1 ? "" : "s"} running`
-        : `${completedCount} background job${completedCount === 1 ? "" : "s"} finished`;
     return (
-      <button
-        type="button"
-        className="pe-job-panel pe-job-panel--collapsed"
-        aria-label={statusLabel}
-        onClick={() => onExpandedChange(true)}
-      >
-        <span className="pe-job-panel__pulse" aria-hidden="true" />
-        {activeCount > 0
-          ? `${activeCount} job${activeCount === 1 ? "" : "s"} running`
-          : `${completedCount} job${completedCount === 1 ? "" : "s"} finished`}
-      </button>
+      <CollapsedJobPanel
+        activeCount={activeCount}
+        completedCount={completedCount}
+        onExpand={() => onExpandedChange(true)}
+      />
     );
   }
 
@@ -91,36 +149,7 @@ export function PageEditorJobProgressPanel({
       </header>
       <ul className="pe-job-panel__list">
         {jobs.map((job) => (
-          <li key={job.id} className={`pe-job-item ${statusClass(job.status)}`}>
-            {!isTerminalJobStatus(job.status) && (
-              <span className="pe-job-item__spinner" aria-hidden="true" />
-            )}
-            <div className="pe-job-item__body">
-              <div className="pe-job-item__row">
-                <span className="pe-job-item__kind">
-                  {pageEditorJobKindLabel(job.kind)}
-                </span>
-                <span className="pe-job-item__status">{job.progressLabel}</span>
-              </div>
-              <strong className="pe-job-item__label">{job.label}</strong>
-              <JobExecutionAnnouncement
-                execution={job.execution}
-                className="pe-job-item__host"
-              />
-              {job.error && <p className="pe-job-item__error">{job.error}</p>}
-              {!isTerminalJobStatus(job.status) && (
-                <div className="pe-job-item__actions">
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-xs"
-                    onClick={() => onCancelJob(job.id)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-          </li>
+          <JobItem key={job.id} job={job} onCancel={onCancelJob} />
         ))}
       </ul>
     </section>

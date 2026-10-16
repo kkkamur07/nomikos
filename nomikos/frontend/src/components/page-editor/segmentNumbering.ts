@@ -4,7 +4,7 @@ import type { LineResponse } from "../../api/client";
  * What numbering needs from a Segment: which one it is, and the `order` the
  * server stored for it. Anything Segment-shaped can be numbered.
  */
-export type NumberableSegment = Pick<LineResponse, "id" | "order">;
+type NumberableSegment = Pick<LineResponse, "id" | "order">;
 
 /**
  * The Segments of a Page in Segment number order.

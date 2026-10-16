@@ -16,7 +16,7 @@ import { PAGE_EDITOR_SHORTCUTS } from "./pageEditorShortcuts";
  * over one canvas is one too many.
  */
 
-export type CanvasTool = "none" | "rectangle" | "polygon";
+type CanvasTool = "none" | "rectangle" | "polygon";
 
 type PageEditorCanvasIslandProps = {
   tool: CanvasTool;

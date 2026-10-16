@@ -1,0 +1,44 @@
+/* ─── Pager: one page at a time, from the toolbar ───────────────── */
+.pe-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px;
+}
+.pe-pager__step {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.9375rem;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 3px;
+}
+.pe-pager__step:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.pe-pager__step:disabled {
+  color: var(--border);
+  cursor: default;
+}
+.pe-pager__step:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 1px;
+}
+.pe-pager__label {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  white-space: nowrap;
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1200px) {
+  .pe-pager__of {
+    display: none;
+  }
+}

@@ -6,6 +6,7 @@ import {
 } from "../../../api/client";
 import { isAbortError } from "../../../api/errors";
 import type { SegmentHealthAction } from "../PageEditorSegmentHealthPanel";
+import { errorMessage } from "./editorHookTypes";
 
 type UseSegmentHealthArgs = {
   projectId: string | undefined;
@@ -81,9 +82,7 @@ export function useSegmentHealth({
       .catch((err: unknown) => {
         if (cancelled || seq !== requestSeq.current || isAbortError(err))
           return;
-        setReadError(
-          err instanceof Error ? err.message : "Could not check this page.",
-        );
+        setReadError(errorMessage(err, "Could not check this page."));
       })
       .finally(() => {
         if (cancelled || seq !== requestSeq.current) return;
@@ -153,9 +152,7 @@ export function useSegmentHealth({
         })
         .catch((err: unknown) => {
           if (isAbortError(err)) return;
-          setApplyError(
-            err instanceof Error ? err.message : "Could not apply that fix.",
-          );
+          setApplyError(errorMessage(err, "Could not apply that fix."));
           // The server refuses a fix it no longer offers, which usually means
           // the page moved underneath the panel. Re-read so the reviewer is
           // looking at what is actually there now.

@@ -1,72 +1,43 @@
-import {
-  useEffect,
-  useState,
-  type ChangeEvent,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
-import {
-  api,
-  type EnqueueJobResponse,
-  type JobResponse,
-  type LineResponse,
-  type TranscribeJobResult,
-  type TranscriptionLayerResponse,
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import type {
+  LineResponse,
+  TranscriptionLayerResponse,
 } from "../../../api/client";
-import { isAbortError } from "../../../api/errors";
 import { invalidateAfter } from "../../../api/resources";
-import { submissionRefusalExplanation } from "../../../inference";
-import {
-  INFERENCE_JOB_WAIT_CEILING_MS,
-  type PageEditorJobKind,
-} from "../jobProgress";
 import { segmentNumberFor, segmentsInNumberOrder } from "../segmentNumbering";
-import { statusMessage, type StatusMessage } from "../statusMessage";
-import { groundTruthLayer } from "../../../utils/transcriptionLayerLabel";
-import {
-  lineTextForLayer,
-  modelLayerIdForPromotion,
-  withLocalGroundTruth,
-} from "./utils";
+import type { StatusMessage } from "../statusMessage";
+import type {
+  PairingProgressSetter,
+  SetState,
+  TextLinesSetter,
+  TrackJobAndWait,
+} from "./editorHookTypes";
+import { useGroundTruthText } from "./useGroundTruthText";
+import { useOcrRun } from "./useOcrRun";
+import { lineTextForLayer } from "./utils";
 
 type PairingStateInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;
   lines: LineResponse[];
-  setLines: Dispatch<SetStateAction<LineResponse[]>>;
+  setLines: SetState<LineResponse[]>;
   transcriptionLayers: TranscriptionLayerResponse[];
-  setTranscriptionLayers: Dispatch<
-    SetStateAction<TranscriptionLayerResponse[]>
-  >;
+  setTranscriptionLayers: SetState<TranscriptionLayerResponse[]>;
   selectedTranscriptionLayerId: string | null;
-  setSelectedTranscriptionLayerId: Dispatch<SetStateAction<string | null>>;
+  setSelectedTranscriptionLayerId: SetState<string | null>;
   groundTruthTranscriptionId: string | null;
-  setTextLines: Dispatch<
-    SetStateAction<
-      { order: number; text: string; paired_line_id: string | null }[]
-    >
-  >;
-  setPairingProgress: Dispatch<
-    SetStateAction<{
-      paired_lines: number;
-      total_lines: number;
-      percent: number;
-    }>
-  >;
-  setPairingError: Dispatch<SetStateAction<string | null>>;
+  setTextLines: TextLinesSetter;
+  setPairingProgress: PairingProgressSetter;
+  setPairingError: SetState<string | null>;
   selectedTranscribeModelId: string | null;
   /**
    * Where a refused submission is explained. It is a standing line rather than
    * the error toast, because "no inference host had capacity" is something the
    * researcher has to act on, and a toast is gone before they can.
    */
-  setSubmissionRefusal: Dispatch<SetStateAction<string | null>>;
-  trackJobAndWait: (
-    enqueued: EnqueueJobResponse,
-    meta: { label: string; kind: PageEditorJobKind },
-    options?: { timeoutMs?: number },
-  ) => Promise<JobResponse>;
+  setSubmissionRefusal: SetState<string | null>;
+  trackJobAndWait: TrackJobAndWait;
 };
 
 export function usePairingState({
@@ -93,16 +64,10 @@ export function usePairingState({
   const [approvedTextDraft, setApprovedTextDraft] = useState("");
   const [transcriptionSaveMessage, setTranscriptionSaveMessage] =
     useState<StatusMessage | null>(null);
-  const [ocrRunning, setOcrRunning] = useState(false);
-  const [ocrScope, setOcrScope] = useState<"segment" | "page" | null>(null);
-  const [ocrMessage, setOcrMessage] = useState<StatusMessage | null>(null);
-
-  useEffect(() => {
-    setSelectedSegmentId(null);
-    setApprovedTextDraft("");
-    setTranscriptionSaveMessage(null);
-    setOcrMessage(null);
-  }, [projectId, documentId, partId]);
+  const selectedSegmentIdRef = useRef(selectedSegmentId);
+  selectedSegmentIdRef.current = selectedSegmentId;
+  const selectedTranscriptionLayerIdRef = useRef(selectedTranscriptionLayerId);
+  selectedTranscriptionLayerIdRef.current = selectedTranscriptionLayerId;
 
   /**
    * Called once per committed write, after the server has accepted it.
@@ -130,80 +95,53 @@ export function usePairingState({
       ? null
       : (lines.find((line) => line.id === selectedSegmentId) ?? null);
 
-  async function pairTextLine(order: number) {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) return;
-    try {
-      const pairing = await api.pairTextLine(projectId, documentId, partId, {
-        line_id: selectedSegmentId,
-        text_line_order: order,
-      });
-      const candidate = pairing.text_lines.find(
-        (textLine) => textLine.order === order,
-      );
-      if (candidate) {
-        // Read-modify-write after an await: fold into the current segments, not
-        // into the render-time snapshot, or a concurrent edit is reverted.
-        setLines((current) =>
-          withLocalGroundTruth(
-            current,
-            groundTruthTranscriptionId,
-            selectedSegmentId,
-            candidate.text,
-          ),
-        );
-        setApprovedTextDraft(candidate.text);
-      }
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-      notePartContentChanged();
-      setPairingError(null);
-    } catch (err) {
-      setPairingError(
-        err instanceof Error ? err.message : "Failed to pair Text line.",
-      );
-    }
-  }
+  const groundTruthText = useGroundTruthText({
+    projectId,
+    documentId,
+    partId,
+    setLines,
+    groundTruthTranscriptionId,
+    setSelectedTranscriptionLayerId,
+    selectedTranscriptionLayer,
+    selectedSegmentId,
+    selectedSegment,
+    selectedSegmentIdRef,
+    approvedTextDraft,
+    setApprovedTextDraft,
+    setTranscriptionSaveMessage,
+    setTextLines,
+    setPairingProgress,
+    setPairingError,
+    notePartContentChanged,
+  });
 
-  /** Resolves true when the text was saved, false when the save failed. */
-  async function saveApprovedText(): Promise<boolean> {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) {
-      return false;
-    }
-    if (!groundTruthTranscriptionId) {
-      setPairingError("Ground truth transcription layer is not available.");
-      return false;
-    }
-    try {
-      const updated = await api.updateGroundTruthLineText(
-        projectId,
-        documentId,
-        groundTruthTranscriptionId,
-        selectedSegmentId,
-        { text: approvedTextDraft },
-      );
-      // Read-modify-write after an await: fold into the current segments, not
-      // into the render-time snapshot, or a concurrent edit is reverted.
-      setLines((current) =>
-        withLocalGroundTruth(
-          current,
-          groundTruthTranscriptionId,
-          selectedSegmentId,
-          updated.text,
-        ),
-      );
-      const pairing = await api.getPagePairing(projectId, documentId, partId);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-      notePartContentChanged();
-      setPairingError(null);
-      return true;
-    } catch (err) {
-      setPairingError(
-        err instanceof Error ? err.message : "Failed to save approved text.",
-      );
-      return false;
-    }
-  }
+  const ocrRun = useOcrRun({
+    projectId,
+    documentId,
+    partId,
+    setLines,
+    setTranscriptionLayers,
+    selectedTranscriptionLayerIdRef,
+    setSelectedTranscriptionLayerId,
+    groundTruthTranscriptionId,
+    selectedSegmentId,
+    selectedSegmentIdRef,
+    selectedSegmentNumber,
+    setApprovedTextDraft,
+    setPairingError,
+    selectedTranscribeModelId,
+    setSubmissionRefusal,
+    trackJobAndWait,
+    notePartContentChanged,
+  });
+  const { setOcrMessage } = ocrRun;
+
+  useEffect(() => {
+    setSelectedSegmentId(null);
+    setApprovedTextDraft("");
+    setTranscriptionSaveMessage(null);
+    setOcrMessage(null);
+  }, [projectId, documentId, partId, setOcrMessage]);
 
   function selectTranscriptionLayer(event: ChangeEvent<HTMLSelectElement>) {
     const nextLayerId = event.target.value;
@@ -212,327 +150,6 @@ export function usePairingState({
     setPairingError(null);
     if (selectedSegment) {
       setApprovedTextDraft(lineTextForLayer(selectedSegment, nextLayerId));
-    }
-  }
-
-  /** Resolves true when the text was saved, false when the save failed. */
-  async function saveGroundTruthText(): Promise<boolean> {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) {
-      return false;
-    }
-    if (
-      !groundTruthTranscriptionId ||
-      selectedTranscriptionLayer?.kind !== "ground_truth"
-    ) {
-      setPairingError("Only Ground truth can be edited.");
-      return false;
-    }
-    try {
-      const updated = await api.updateGroundTruthLineText(
-        projectId,
-        documentId,
-        groundTruthTranscriptionId,
-        selectedSegmentId,
-        { text: approvedTextDraft },
-      );
-      // Read-modify-write after an await: fold into the current segments, not
-      // into the render-time snapshot, or a concurrent edit is reverted.
-      setLines((current) =>
-        withLocalGroundTruth(
-          current,
-          groundTruthTranscriptionId,
-          selectedSegmentId,
-          updated.text,
-        ),
-      );
-      const pairing = await api.getPagePairing(projectId, documentId, partId);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-      notePartContentChanged();
-      setPairingError(null);
-      setTranscriptionSaveMessage(statusMessage("Ground truth text saved"));
-      return true;
-    } catch (err) {
-      setTranscriptionSaveMessage(null);
-      setPairingError(
-        err instanceof Error
-          ? err.message
-          : "Failed to save Ground truth text.",
-      );
-      return false;
-    }
-  }
-
-  /** Keeps the draft box on the open segment showing the layer just written. */
-  function syncApprovedTextDraft(
-    reloadedLines: LineResponse[],
-    layerId: string,
-  ) {
-    if (!selectedSegmentId) return;
-    const segment = reloadedLines.find((line) => line.id === selectedSegmentId);
-    if (segment) {
-      setApprovedTextDraft(lineTextForLayer(segment, layerId));
-    }
-  }
-
-  /**
-   * The reload a finished OCR run needs, without touching the open layer.
-   *
-   * A model run produces a suggestion, never a replacement: switching the
-   * dropdown to the new model layer, and the draft box with it, read as "the
-   * model overwrote my Ground truth" even though the layers are separate rows.
-   * So the selection stays where the researcher left it, and the draft box is
-   * re-synced to that same layer. With nothing selected yet, Ground truth is
-   * the layer to open, never the model output. A layer deleted while the run
-   * was in flight is the exception: an id the reload no longer carries would
-   * resolve to no layer at all, so it is dropped and Ground truth opens.
-   */
-  async function refreshAfterOcr() {
-    if (!projectId || !documentId || !partId) return;
-    const [reloadedLines, layers] = await Promise.all([
-      api.listPartLines(projectId, documentId, partId),
-      api.listTranscriptions(projectId, documentId),
-    ]);
-    setLines(reloadedLines);
-    setTranscriptionLayers(layers);
-    const stillPresent = (layerId: string | null) =>
-      layerId !== null && layers.some((layer) => layer.id === layerId)
-        ? layerId
-        : null;
-    const layerToShow =
-      stillPresent(selectedTranscriptionLayerId) ??
-      stillPresent(groundTruthTranscriptionId) ??
-      groundTruthLayer(layers)?.id ??
-      null;
-    if (layerToShow === null) return;
-    if (layerToShow !== selectedTranscriptionLayerId) {
-      setSelectedTranscriptionLayerId(layerToShow);
-    }
-    syncApprovedTextDraft(reloadedLines, layerToShow);
-  }
-
-  /**
-   * The page state a finished transcription leaves behind, wherever it was
-   * produced: the new layer is folded into the segments already on screen, then
-   * the page reloads to pick up what the server actually stored.
-   */
-  async function applyTranscribeResult(result: TranscribeJobResult) {
-    setLines((current) =>
-      current.map((line) => {
-        const output = result.lines.find((entry) => entry.line_id === line.id);
-        if (!output) return line;
-        const withoutLayer = line.line_transcriptions.filter(
-          (transcription) =>
-            transcription.transcription_id !== result.transcription_id,
-        );
-        return {
-          ...line,
-          line_transcriptions: [
-            ...withoutLayer,
-            {
-              id: `ocr-${line.id}-${result.transcription_id}`,
-              transcription_id: result.transcription_id,
-              transcription_kind: "model" as const,
-              text: output.text,
-              confidence: output.confidence,
-            },
-          ],
-        };
-      }),
-    );
-    await refreshAfterOcr();
-    notePartContentChanged();
-    return result;
-  }
-
-  async function applyTranscribeJob(
-    job: JobResponse,
-  ): Promise<TranscribeJobResult | null> {
-    const result = job.result as TranscribeJobResult | null;
-    if (result?.transcription_id) {
-      return applyTranscribeResult(result);
-    }
-    // The layer is committed before the job reports done, so a result this
-    // client cannot read must not strand the page on stale segments: find the
-    // layer the job created and reload, exactly what a manual refresh does.
-    if (projectId && documentId) {
-      const layers = await api.listTranscriptions(projectId, documentId);
-      const created = layers.find(
-        (layer) => layer.created_by_job_id === job.id,
-      );
-      if (created) {
-        await refreshAfterOcr();
-        notePartContentChanged();
-        return null;
-      }
-    }
-    throw new Error("Transcribe job returned no result.");
-  }
-
-  async function runSegmentOcr() {
-    if (!projectId || !documentId || !partId) {
-      setPairingError("Page context is missing. Reload and try again.");
-      return;
-    }
-    if (!selectedSegmentId) {
-      setPairingError("Select a segment on the canvas first.");
-      return;
-    }
-    if (!selectedTranscribeModelId) {
-      setPairingError("Select an HTR model before running OCR.");
-      return;
-    }
-    setOcrRunning(true);
-    setOcrScope("segment");
-    setOcrMessage(null);
-    setPairingError(null);
-    setSubmissionRefusal(null);
-    try {
-      const enqueued = await api.enqueueTranscribePart(
-        projectId,
-        documentId,
-        partId,
-        {
-          model_id: selectedTranscribeModelId,
-          line_ids: [selectedSegmentId],
-        },
-      );
-      const job = await trackJobAndWait(
-        enqueued,
-        {
-          label: selectedSegmentNumber
-            ? `Segment ${selectedSegmentNumber}`
-            : "Selected segment",
-          kind: "transcription-segment",
-        },
-        { timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS },
-      );
-      const result = await applyTranscribeJob(job);
-      const hasAnyText =
-        result === null || result.lines.some((line) => line.text?.trim());
-      setOcrMessage(
-        statusMessage(
-          hasAnyText
-            ? "OCR prediction completed for selected Segment."
-            : "OCR finished with no text for this segment.",
-        ),
-      );
-    } catch (err) {
-      // The jobs panel already reports a user cancellation.
-      if (isAbortError(err)) return;
-      const refusal = submissionRefusalExplanation(err);
-      if (refusal) {
-        setSubmissionRefusal(refusal);
-        return;
-      }
-      setPairingError(
-        err instanceof Error ? err.message : "Segment OCR failed.",
-      );
-    } finally {
-      setOcrRunning(false);
-      setOcrScope(null);
-    }
-  }
-
-  async function runPageOcr() {
-    if (!projectId || !documentId || !partId) {
-      setPairingError("Page context is missing. Reload and try again.");
-      return;
-    }
-    if (!selectedTranscribeModelId) {
-      setPairingError("Select an HTR model before running OCR.");
-      return;
-    }
-    setOcrRunning(true);
-    setOcrScope("page");
-    setOcrMessage(null);
-    setPairingError(null);
-    setSubmissionRefusal(null);
-    try {
-      const enqueued = await api.enqueueTranscribePart(
-        projectId,
-        documentId,
-        partId,
-        {
-          model_id: selectedTranscribeModelId,
-        },
-      );
-      const job = await trackJobAndWait(
-        enqueued,
-        { label: "Full page", kind: "transcription-page" },
-        { timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS },
-      );
-      const result = await applyTranscribeJob(job);
-      const withText =
-        result === null
-          ? null
-          : result.lines.filter((line) => line.text?.trim()).length;
-      setOcrMessage(
-        statusMessage(
-          withText === null
-            ? "OCR prediction completed for the page."
-            : withText > 0
-              ? `OCR prediction completed for ${withText} Segment(s).`
-              : "OCR finished with no text for the selected segments.",
-        ),
-      );
-    } catch (err) {
-      // The jobs panel already reports a user cancellation.
-      if (isAbortError(err)) return;
-      const refusal = submissionRefusalExplanation(err);
-      if (refusal) {
-        setSubmissionRefusal(refusal);
-        return;
-      }
-      setPairingError(err instanceof Error ? err.message : "Page OCR failed.");
-    } finally {
-      setOcrRunning(false);
-      setOcrScope(null);
-    }
-  }
-
-  async function promoteSelectedSegmentToGroundTruth() {
-    if (
-      !projectId ||
-      !documentId ||
-      !partId ||
-      !selectedSegmentId ||
-      !selectedSegment
-    )
-      return;
-    const modelLayerId = modelLayerIdForPromotion(
-      selectedSegment,
-      selectedTranscriptionLayer,
-    );
-    if (!modelLayerId) {
-      setPairingError(
-        "Model transcription is not available to save as Ground truth.",
-      );
-      return;
-    }
-    try {
-      await api.copyToGroundTruth(projectId, documentId, modelLayerId, {
-        line_ids: [selectedSegmentId],
-      });
-      const [reloadedLines, pairing] = await Promise.all([
-        api.listPartLines(projectId, documentId, partId),
-        api.getPagePairing(projectId, documentId, partId),
-      ]);
-      setLines(reloadedLines);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-      notePartContentChanged();
-      setPairingError(null);
-      if (groundTruthTranscriptionId) {
-        setSelectedTranscriptionLayerId(groundTruthTranscriptionId);
-        syncApprovedTextDraft(reloadedLines, groundTruthTranscriptionId);
-      }
-      setTranscriptionSaveMessage(statusMessage("Saved to Ground truth"));
-    } catch (err) {
-      setTranscriptionSaveMessage(null);
-      setPairingError(
-        err instanceof Error ? err.message : "Failed to save to Ground truth.",
-      );
     }
   }
 
@@ -574,19 +191,20 @@ export function usePairingState({
     approvedTextDraft,
     setApprovedTextDraft,
     transcriptionSaveMessage,
-    ocrRunning,
-    ocrScope,
-    ocrMessage,
+    ocrRunning: ocrRun.ocrRunning,
+    ocrScope: ocrRun.ocrScope,
+    ocrMessage: ocrRun.ocrMessage,
     selectedSegment,
     selectedSegmentNumber,
     selectedTranscriptionLayer,
-    pairTextLine,
-    saveApprovedText,
+    pairTextLine: groundTruthText.pairTextLine,
+    saveApprovedText: groundTruthText.saveApprovedText,
     selectTranscriptionLayer,
-    saveGroundTruthText,
-    runSegmentOcr,
-    runPageOcr,
-    promoteSelectedSegmentToGroundTruth,
+    saveGroundTruthText: groundTruthText.saveGroundTruthText,
+    runSegmentOcr: ocrRun.runSegmentOcr,
+    runPageOcr: ocrRun.runPageOcr,
+    promoteSelectedSegmentToGroundTruth:
+      groundTruthText.promoteSelectedSegmentToGroundTruth,
     selectSegment,
     navigateSegment,
   };

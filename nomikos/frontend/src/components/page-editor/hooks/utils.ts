@@ -5,7 +5,7 @@ import type {
   TranscriptionLayerResponse,
 } from "../../../api/client";
 
-export function approvedText(line: LineResponse): string | null {
+function approvedText(line: LineResponse): string | null {
   return (
     line.line_transcriptions.find(
       (transcription) => transcription.transcription_kind === "ground_truth",

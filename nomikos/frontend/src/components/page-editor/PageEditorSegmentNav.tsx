@@ -6,6 +6,11 @@ type PageEditorSegmentNavProps = {
   disabled?: boolean;
 };
 
+function navLabel(segmentNumber: number | null, totalSegments: number) {
+  if (totalSegments === 0) return "-";
+  return `${segmentNumber ?? "-"} / ${totalSegments}`;
+}
+
 export function PageEditorSegmentNav({
   segmentNumber,
   totalSegments,
@@ -13,14 +18,10 @@ export function PageEditorSegmentNav({
   onNext,
   disabled = false,
 }: PageEditorSegmentNavProps) {
-  const atStart = segmentNumber === null || segmentNumber <= 1;
-  const atEnd = segmentNumber === null || segmentNumber >= totalSegments;
-  const label =
-    segmentNumber !== null && totalSegments > 0
-      ? `${segmentNumber} / ${totalSegments}`
-      : totalSegments > 0
-        ? `- / ${totalSegments}`
-        : "-";
+  // With no segment selected, or none at all, neither button moves.
+  const stuck = disabled || segmentNumber === null || totalSegments === 0;
+  const atStart = stuck || segmentNumber <= 1;
+  const atEnd = stuck || segmentNumber >= totalSegments;
 
   return (
     <nav className="pe-seg-nav" aria-label="Segment navigation">
@@ -28,19 +29,19 @@ export function PageEditorSegmentNav({
         type="button"
         className="pe-seg-nav__btn"
         aria-label="Previous segment"
-        disabled={disabled || atStart || totalSegments === 0}
+        disabled={atStart}
         onClick={onPrevious}
       >
         ‹
       </button>
       <span className="pe-seg-nav__label" aria-live="polite">
-        {label}
+        {navLabel(segmentNumber, totalSegments)}
       </span>
       <button
         type="button"
         className="pe-seg-nav__btn"
         aria-label="Next segment"
-        disabled={disabled || atEnd || totalSegments === 0}
+        disabled={atEnd}
         onClick={onNext}
       >
         ›

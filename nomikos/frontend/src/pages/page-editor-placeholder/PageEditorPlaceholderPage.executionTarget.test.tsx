@@ -1,8 +1,9 @@
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { MessageInstance } from "antd/es/message/interface";
+import type { MessageInstance, MessageType } from "antd/es/message/interface";
 
+import type { api, JobResponse } from "../../api/client";
 import { registerToastApi } from "../../components/ui/toast";
 import {
   DOCUMENT,
@@ -23,9 +24,15 @@ import {
  */
 function recordedToasts(): string[] {
   const shown: string[] = [];
-  const record = (content: unknown) => {
+  // A toast that is already closed: calling it does nothing, awaiting it
+  // resolves at once.
+  const closed = (): MessageType => {
+    const done = Promise.resolve(true);
+    return Object.assign(() => {}, { then: done.then.bind(done) });
+  };
+  const record = (content: Parameters<MessageInstance["success"]>[0]) => {
     shown.push(String(content));
-    return (() => {}) as unknown as ReturnType<MessageInstance["success"]>;
+    return closed();
   };
   registerToastApi({
     success: record,
@@ -35,11 +42,13 @@ function recordedToasts(): string[] {
     loading: record,
     open: record,
     destroy: () => {},
-  } as unknown as MessageInstance);
+  });
   return shown;
 }
 
 afterEach(() => registerToastApi(null));
+
+type EnqueuedJob = Awaited<ReturnType<typeof api.enqueueTranscribePart>>;
 
 const TRANSCRIBE_MODEL = {
   id: "model-1",
@@ -52,7 +61,7 @@ const TRANSCRIBE_MODEL = {
 };
 
 /** A job as `GET /jobs/{id}` returns it, including its **execution target**. */
-function jobResponse(overrides: Record<string, unknown> = {}) {
+function jobResponse(overrides: Partial<JobResponse> = {}): JobResponse {
   return {
     id: "job-ocr-1",
     type: "transcribe",
@@ -140,7 +149,7 @@ describe("the account-level host preference", () => {
 });
 
 /** The 202 from an enqueue route: the id and the host fixed at submission. */
-function enqueued(overrides: Record<string, unknown> = {}) {
+function enqueued(overrides: Partial<EnqueuedJob> = {}): EnqueuedJob {
   return {
     job_id: "job-ocr-1",
     execution_target: "cloud",

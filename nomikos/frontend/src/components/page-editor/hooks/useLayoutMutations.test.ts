@@ -15,10 +15,12 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../../api/errors";
+import type { JobCompletionEvent } from "../../../context/BackgroundJobsContext";
 import { queryClient, taggedMeta } from "../../../api/queryClient";
 import { resourceTags } from "../../../api/resources";
 import { platformNoCapacityMessage } from "../../../inference/platformMessages";
 import { useLayoutMutations } from "./useLayoutMutations";
+import type { api } from "../../../api/client";
 
 const segmentPart = vi.fn();
 const listPartLines = vi.fn();
@@ -28,23 +30,29 @@ const createPartLine = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    segmentPart: (...args: unknown[]) => segmentPart(...args),
-    listPartLines: (...args: unknown[]) => listPartLines(...args),
-    getPartLayout: (...args: unknown[]) => getPartLayout(...args),
-    getPagePairing: (...args: unknown[]) => getPagePairing(...args),
-    createPartLine: (...args: unknown[]) => createPartLine(...args),
+    segmentPart: (...args: Parameters<typeof api.segmentPart>) =>
+      segmentPart(...args),
+    listPartLines: (...args: Parameters<typeof api.listPartLines>) =>
+      listPartLines(...args),
+    getPartLayout: (...args: Parameters<typeof api.getPartLayout>) =>
+      getPartLayout(...args),
+    getPagePairing: (...args: Parameters<typeof api.getPagePairing>) =>
+      getPagePairing(...args),
+    createPartLine: (...args: Parameters<typeof api.createPartLine>) =>
+      createPartLine(...args),
   },
 }));
 
 function setup() {
   const setPairingError = vi.fn();
+  const setLineError = vi.fn();
   const setSubmissionRefusal = vi.fn();
   const trackJobAndWait = vi.fn().mockResolvedValue({ status: "done" });
   // Captures the listener so a test can fire a completion that this hook did
   // not start, which is the case the background refresh introduced.
-  const jobCompletionListeners: ((event: unknown) => void)[] = [];
+  const jobCompletionListeners: ((event: JobCompletionEvent) => void)[] = [];
   const subscribeToJobCompletion = vi.fn(
-    (listener: (event: unknown) => void) => {
+    (listener: (event: JobCompletionEvent) => void) => {
       jobCompletionListeners.push(listener);
       return () => {
         const at = jobCompletionListeners.indexOf(listener);
@@ -62,7 +70,7 @@ function setup() {
       setLayout: vi.fn(),
       lines: [],
       setLines: vi.fn(),
-      setLineError: vi.fn(),
+      setLineError,
       setTextLines: vi.fn(),
       setPairingProgress: vi.fn(),
       setPairingError,
@@ -79,6 +87,7 @@ function setup() {
   return {
     view,
     setPairingError,
+    setLineError,
     setSubmissionRefusal,
     trackJobAndWait,
     jobCompletionListeners,
@@ -191,6 +200,24 @@ describe("useLayoutMutations auto segment", () => {
   });
 
   it("stays quiet when the researcher cancels the job", async () => {
+    // A cancel from the jobs panel resolves the wait with the cancelled job;
+    // it does not reject.
+    const { view, setPairingError, setSubmissionRefusal, trackJobAndWait } =
+      setup();
+    trackJobAndWait.mockResolvedValueOnce({ status: "cancelled" });
+
+    await act(async () => {
+      await view.result.current.runAutoSegment();
+    });
+
+    // The jobs panel already reported it, and nothing was segmented.
+    expect(setPairingError).not.toHaveBeenCalledWith(expect.any(String));
+    expect(setSubmissionRefusal).not.toHaveBeenCalledWith(expect.any(String));
+    expect(listPartLines).not.toHaveBeenCalled();
+    expect(view.result.current.segmentMessage).toBeNull();
+  });
+
+  it("stays quiet when the request itself is aborted", async () => {
     segmentPart.mockRejectedValueOnce(
       new DOMException("The operation was aborted.", "AbortError"),
     );
@@ -200,9 +227,31 @@ describe("useLayoutMutations auto segment", () => {
       await view.result.current.runAutoSegment();
     });
 
-    // The jobs panel already reported it.
     expect(setPairingError).not.toHaveBeenCalledWith(expect.any(String));
     expect(setSubmissionRefusal).not.toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("does not claim Kraken ran, since the picker can choose another segmenter", async () => {
+    listPartLines.mockResolvedValue([{ id: "line-1" }, { id: "line-2" }]);
+    const { view, trackJobAndWait } = setup();
+
+    await act(async () => {
+      await view.result.current.runAutoSegment("ppocr-segment");
+    });
+
+    expect(segmentPart).toHaveBeenCalledWith(
+      "project-1",
+      "document-1",
+      "part-1",
+      { model_id: "ppocr-segment" },
+    );
+    expect(trackJobAndWait.mock.calls[0]?.[1]).toEqual({
+      label: "Line segmentation",
+      kind: "segmentation",
+    });
+    expect(view.result.current.segmentMessage?.text).toBe(
+      "Line segmentation completed (2 Segment(s)).",
+    );
   });
 
   it("clears the undo and redo stacks once the segmentation reload replaces the Segments", async () => {
@@ -384,5 +433,39 @@ describe("useLayoutMutations auto segment", () => {
     });
 
     expect(view.result.current.canUndo).toBe(true);
+  });
+
+  it("says who may draw when the server refuses a new Segment", async () => {
+    createPartLine.mockRejectedValue(new ApiError("Forbidden", 403));
+    const { view, setLineError } = setup();
+
+    await act(async () => {
+      await view.result.current.replaceWithManualLine("rectangle", [
+        [0, 0],
+        [10, 0],
+        [10, 10],
+      ]);
+    });
+
+    expect(setLineError).toHaveBeenLastCalledWith(
+      "Only project members can edit layout.",
+    );
+  });
+
+  it("keeps its own fallback for a failure with no message", async () => {
+    createPartLine.mockRejectedValue("offline");
+    const { view, setLineError } = setup();
+
+    await act(async () => {
+      await view.result.current.replaceWithManualLine("rectangle", [
+        [0, 0],
+        [10, 0],
+        [10, 10],
+      ]);
+    });
+
+    expect(setLineError).toHaveBeenLastCalledWith(
+      "Failed to save Segment geometry.",
+    );
   });
 });

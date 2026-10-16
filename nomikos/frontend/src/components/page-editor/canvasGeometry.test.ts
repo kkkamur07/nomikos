@@ -149,6 +149,66 @@ describe("canvasGeometry", () => {
     ]);
   });
 
+  it("drops a last vertex that closes back onto the first", () => {
+    expect(
+      cleanPolygonPoints([
+        [0, 0],
+        [100, 0],
+        [100, 50],
+        [1, 1],
+      ]),
+    ).toEqual([
+      [0, 0],
+      [100, 0],
+      [100, 50],
+    ]);
+  });
+
+  it("drops a closing vertex that only shows up after the repeats go", () => {
+    // [4, 0] is clear of the first vertex, so it survives the first check;
+    // it is a repeat of [2, 0], which then closes onto [0, 0].
+    expect(
+      cleanPolygonPoints([
+        [0, 0],
+        [100, 0],
+        [100, 50],
+        [2, 0],
+        [4, 0],
+      ]),
+    ).toEqual([
+      [0, 0],
+      [100, 0],
+      [100, 50],
+    ]);
+  });
+
+  it("keeps the polygon as given when cleaning would leave too few vertices", () => {
+    const sliver: [number, number][] = [
+      [0, 0],
+      [1, 0],
+      [50, 0],
+      [0, 1],
+    ];
+    expect(cleanPolygonPoints(sliver)).toBe(sliver);
+    const pair: [number, number][] = [
+      [0, 0],
+      [1, 1],
+    ];
+    expect(cleanPolygonPoints(pair)).toBe(pair);
+  });
+
+  it("returns copies, never the caller's vertices", () => {
+    const square: [number, number][] = [
+      [0, 0],
+      [100, 0],
+      [100, 100],
+      [0, 100],
+    ];
+    const cleaned = cleanPolygonPoints(square);
+    expect(cleaned).toEqual(square);
+    expect(cleaned[0]).not.toBe(square[0]);
+  });
+
   it("removes a polygon vertex while keeping at least three points", () => {
     const square: [number, number][] = [
       [0, 0],

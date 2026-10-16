@@ -15,6 +15,7 @@ import { queryClient, taggedMeta } from "../../../api/queryClient";
 import { resourceTags } from "../../../api/resources";
 import { platformNoCapacityMessage } from "../../../inference/platformMessages";
 import { usePairingState } from "./usePairingState";
+import type { api } from "../../../api/client";
 
 const enqueueTranscribePart = vi.fn();
 const listPartLines = vi.fn();
@@ -23,11 +24,15 @@ const getPagePairing = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    enqueueTranscribePart: (...args: unknown[]) =>
-      enqueueTranscribePart(...args),
-    listPartLines: (...args: unknown[]) => listPartLines(...args),
-    listTranscriptions: (...args: unknown[]) => listTranscriptions(...args),
-    getPagePairing: (...args: unknown[]) => getPagePairing(...args),
+    enqueueTranscribePart: (
+      ...args: Parameters<typeof api.enqueueTranscribePart>
+    ) => enqueueTranscribePart(...args),
+    listPartLines: (...args: Parameters<typeof api.listPartLines>) =>
+      listPartLines(...args),
+    listTranscriptions: (...args: Parameters<typeof api.listTranscriptions>) =>
+      listTranscriptions(...args),
+    getPagePairing: (...args: Parameters<typeof api.getPagePairing>) =>
+      getPagePairing(...args),
   },
 }));
 
@@ -193,6 +198,26 @@ describe("usePairingState OCR", () => {
   });
 
   it("stays quiet when the researcher cancels the job", async () => {
+    // A cancel from the jobs panel resolves the wait with the cancelled job;
+    // it does not reject.
+    const { view, setPairingError, setSubmissionRefusal, trackJobAndWait } =
+      setup();
+    trackJobAndWait.mockResolvedValueOnce({
+      id: "cloud-job-1",
+      status: "cancelled",
+      result: null,
+    });
+
+    await act(async () => {
+      await view.result.current.runPageOcr();
+    });
+
+    expect(setPairingError).not.toHaveBeenCalledWith(expect.any(String));
+    expect(setSubmissionRefusal).not.toHaveBeenCalledWith(expect.any(String));
+    expect(view.result.current.ocrMessage).toBeNull();
+  });
+
+  it("stays quiet when the request itself is aborted", async () => {
     enqueueTranscribePart.mockRejectedValueOnce(
       new DOMException("The operation was aborted.", "AbortError"),
     );

@@ -11,7 +11,36 @@ type PageEditorTranscriptionPdfWrapProps = {
   onRefresh: () => void;
 };
 
-export function PageEditorTranscriptionPdfWrap({
+type PageEditorTranscriptionPdfSlotProps = Omit<
+  PageEditorTranscriptionPdfWrapProps,
+  "projectId" | "documentId" | "partId"
+> & {
+  open: boolean;
+  projectId: string | undefined;
+  documentId: string | undefined;
+  partId: string | undefined;
+};
+
+/** The PDF pane while it is open, once the page it renders is known. */
+export function PageEditorTranscriptionPdfSlot({
+  open,
+  projectId,
+  documentId,
+  partId,
+  ...pane
+}: PageEditorTranscriptionPdfSlotProps) {
+  if (!open || !projectId || !documentId || !partId) return null;
+  return (
+    <PageEditorTranscriptionPdfWrap
+      projectId={projectId}
+      documentId={documentId}
+      partId={partId}
+      {...pane}
+    />
+  );
+}
+
+function PageEditorTranscriptionPdfWrap({
   projectId,
   documentId,
   partId,
