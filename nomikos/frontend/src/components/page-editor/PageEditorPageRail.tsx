@@ -30,6 +30,16 @@ const RAIL_THUMB_WIDTH = 200;
 const PAGE_RAIL_ID = "pe-page-rail";
 export const PAGE_RAIL_TOGGLE_ID = "pe-page-rail-toggle";
 
+/** The keys that move focus along the rail: focused row and last row to target row. */
+const RAIL_FOCUS_KEYS: Partial<
+  Record<string, (focused: number, last: number) => number>
+> = {
+  ArrowDown: (focused, last) => Math.min(last, focused + 1),
+  ArrowUp: (focused) => Math.max(0, focused - 1),
+  Home: () => 0,
+  End: (_focused, last) => last,
+};
+
 /**
  * What stands where the rail was once it is hidden: one narrow control on the
  * canvas's left edge, so hiding the page list is not a one-way door. It also
@@ -135,14 +145,8 @@ export function PageEditorPageRail({
    * listener sits under `window`, where the editor's own handler waits.
    */
   function handleListKeyDown(event: ReactKeyboardEvent<HTMLOListElement>) {
-    if (
-      event.key !== "ArrowDown" &&
-      event.key !== "ArrowUp" &&
-      event.key !== "Home" &&
-      event.key !== "End"
-    ) {
-      return;
-    }
+    const move = RAIL_FOCUS_KEYS[event.key];
+    if (!move) return;
     const pages = Array.from(
       listRef.current?.querySelectorAll<HTMLButtonElement>(
         ".pe-page-rail__page",
@@ -151,19 +155,10 @@ export function PageEditorPageRail({
     const focused = pages.indexOf(
       globalThis.document.activeElement as HTMLButtonElement,
     );
-    if (focused < 0 || pages.length === 0) return;
+    if (focused < 0) return;
     event.preventDefault();
     event.stopPropagation();
-    const target =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? pages.length - 1
-          : Math.min(
-              pages.length - 1,
-              Math.max(0, focused + (event.key === "ArrowDown" ? 1 : -1)),
-            );
-    pages[target].focus();
+    pages[move(focused, pages.length - 1)].focus();
   }
 
   const unmeasuredCentre = activeIndex < 0 ? 0 : activeIndex;
