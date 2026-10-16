@@ -289,3 +289,24 @@ def test_rle_override_default_leaves_type() -> None:
 def test_isolate_overflow_and_unwind() -> None:
     levels, _wtypes = _explicit(["RLE"] * 64 + ["FSI", "L", "PDI"] + ["PDF"])
     assert levels[-4:] == [125, 125, 125, None]
+
+
+@pytest.mark.parametrize(
+    ("types", "para", "expected"),
+    [
+        # W2: EN after AL becomes AN; the strong tracking decides it.
+        (["L", "AL", "EN"], 1, ([2, 1, 2], [2, 1, 0])),
+        (["AL", "L", "EN"], 1, ([1, 2, 2], [1, 2, 0])),
+        (["AL", "R", "EN"], 1, ([1, 1, 2], [2, 1, 0])),
+        # W4: only a separator at index 1 with equal number neighbors joins.
+        (["R", "EN", "ES", "EN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
+        (["R", "EN", "ES", "AN"], 0, ([1, 2, 1, 2], [3, 2, 1, 0])),
+        # W1: a leading NSM takes sos, including inside isolates.
+        (["NSM", "L"], 1, ([1, 2], [1, 0])),
+        (["LRI", "NSM", "L"], 0, ([0, 2, 2], [0, 1, 2])),
+    ],
+)
+def test_weak_rule_tracking_table(
+    types: list[str], para: int, expected: tuple[list[int | None], list[int]]
+) -> None:
+    assert resolve_levels(types, None, para) == expected
