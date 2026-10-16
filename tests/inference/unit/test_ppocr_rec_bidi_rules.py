@@ -248,7 +248,7 @@ def _explicit(types: list[str]) -> tuple[list[int | None], list[str]]:
 
 def test_embedding_overflow_sticks_at_max_depth() -> None:
     levels, _wtypes = _explicit(["RLE"] * 70 + ["L"] + ["PDF"] * 70)
-    assert levels[-3:] == [125, 125, None]
+    assert levels[70] == 125
     assert levels.count(None) == 140
 
 
