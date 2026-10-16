@@ -21,7 +21,7 @@ from backend.jobs.infrastructure.job_sql import (
     not_held_by_agent,
     rows_affected,
 )
-from backend.jobs.infrastructure.notifications import notify_platform_job_status_changed
+from backend.jobs.infrastructure.notifications import notify_platform_job_statuses_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus
 from infrastructure.db import sync_system_session
 
@@ -159,7 +159,7 @@ def reclaim_stale_running_jobs(
         # it replaces.
         for job_id in exhausted:
             logger.warning("failing job %s: claim abandoned %s times", job_id, max_claim_attempts)
-            notify_platform_job_status_changed(job_id, JobStatus.failed)
+        notify_platform_job_statuses_changed((job_id, JobStatus.failed) for job_id in exhausted)
         return moved
 
 
@@ -217,8 +217,7 @@ def fail_stale_waiting_jobs(*, waiting_timeout_seconds: float) -> int:
         session.commit()
         # A bulk update emits no per-job NOTIFY, so SSE subscribers would keep
         # waiting on a job that just died. Notify each id after the commit.
-        for job_id in stale_ids:
-            notify_platform_job_status_changed(job_id, JobStatus.failed)
+        notify_platform_job_statuses_changed((job_id, JobStatus.failed) for job_id in stale_ids)
         return rows_affected(result)
 
 
@@ -322,11 +321,12 @@ def release_expired_device_leases(
         session.commit()
         # A bulk update emits no per-job NOTIFY, so a browser watching the job
         # would sit on "waiting" until something else touched the row.
-        for job_id in retryable:
-            notify_platform_job_status_changed(job_id, JobStatus.pending)
         for job_id in exhausted:
             logger.warning("failing job %s: claim abandoned %s times", job_id, max_claim_attempts)
-            notify_platform_job_status_changed(job_id, JobStatus.failed)
+        notify_platform_job_statuses_changed(
+            [(job_id, JobStatus.pending) for job_id in retryable]
+            + [(job_id, JobStatus.failed) for job_id in exhausted]
+        )
         return moved
 
 

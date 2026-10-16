@@ -111,12 +111,13 @@ def _use_session(monkeypatch: pytest.MonkeyPatch, session: _FakeSession) -> None
 
 def _record_notifications(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
     notified: list[tuple] = []
-    for module in _ENGINE_MODULES:
+    for module in (job_claim_engine, job_terminal):
         monkeypatch.setattr(
             module,
             "notify_platform_job_status_changed",
             lambda job_id, status: notified.append((job_id, status)),
         )
+    monkeypatch.setattr(job_sweeps, "notify_platform_job_statuses_changed", notified.extend)
     return notified
 
 
