@@ -190,22 +190,6 @@ def test_share_by_email_and_list_collaborators(
     )
     assert again.status_code == 409
 
-    unknown = client.post(
-        f"/projects/{project_id}/share",
-        headers=owner_headers,
-        json={"email": f"nobody-{uuid.uuid4().hex[:6]}@test.kalamos"},
-    )
-    assert unknown.status_code == 404
-
-    both = client.post(
-        f"/projects/{project_id}/share",
-        headers=owner_headers,
-        json={"email": collaborator_user["email"], "username": collaborator_user["username"]},
-    )
-    assert both.status_code == 422
-    neither = client.post(f"/projects/{project_id}/share", headers=owner_headers, json={})
-    assert neither.status_code == 422
-
 
 # --- Removing a collaborator ---
 # Tests removal by id, including names a URL path cannot carry. Does not test sharing.

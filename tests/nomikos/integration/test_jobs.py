@@ -252,28 +252,14 @@ def test_job_events_streams_current_snapshot(client: TestClient, registered_user
 # Tests users can only read their own jobs. Does not test admin or shared-project access.
 
 
-def test_get_job_denies_access_to_other_users_job(client: TestClient):
-    owner_suffix = uuid.uuid4().hex[:8]
-    other_suffix = uuid.uuid4().hex[:8]
-
-    def _register(suffix: str) -> str:
-        r = client.post(
-            "/auth/register",
-            json={
-                "email": f"{suffix}@test.kalamos",
-                "username": suffix,
-                "password": "test-pass-123",
-            },
-        )
-        return r.json()["access_token"]
-
-    owner_token = _register(f"owner-{owner_suffix}")
-    other_token = _register(f"other-{other_suffix}")
-
-    created = client.post("/jobs/test", headers={"Authorization": f"Bearer {owner_token}"})
+def test_get_job_denies_access_to_other_users_job(
+    client: TestClient, registered_user: dict[str, str], outsider_headers: dict[str, str]
+):
+    auth_headers = {"Authorization": f"Bearer {registered_user['access_token']}"}
+    created = client.post("/jobs/test", headers=auth_headers)
     job_id = created.json()["job_id"]
 
-    response = client.get(f"/jobs/{job_id}", headers={"Authorization": f"Bearer {other_token}"})
+    response = client.get(f"/jobs/{job_id}", headers=outsider_headers)
     assert response.status_code == 403
 
 

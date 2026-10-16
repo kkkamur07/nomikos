@@ -93,6 +93,35 @@ def _transcribe_done_payload(
     }
 
 
+def _seed_document_with_part() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """One project, document and part; returns their ids."""
+    project_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    part_id = uuid.uuid4()
+    with sync_system_session() as session:
+        session.add(
+            Project(id=project_id, name="Callback test", slug=f"callback-{uuid.uuid4().hex}")
+        )
+        session.flush()
+        session.add(
+            Document(
+                id=document_id,
+                project_id=project_id,
+                name="Test document",
+            )
+        )
+        session.flush()
+        session.add(
+            DocumentPart(
+                id=part_id,
+                document_id=document_id,
+                image_key="test/page.png",
+            )
+        )
+        session.commit()
+    return project_id, document_id, part_id
+
+
 def _seed_waiting_job(
     *,
     product_job_id: uuid.UUID | None = None,
@@ -103,31 +132,9 @@ def _seed_waiting_job(
     inference_job_id = inference_job_id or uuid.uuid4()
     document_id = None
     part_id = None
+    if job_type == JobType.segment:
+        _, document_id, part_id = _seed_document_with_part()
     with sync_system_session() as session:
-        if job_type == JobType.segment:
-            project_id = uuid.uuid4()
-            document_id = uuid.uuid4()
-            part_id = uuid.uuid4()
-            session.add(
-                Project(id=project_id, name="Callback test", slug=f"callback-{uuid.uuid4().hex}")
-            )
-            session.flush()
-            session.add(
-                Document(
-                    id=document_id,
-                    project_id=project_id,
-                    name="Test document",
-                )
-            )
-            session.flush()
-            session.add(
-                DocumentPart(
-                    id=part_id,
-                    document_id=document_id,
-                    image_key="test/page.png",
-                )
-            )
-            session.flush()
         session.add(
             Job(
                 id=product_job_id,
@@ -150,31 +157,9 @@ def _seed_transcribe_waiting_job(
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     product_job_id = product_job_id or uuid.uuid4()
     inference_job_id = inference_job_id or uuid.uuid4()
-    project_id = uuid.uuid4()
-    document_id = uuid.uuid4()
-    part_id = uuid.uuid4()
+    _, document_id, part_id = _seed_document_with_part()
     line_id = uuid.uuid4()
     with sync_system_session() as session:
-        session.add(
-            Project(id=project_id, name="Callback test", slug=f"callback-{uuid.uuid4().hex}")
-        )
-        session.flush()
-        session.add(
-            Document(
-                id=document_id,
-                project_id=project_id,
-                name="Test document",
-            )
-        )
-        session.flush()
-        session.add(
-            DocumentPart(
-                id=part_id,
-                document_id=document_id,
-                image_key="test/page.png",
-            )
-        )
-        session.flush()
         session.add(
             Line(
                 id=line_id,

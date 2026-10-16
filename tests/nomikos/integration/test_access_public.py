@@ -143,12 +143,23 @@ def test_rotating_the_share_token_invalidates_the_old_link_and_the_new_one_works
 
 
 @pytest.mark.integration
-def test_rotating_the_share_token_is_owner_only(client, outsider_headers, published_document):
+def test_rotating_the_share_token_is_owner_only(
+    client, owner_headers, collaborator_user, collaborator_headers, published_document
+):
+    """A collaborator reaches past ``require_document`` where an outsider never does,
+    so this is the request that actually exercises the ``is_owner`` guard."""
     project_id = published_document["project_id"]
     document_id = published_document["document_id"]
     rotate_url = f"/projects/{project_id}/documents/{document_id}/share-token/rotate"
 
-    denied = client.post(rotate_url, headers=outsider_headers)
+    share = client.post(
+        f"/projects/{project_id}/share",
+        headers=owner_headers,
+        json={"username": collaborator_user["username"]},
+    )
+    assert share.status_code == 204
+
+    denied = client.post(rotate_url, headers=collaborator_headers)
     assert denied.status_code == 403
 
 
@@ -287,12 +298,12 @@ def test_setting_published_flag_is_refused_to_a_collaborator(
 ):
     """The owner check, not the membership check.
 
-    ``test_setting_published_flag_is_owner_only`` above uses an outsider, who is
-    already turned away by ``require_document`` before ownership is ever consulted -
-    delete the ``is_owner`` guard in ``DocumentPartService`` and that test still
-    passes. The share below is what makes this one different: the caller is a member,
-    so the request gets past ``require_project`` and reaches the guard, and this is
-    the only test that fails if the guard goes. The editor hides the control from
+    An outsider is already turned away by ``require_document`` before ownership is
+    ever consulted - delete the ``is_owner`` guard in ``DocumentPartService`` and an
+    outsider-only check still passes. The share below is what makes this one
+    different: the caller is a member, so the request gets past ``require_project``
+    and reaches the guard, and this is the only test that fails if the guard goes.
+    The editor hides the control from
     non-owners on the strength of it being enforced.
     """
     project_id = published_document["project_id"]
