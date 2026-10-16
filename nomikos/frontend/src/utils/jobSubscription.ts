@@ -1,4 +1,5 @@
-import { fetchWithAuthRecovery, type JobResponse } from "../api/client";
+import { fetchWithAuthRecovery } from "../api/http";
+import type { JobResponse } from "../api/types";
 
 export const JOB_NO_EVENT_TIMEOUT_MS = 12_000;
 
