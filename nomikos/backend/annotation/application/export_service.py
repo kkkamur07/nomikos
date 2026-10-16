@@ -16,9 +16,9 @@ from backend.annotation.application.processing import apply_step
 from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.media_store import MediaStore, get_media_store
+from backend.document.infrastructure.media_store.encoding import bounded_image
 from backend.document.infrastructure.orm_models import (
     Line,
-    PageTranscriptionLine,
     TranscriptionKind,
 )
 from backend.users.infrastructure.orm_models import User
@@ -86,17 +86,16 @@ class AnnotationExportService:
         pending: list[tuple[UUID, int, str, dict]] = []
         unpaired_segments: list[int] = []
         paired_text_orders: set[int] = set()
+        order_by_line = {text_line.paired_line_id: text_line.order for text_line in text_lines}
         for line in await self._documents.list_part_lines(session, part.id):
             segment_number = line.order + 1
             text = self._ground_truth_text(line)
             if text is None:
                 unpaired_segments.append(segment_number)
                 continue
-            text_order = self._paired_text_order(text_lines, line.id)
+            text_order = order_by_line.get(line.id)
             if text_order is not None:
                 paired_text_orders.add(text_order)
-            segment = {"points": line.points, "kind": line.kind.value}
-            pending.append((line.id, segment_number, text, segment))
 
         # Decode, rectify, JPEG-encode and base64 the whole page in one hop off the loop:
         # a manuscript-sized page costs hundreds of milliseconds per segment.
@@ -151,10 +150,8 @@ class AnnotationExportService:
 
     def _load_page_image(self, image_key: str) -> Image.Image:
         raw = self._media.read(image_key)
-        pil = Image.open(BytesIO(raw))
-        rgb = pil.convert("RGB")
-        pil.close()
-        return rgb
+        with bounded_image(raw) as pil:
+            return pil.convert("RGB")
 
     def _page_stem(self, image_key: str) -> str:
         return Path(image_key).stem
@@ -169,14 +166,6 @@ class AnnotationExportService:
                 return transcription.text.strip()
         return None
 
-    def _paired_text_order(
-        self, text_lines: list[PageTranscriptionLine], line_id: UUID
-    ) -> int | None:
-        for text_line in text_lines:
-            if text_line.paired_line_id == line_id:
-                return text_line.order
-        return None
-
     def _processed_image_base64(
         self,
         source_image: Image.Image,
@@ -187,14 +176,16 @@ class AnnotationExportService:
         for step in steps:
             image = apply_step(image, segment, step)
         buf = BytesIO()
-        save_kwargs: dict[str, object] = {
-            "format": "JPEG",
-            "quality": 100,
-            "subsampling": 0,
-            "optimize": False,
-        }
         dpi = source_image.info.get("dpi")
         if isinstance(dpi, tuple) and len(dpi) >= 2:
-            save_kwargs["dpi"] = (int(round(dpi[0])), int(round(dpi[1])))
-        image.save(buf, **save_kwargs)
+            image.save(
+                buf,
+                format="JPEG",
+                quality=100,
+                subsampling=0,
+                optimize=False,
+                dpi=(int(round(dpi[0])), int(round(dpi[1]))),
+            )
+        else:
+            image.save(buf, format="JPEG", quality=100, subsampling=0, optimize=False)
         return base64.b64encode(buf.getvalue()).decode("ascii")

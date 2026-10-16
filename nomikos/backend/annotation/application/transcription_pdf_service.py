@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import threading
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from uuid import UUID
 
@@ -28,10 +30,9 @@ from backend.document.infrastructure.orm_models import (
 from backend.users.infrastructure.orm_models import User
 
 _FONT_NAME = "AnnotePlatformTranscriptionPdf"
-_font_registered = False
-# Rendering runs on worker threads, so two requests can reach the one-time font
-# registration at once; without the lock the second could draw with a font reportlab has
-# not finished registering.
+# Rendering runs on worker threads, so two requests can reach the font
+# registration at once; without the lock the second could draw with a font
+# reportlab has not finished registering.
 _font_lock = threading.Lock()
 _PAGE_FILL = (1.0, 1.0, 1.0)
 _TEXT_FILL = (0.1, 0.1, 0.35)
@@ -188,18 +189,27 @@ def _layer_age(transcription: LineTranscription) -> float:
 
 
 def _ensure_font(font_path: Path) -> str:
-    global _font_registered
     with _font_lock:
-        if not _font_registered:
-            pdfmetrics.registerFont(TTFont(_FONT_NAME, str(font_path)))
-            _font_registered = True
-    return _FONT_NAME
+        return _cached_font_name(str(font_path))
+
+
+@lru_cache(maxsize=4)
+def _cached_font_name(font_path: str) -> str:
+    """Register once per path; the cache itself is the registered flag."""
+    name = f"{_FONT_NAME}-{hashlib.sha1(font_path.encode(), usedforsecurity=False).hexdigest()[:8]}"
+    pdfmetrics.registerFont(TTFont(name, font_path))
+    return name
 
 
 def _line_bbox(points: list[list[float]]) -> tuple[float, float, float, float]:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+@lru_cache(maxsize=256)
+def _cached_typeface(font_path: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(font_path, size=size)
 
 
 def _fit_font_size(
@@ -211,9 +221,17 @@ def _fit_font_size(
     min_size: int = 8,
     max_size: int = 48,
 ) -> int:
-    for size in range(max_size, min_size - 1, -1):
-        font = ImageFont.truetype(str(font_path), size=size)
-        bbox = font.getbbox(text)
+    # A smaller size fits whenever a larger one does, so this finds the same
+    # answer as a linear scan with about six font loads instead of 41.
+    path = str(font_path)
+    best = min_size
+    low, high = min_size, max_size
+    while low <= high:
+        mid = (low + high) // 2
+        bbox = _cached_typeface(path, mid).getbbox(text)
         if bbox[2] - bbox[0] <= max_width and bbox[3] - bbox[1] <= max_height:
-            return size
-    return min_size
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best

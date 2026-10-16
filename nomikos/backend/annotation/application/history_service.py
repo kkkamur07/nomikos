@@ -6,7 +6,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from backend.annotation.infrastructure.orm_models import AnnotationHistorySnapshot
+from backend.annotation.infrastructure.orm_models import (
+    AnnotationHistorySnapshot,
+    SnapshotLineState,
+)
 from backend.core.exceptions import NotFoundError
 from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
@@ -159,7 +162,7 @@ class AnnotationHistoryService:
                 )
             )
 
-    def _line_state(self, line: Line) -> dict[str, object]:
+    def _line_state(self, line: Line) -> SnapshotLineState:
         ground_truth = next(
             (
                 transcription
@@ -177,6 +180,7 @@ class AnnotationHistoryService:
             "baseline": line.baseline,
             "mask": line.mask,
             "source": line.source.value,
+            "source_metadata": line.source_metadata,
             "kraken_ceiling": line.kraken_ceiling,
             "approved_text": ground_truth.text if ground_truth is not None else None,
         }
