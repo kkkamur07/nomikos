@@ -213,3 +213,28 @@ def test_implicit_and_neutral_levels_table(
 )
 def test_display_table(text: str, expected_text: str, expected_order: list[int]) -> None:
     assert get_display_map(text, None) == (expected_text, expected_order)
+
+
+@pytest.mark.parametrize(
+    ("types", "expected"),
+    [
+        # Isolates inside neutral runs take the resolved fill, which decides
+        # their I1/I2 bump: a surviving LRI/RLI/FSI/PDI bumps differently.
+        (["RLE", "LRI", "R", "PDI", "PDF"], ([None, 1, 3, 0, None], [2, 1, 3])),
+        (["RLE", "RLI", "R", "PDI", "PDF"], ([None, 1, 3, 0, None], [2, 1, 3])),
+        (["RLE", "FSI", "R", "PDI", "PDF"], ([None, 1, 3, 0, None], [2, 1, 3])),
+        (["RLE", "LRI", "L", "PDI", "PDF"], ([None, 1, 2, 0, None], [2, 1, 3])),
+        (["RLE", "R", "PDI", "L", "PDF"], ([None, 1, 1, 2, None], [3, 2, 1])),
+    ],
+)
+def test_isolates_in_neutral_runs(
+    types: list[str], expected: tuple[list[int | None], list[int]]
+) -> None:
+    assert resolve_levels(types, None, 0) == expected
+
+
+def test_level_at_rejects_a_removed_character() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._common import level_at
+
+    with pytest.raises(ValueError, match="removed character"):
+        level_at([None], 0)
