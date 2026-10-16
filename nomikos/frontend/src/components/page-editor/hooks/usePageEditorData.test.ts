@@ -15,6 +15,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { JobCompletionEvent } from "../../../context/BackgroundJobsContext";
+import { ApiError } from "../../../api/errors";
 import { clearAccessToken, setAccessToken } from "../../../auth/storage";
 import { usePageEditorData } from "./usePageEditorData";
 
@@ -273,5 +274,42 @@ describe("usePageEditorData page turn", () => {
     expect(result.current.selectedTranscriptionLayerId).toBe("layer-gt");
     expect(result.current.transcribeModels).toHaveLength(1);
     expect(result.current.selectedTranscribeModelId).toBe("model-1");
+  });
+});
+
+describe("usePageEditorData transcriptions read", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAccessToken("test-token");
+    getDocument.mockResolvedValue(DOCUMENT);
+    getPartLayout.mockResolvedValue({ blocks: [], lines: [] });
+    listPartLines.mockResolvedValue([]);
+    getPagePairing.mockResolvedValue(EMPTY_PAIRING);
+    listInferenceModels.mockResolvedValue([]);
+    resolvePartModelBinding.mockRejectedValue(new Error("no binding"));
+  });
+
+  afterEach(() => {
+    clearAccessToken();
+  });
+
+  it("names the transcriptions, not the pairing, when the layers are refused", async () => {
+    listTranscriptions.mockRejectedValue(new ApiError("Forbidden", 403));
+    const { result } = renderHook(() =>
+      usePageEditorData("project-1", "document-1", "part-1"),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.pairingError).toBe(
+      "Transcriptions are not available for this page.",
+    );
+  });
+
+  it("names the transcriptions when the layers fail without a message", async () => {
+    listTranscriptions.mockRejectedValue("offline");
+    const { result } = renderHook(() =>
+      usePageEditorData("project-1", "document-1", "part-1"),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.pairingError).toBe("Failed to load transcriptions.");
   });
 });
