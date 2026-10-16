@@ -364,6 +364,23 @@ def test_rows_with_the_same_centre_read_from_the_higher_top() -> None:
     assert _groups([_quad(0, 10, 100, 30), _quad(0, 0, 100, 40)], {0, 1}) == [[1], [0]]
 
 
+def test_row_groups_order_level_quads_by_centre_x_before_coordinates() -> None:
+    # The wide quad and the short one inside it share centre y 30. The short
+    # one has the smaller centre x, so it opens its row first and the side
+    # quad is compared with the wide quad's row, which it shares.
+    quads = [_quad(0, 0, 100, 60), _quad(30, 25, 60, 35), _quad(200, 34, 300, 74)]
+
+    assert _groups(quads, {0, 1, 2}) == [[0, 2], [1]]
+
+
+def test_rows_with_the_same_centre_and_top_read_from_the_higher_bottom() -> None:
+    # Both rows have top centre 20 and top 0; the second row reaches 60 and
+    # starts further left, so the bottom, not the left edge, decides.
+    quads = [_quad(20, 0, 120, 40), _quad(10, 0, 220, 40), _quad(230, 10, 330, 60)]
+
+    assert _groups(quads, {0, 1, 2}) == [[0], [1, 2]]
+
+
 def test_width_classes_under_a_pixel() -> None:
     extents = [
         _ext(0, 10 * i, width, 10 * i + 5) for i, width in enumerate([0.8, 0.8, 0.8, 0.3, 1.3])

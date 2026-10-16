@@ -104,6 +104,20 @@ def test_merge_run_unions_members_with_an_area_weighted_score() -> None:
     assert work.role == "line"
 
 
+def test_merge_run_of_flat_members_scores_zero() -> None:
+    # Two diagonal quads with no area, joined by a real 12 x 10 bridge.
+    quads = [
+        DetectedQuad(points=[[0, 0], [10, 10], [10, 10], [0, 0]], score=0.5),
+        DetectedQuad(points=[[12, 0], [22, 10], [22, 10], [12, 0]], score=0.75),
+    ]
+
+    work = _merge_run([0, 1], quads, _points(quads), 0.75)
+
+    assert work.score == 0.0
+    assert work.poly.bounds == (10.0, 0.0, 22.0, 10.0)
+    assert work.area == 120.0
+
+
 def test_merge_run_takes_the_baseline_from_the_outer_ends() -> None:
     # The left member reaches furthest left, the middle one is tallest, the
     # right member reaches furthest right.

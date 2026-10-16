@@ -218,6 +218,42 @@ def test_cut_pair_keeps_a_line_whose_centre_is_just_past_the_cut() -> None:
     assert upper.poly.bounds == (0.0, 0.0, 100.0, 30.0)
 
 
+def test_cut_pair_keeps_the_far_side_for_a_centroid_on_the_cut() -> None:
+    # The triangle's centroid (20, 0) lies on the mid-baseline line y 0, so
+    # it keeps the y > 0 side: 400 of its 900 px, not more than half.
+    triangle = Work(
+        poly=Polygon([(0, -10), (60, -10), (0, 20)]),
+        baseline=((0.0, -5.0), (40.0, -5.0)),
+        score=0.9,
+        members=(0,),
+    )
+    other = _box(0, -2, 40, 12, ((0.0, 5.0), (40.0, 5.0)), members=(1,))
+
+    assert _cut_pair(triangle, other) is False
+    assert (triangle.area, other.area) == (900.0, 560.0)
+
+
+def _sliver_pair(left_loss: float, right_loss: float) -> tuple[Work, Work]:
+    """Two 10 px wide lines whose cut takes ``left_loss`` and ``right_loss`` px."""
+    cut = 10.0 - left_loss / 10
+    upper = _box(0, 0, 10, 10, ((0.0, 5.0), (10.0, 5.0)))
+    lower_baseline = ((0.0, 2 * cut - 5), (10.0, 2 * cut - 5))
+    lower = _box(0, cut - right_loss / 10, 10, 20, lower_baseline, members=(1,))
+    return upper, lower
+
+
+@pytest.mark.parametrize(("left_loss", "right_loss"), [(1.5e-9, 0.5e-9), (0.5e-9, 1.5e-9)])
+def test_cut_pair_counts_an_area_change_over_a_nanopixel_on_either_side(
+    left_loss: float, right_loss: float
+) -> None:
+    upper, lower = _sliver_pair(left_loss, right_loss)
+    before = (upper.area, lower.area)
+
+    assert _cut_pair(upper, lower) is True
+    assert before[0] - upper.area == pytest.approx(left_loss, rel=1e-3)
+    assert before[1] - lower.area == pytest.approx(right_loss, rel=1e-3)
+
+
 def test_cut_pair_with_short_baselines_still_cuts() -> None:
     upper = _box(0, 0, 100, 30, ((50.0, 20.0), (50.4, 20.0)))
     lower = _box(0, 20, 100, 50, ((50.0, 40.0), (50.4, 40.0)), members=(1,))
