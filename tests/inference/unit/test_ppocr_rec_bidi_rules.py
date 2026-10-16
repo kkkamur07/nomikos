@@ -352,3 +352,105 @@ def test_pdf_unwind_arithmetic() -> None:
 def test_paragraph_separator_takes_paragraph_level() -> None:
     levels, _wtypes = _explicit(["RLE", "B", "R"])
     assert levels == [None, 0, 1]
+
+
+@pytest.mark.parametrize(
+    "typ",
+    ["L", "R", "EN", "AN", "ON", "NSM", "B", "WS", "LRI", "PDI", "RLE", "PDF"],
+)
+def test_strong_inside_table(typ: str) -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _strong_inside
+
+    assert _strong_inside(typ) == (
+        "L" if typ == "L" else ("R" if typ in ("R", "EN", "AN") else None)
+    )
+
+
+@pytest.mark.parametrize(
+    ("wtypes", "sos", "embedding", "expected"),
+    [
+        # N0b: embedding-direction strong inside decides.
+        (["ON", "R", "ON"], "L", "R", "R"),
+        # N0d: no strong inside resolves nothing.
+        (["ON", "ON", "ON"], "R", "R", None),
+        # N0c: opposite strong inside resolves from the preceding context.
+        (["ON", "L", "ON"], "L", "R", "L"),
+        (["ON", "L", "ON"], "R", "R", "R"),
+    ],
+)
+def test_pair_type_table(wtypes: list[str], sos: str, embedding: str, expected: str | None) -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _pair_type
+
+    assert _pair_type([0, 1, 2], sos, wtypes, 0, 2, embedding) == expected
+
+
+def test_pair_type_reads_preceding_context() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _pair_type
+
+    seq = [0, 1, 2, 3, 4]
+    assert _pair_type(seq, "R", ["R", "L", "ON", "L", "ON"], 2, 4, "R") == "L"
+
+
+def test_pair_type_falls_back_to_sos_without_context() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _pair_type
+
+    seq = [0, 1, 2, 3, 4, 5, 6]
+    assert _pair_type(seq, "L", ["ON", "ON", "ON", "L", "ON", "ON", "R"], 2, 4, "R") == "L"
+
+
+def test_pair_type_context_skips_two_at_a_time_is_wrong() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _pair_type
+
+    seq = [0, 1, 2, 3, 4, 5, 6]
+    assert _pair_type(seq, "R", ["R", "L", "ON", "ON", "L", "ON", "ON"], 3, 5, "R") == "L"
+
+
+def test_bracket_pairs_table() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _find_bracket_pairs
+
+    parens = ["ON", "ON", "ON"]
+    assert _find_bracket_pairs([0, 1, 2], parens, [0x28, 0x28, 0x29]) == [(1, 2)]
+    assert _find_bracket_pairs([0, 1, 2], parens, [0x28, 0x3008, 0x29]) == [(0, 2)]
+    assert _find_bracket_pairs([0, 1, 2], parens, [0x3008, 0x5D0, 0x3009]) == [(0, 2)]
+    nested = ["ON", "ON", "ON", "ON"]
+    assert _find_bracket_pairs([0, 1, 2, 3], nested, [0x28, 0x28, 0x29, 0x29]) == [
+        (0, 3),
+        (1, 2),
+    ]
+    assert _find_bracket_pairs([0, 1, 2], ["L", "ON", "ON"], [65, 0x28, 0x29]) == [(1, 2)]
+    assert _find_bracket_pairs([0, 1], ["ON", "L"], [0x29, 65]) == []
+
+
+def test_bracket_resolution_retypes_pair_and_following_nsms() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import resolve_brackets
+
+    seq = [0, 1, 2]
+    wtypes = ["ON", "R", "ON"]
+    resolve_brackets(seq, "R", ["ON", "R", "ON"], wtypes, [0x28, 0x5D0, 0x29], "R")
+    assert wtypes == ["R", "R", "R"]
+
+
+def test_bracket_resolution_stops_nsms_at_non_nsm() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import resolve_brackets
+
+    seq = [0, 1, 2, 3, 4]
+    wtypes = ["ON", "NSM", "L", "ON", "L"]
+    resolve_brackets(seq, "L", list(wtypes), wtypes, [0x28, 0x301, 0x61, 0x29, 0x62], "L")
+    assert wtypes == ["L", "L", "L", "L", "L"]
+
+
+def test_bracket_resolution_leaves_later_nsms_past_a_break() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import resolve_brackets
+
+    seq = [0, 1, 2, 3, 4, 5]
+    wtypes = ["ON", "NSM", "L", "ON", "L", "NSM"]
+    resolve_brackets(seq, "L", list(wtypes), wtypes, [0x28, 0x301, 0x61, 0x29, 0x62, 0x303], "L")
+    assert wtypes == ["L", "L", "L", "L", "L", "NSM"]
+
+
+def test_neutral_run_treats_an_as_r() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _fill_neutral_run
+
+    wtypes = ["AN", "WS", "WS", "WS", "AN"]
+    _fill_neutral_run([0, 1, 2, 3, 4], wtypes, 1, 4, "L", "L", "L")
+    assert wtypes == ["AN", "R", "R", "R", "AN"]
