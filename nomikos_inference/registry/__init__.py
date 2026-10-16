@@ -66,6 +66,37 @@ class RegistryModelEntry(BaseModel):
     versions: dict[str, RegistryVersionEntry] = Field(min_length=1)
 
 
+def _require_transcribe_crop(model_id: str, entry: RegistryModelEntry) -> None:
+    """A transcribe entry must state the crop recipe its training used."""
+    if entry.line_crop is None:
+        raise ValueError(
+            f"registry model {model_id!r} has task 'transcribe' and must set "
+            "line_crop to one of: " + ", ".join(repr(option.value) for option in LineCrop)
+        )
+    if entry.line_crop_padding is None:
+        raise ValueError(
+            f"registry model {model_id!r} has task 'transcribe' and must set "
+            "line_crop_padding, the pixel padding its training crops were "
+            "exported with"
+        )
+    if entry.line_crop_padding < 0:
+        raise ValueError(
+            f"registry model {model_id!r} has a negative line_crop_padding "
+            f"({entry.line_crop_padding}); padding widens the crop and cannot "
+            "shrink it"
+        )
+
+
+def _reject_non_transcribe_crop(model_id: str, entry: RegistryModelEntry) -> None:
+    """Crop fields only apply to transcribe models."""
+    for field in ("line_crop", "line_crop_padding"):
+        if getattr(entry, field) is not None:
+            raise ValueError(
+                f"registry model {model_id!r} has task {entry.task.value!r} and "
+                f"must not set {field}, which only applies to transcribe models"
+            )
+
+
 class RegistryDocument(BaseModel):
     models: dict[str, RegistryModelEntry] = Field(min_length=1)
 
@@ -82,31 +113,9 @@ class RegistryDocument(BaseModel):
         """
         for model_id, entry in self.models.items():
             if entry.task == InferenceTask.transcribe:
-                if entry.line_crop is None:
-                    raise ValueError(
-                        f"registry model {model_id!r} has task 'transcribe' and must set "
-                        "line_crop to one of: "
-                        + ", ".join(repr(option.value) for option in LineCrop)
-                    )
-                if entry.line_crop_padding is None:
-                    raise ValueError(
-                        f"registry model {model_id!r} has task 'transcribe' and must set "
-                        "line_crop_padding, the pixel padding its training crops were "
-                        "exported with"
-                    )
-                if entry.line_crop_padding < 0:
-                    raise ValueError(
-                        f"registry model {model_id!r} has a negative line_crop_padding "
-                        f"({entry.line_crop_padding}); padding widens the crop and cannot "
-                        "shrink it"
-                    )
+                _require_transcribe_crop(model_id, entry)
             else:
-                for field in ("line_crop", "line_crop_padding"):
-                    if getattr(entry, field) is not None:
-                        raise ValueError(
-                            f"registry model {model_id!r} has task {entry.task.value!r} and "
-                            f"must not set {field}, which only applies to transcribe models"
-                        )
+                _reject_non_transcribe_crop(model_id, entry)
         return self
 
 
