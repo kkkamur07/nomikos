@@ -28,6 +28,8 @@ from tests.nomikos.integration.helpers import (
     user_id_for_email,
 )
 
+pytestmark = pytest.mark.integration
+
 
 def _wait_until_no_active_test_jobs(*, timeout: float = 5.0) -> None:
     """Wait until the lifespan worker finished API test jobs (payload test=true)."""

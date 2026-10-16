@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.fixtures.paths import MINIMAL_PNG
 from tests.nomikos.integration.helpers import documents_url
+
+pytestmark = pytest.mark.integration
 
 
 def _create_part_with_lines(
