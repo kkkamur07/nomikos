@@ -238,3 +238,54 @@ def test_level_at_rejects_a_removed_character() -> None:
 
     with pytest.raises(ValueError, match="removed character"):
         level_at([None], 0)
+
+
+def _explicit(types: list[str]) -> tuple[list[int | None], list[str]]:
+    wtypes = list(types)
+    levels = explicit_levels(types, wtypes, match_isolates(types)[0], 0)
+    return levels, wtypes
+
+
+def test_embedding_overflow_sticks_at_max_depth() -> None:
+    levels, _wtypes = _explicit(["RLE"] * 70 + ["L"] + ["PDF"] * 70)
+    assert levels[-3:] == [125, 125, None]
+    assert levels.count(None) == 140
+
+
+def test_isolate_push_at_exactly_max_depth() -> None:
+    levels, wtypes = _explicit(["RLE"] * 62 + ["RLI", "L", "PDI", "R"])
+    assert levels[-4:] == [123, 125, 123, 123]
+    assert wtypes[62] == "RLI"
+
+
+def test_override_applies_through_an_isolate() -> None:
+    levels, wtypes = _explicit(["RLO", "RLI", "L", "PDI", "PDF"])
+    assert levels == [None, 1, 3, 1, None]
+    assert wtypes == ["RLO", "R", "L", "R", "PDF"]
+
+
+def test_lre_inside_an_odd_embedding_goes_even() -> None:
+    levels, _wtypes = _explicit(["RLE", "LRE", "L", "PDF", "PDF"])
+    assert levels == [None, None, 2, None, None]
+
+
+def test_fsi_without_strong_content_pushes_even() -> None:
+    levels, _wtypes = _explicit(["FSI", "WS", "PDI", "R"])
+    assert levels == [0, 2, 0, 0]
+
+
+def test_stray_pdi_does_not_pop_past_paragraph() -> None:
+    levels, wtypes = _explicit(["PDI", "R"])
+    assert levels == [0, 0]
+    assert wtypes == ["PDI", "R"]
+
+
+def test_rle_override_default_leaves_type() -> None:
+    levels, wtypes = _explicit(["RLE", "L", "PDF"])
+    assert levels == [None, 1, None]
+    assert wtypes == ["RLE", "L", "PDF"]
+
+
+def test_isolate_overflow_and_unwind() -> None:
+    levels, _wtypes = _explicit(["RLE"] * 64 + ["FSI", "L", "PDI"] + ["PDF"])
+    assert levels[-4:] == [125, 125, 125, None]
