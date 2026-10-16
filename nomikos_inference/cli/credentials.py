@@ -122,6 +122,10 @@ def load_credential(path: Path | None = None) -> DeviceCredential | None:
     A malformed file raises rather than reading as "not paired": silently
     starting a second pairing because a byte flipped would leave an orphan
     device row on the account and no explanation for it.
+
+    The group/other readability check below applies on POSIX only: on Windows
+    `stat` reports 0o666 for ordinary files, so the check would refuse every
+    paired Windows helper.
     """
     target = path or credential_path()
     try:
@@ -132,7 +136,7 @@ def load_credential(path: Path | None = None) -> DeviceCredential | None:
         raise CredentialError(f"Cannot read {target}: {exc}") from exc
 
     mode = file_mode(target)
-    if mode & 0o077:
+    if os.name == "posix" and mode & 0o077:
         raise CredentialError(
             f"{target} is readable by others (mode {mode:04o}), so it cannot be "
             "trusted to hold only this machine's device token. "

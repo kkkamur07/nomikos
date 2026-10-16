@@ -523,6 +523,22 @@ def test_an_owner_only_credential_loads(tmp_path: Path) -> None:
     assert stored.device_token == "secret-token"
 
 
+def test_a_windows_style_mode_does_not_refuse_the_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from nomikos_inference.cli.credentials import load_credential
+
+    target = _write_credential(tmp_path, _credential_payload(), mode=0o666)
+    monkeypatch.setattr(os, "name", "nt")
+
+    stored = load_credential(target)
+
+    assert stored is not None
+    assert stored.device_token == "secret-token"
+
+
 def test_a_missing_credential_is_not_paired(tmp_path: Path) -> None:
     from nomikos_inference.cli.credentials import load_credential
 

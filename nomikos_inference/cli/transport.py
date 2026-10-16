@@ -20,7 +20,7 @@ import socket
 import urllib.error
 import urllib.request
 from email.message import Message
-from typing import Protocol
+from typing import NoReturn, Protocol
 from urllib.parse import urlsplit
 
 from nomikos_inference.cli.errors import InsecurePlatformURL, PlatformError
@@ -36,11 +36,18 @@ VERSION_LIMIT = 32
 
 REQUEST_TIMEOUT_SECONDS = 30.0
 
-JSON_RESPONSE_LIMIT = 1 << 20
-"""Ceiling on a decoded JSON body. Claim, self, callback, and floor answers are
-all small records; a response that does not fit in a megabyte is not one of
-them, and reading it unbounded would let a hostile or broken endpoint force an
-arbitrarily large allocation on a researcher's laptop."""
+JSON_RESPONSE_LIMIT = 16 << 20
+#: Ceiling on a decoded JSON body. Sized from the platform's admission limits,
+#: not from thin air: a transcribe claim carries every line's geometry in
+#: ``params.lines`` (``backend/jobs/application/inference_dispatcher.py``), and
+#: the platform admits up to ``MAX_PAGE_TRANSCRIPTION_LINES`` = 10_000 lines per
+#: page with up to ``MAX_LINE_GEOMETRY_POINTS`` = 256 points each
+#: (``backend/document/api/schemas.py``). One entry is ~64 B of keys and uuid
+#: plus 256 points at ~23 B per ``[x, y]`` pair (generous for pixel
+#: coordinates), so ~6 KB a line: a dense real page of 300 such lines is
+#: ~1.8 MB, which a 1 MiB bound refused. 16 MiB clears it with room to spare
+#: while still refusing unbounded reads, and matches the platform's own 16 MiB
+#: JSON transport cap.
 
 IMAGE_TIMEOUT_SECONDS = 120.0
 """Generous because this fetches a scan, not a JSON round trip, but still
@@ -196,7 +203,15 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     one is made, so no credential ever leaves the first, https-checked host.
     """
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> NoReturn:
         raise PlatformError(
             f"Refusing to follow a {code} redirect to {newurl}. "
             "The platform must answer directly; following the redirect would "

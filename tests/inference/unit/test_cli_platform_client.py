@@ -4,7 +4,7 @@ bounds what it reads.
 Three properties follow from the threat model. The transport refuses every
 redirect instead of following it: the stdlib's redirect handler copies bearer
 headers to whatever `Location` names, so one 302 would deliver the device or
-service token to another host. JSON answers are bounded at a megabyte while
+service token to another host. JSON answers are bounded at sixteen megabytes,
 page images stream through their own limit. And a page image link that answers
 without a 200 is refused rather than handed to the model as bytes.
 
@@ -238,6 +238,62 @@ def test_an_announced_over_limit_body_is_refused_without_reading(
 
     monkeypatch.setattr(api_module, "JSON_RESPONSE_LIMIT", 10)
     opener._script.append(FakeResponse(body=b"x" * 20, length="20"))
+
+    with pytest.raises(PlatformError, match="the response exceeded the size limit"):
+        _client()._request("GET", "/device/v1/self")
+
+
+def _dense_lines(n: int = 300, points: int = 256) -> list[dict[str, object]]:
+    """A dense transcribe claim: every line carries a full polygon.
+
+    Mirrors what the dispatcher puts in ``params.lines`` (line id, index, and
+    up to 256 points), with pixel-like coordinates so the JSON size is honest.
+    """
+    return [
+        {
+            "line_id": f"00000000-0000-4000-8000-{i:012d}",
+            "line_index": i,
+            "points": [[100.5 + k * 0.75, 200.25 + k * 1.5] for k in range(points)],
+        }
+        for i in range(n)
+    ]
+
+
+def test_a_dense_transcribe_claim_is_accepted(opener: FakeOpener) -> None:
+    from nomikos_inference.cli.transport import JSON_RESPONSE_LIMIT
+
+    answer = _claim_answer()
+    assert isinstance(answer["page"], dict)
+    page = answer["page"]
+    assert isinstance(page["request"], dict)
+    page["request"]["params"] = {"lines": _dense_lines()}
+    raw = _json_bytes(answer)
+    # This exact body was refused by the old 1 MiB bound: the fix must take it.
+    assert len(raw) > 1 << 20
+    assert len(raw) < JSON_RESPONSE_LIMIT
+    opener._script.append(FakeResponse(body=raw))
+
+    claim = _client().claim_page(credential={"X": "y"}, wait_seconds=0)
+
+    assert claim.page is not None
+    assert len(claim.page.params["lines"]) == 300
+
+
+def test_a_body_one_byte_over_the_bound_is_refused(opener: FakeOpener) -> None:
+    from nomikos_inference.cli.transport import JSON_RESPONSE_LIMIT
+
+    opener._script.append(FakeResponse(body=b"x" * (JSON_RESPONSE_LIMIT + 1)))
+
+    with pytest.raises(PlatformError, match="the response exceeded the size limit"):
+        _client()._request("GET", "/device/v1/self")
+
+
+def test_an_announced_over_bound_body_is_refused_without_reading(
+    opener: FakeOpener,
+) -> None:
+    from nomikos_inference.cli.transport import JSON_RESPONSE_LIMIT
+
+    opener._script.append(FakeResponse(body=b"x", length=str(JSON_RESPONSE_LIMIT + 1)))
 
     with pytest.raises(PlatformError, match="the response exceeded the size limit"):
         _client()._request("GET", "/device/v1/self")
