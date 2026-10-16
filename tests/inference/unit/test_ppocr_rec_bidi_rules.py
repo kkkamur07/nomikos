@@ -377,6 +377,7 @@ def test_strong_inside_table(typ: str) -> None:
         # N0c: opposite strong inside resolves from the preceding context.
         (["ON", "L", "ON"], "L", "R", "L"),
         (["ON", "L", "ON"], "R", "R", "R"),
+        (["ON", "R", "ON"], "L", "L", "L"),
     ],
 )
 def test_pair_type_table(wtypes: list[str], sos: str, embedding: str, expected: str | None) -> None:
@@ -390,6 +391,13 @@ def test_pair_type_reads_preceding_context() -> None:
 
     seq = [0, 1, 2, 3, 4]
     assert _pair_type(seq, "R", ["R", "L", "ON", "L", "ON"], 2, 4, "R") == "L"
+
+
+def test_pair_type_scans_only_inside_the_pair() -> None:
+    from nomikos_inference.architectures.ppocr_rec.bidi._neutral import _pair_type
+
+    seq = [0, 1, 2, 3, 4]
+    assert _pair_type(seq, "R", ["L", "ON", "ON", "ON", "R"], 1, 3, "R") is None
 
 
 def test_pair_type_falls_back_to_sos_without_context() -> None:
