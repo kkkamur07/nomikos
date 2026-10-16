@@ -15,6 +15,7 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.jobs.infrastructure.job_sql import rows_affected
 from backend.ml.domain.execution import ExecutionTarget
 from backend.ml.infrastructure.device_orm_models import HelperDevice, HelperPairing
 
@@ -164,7 +165,7 @@ class HelperDeviceRepository:
                 )
             )
         )
-        return result.rowcount or 0
+        return rows_affected(result)
 
     def add_pairing(self, session: AsyncSession, pairing: HelperPairing) -> HelperPairing:
         session.add(pairing)
