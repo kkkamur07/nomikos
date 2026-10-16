@@ -433,6 +433,50 @@ class TestZeroExtentPins:
 
         assert report.finding_count == 0
 
+    @pytest.mark.asyncio
+    async def test_subunit_extent_still_finds_a_sliver(self) -> None:
+        tall = _row(0.0, 1.0, 400.0, order=0)
+        taller = _row(0.0, 1.0, 600.0, order=1)
+        sliver = _row(0.0, 0.02, 450.0, order=2)
+        sliver.points = [[0.0, 450.0], [0.02, 450.0], [0.02, 500.0], [0.0, 500.0]]
+        service, part = _service([tall, taller, sliver], width=None, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.page_width == pytest.approx(1.0)
+        assert report.finding_count == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_page_measures_zero(self) -> None:
+        service, part = _service([], width=None, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.page_width == 0.0
+        assert report.page_height == 0.0
+        assert report.measured_page is False
+        assert report.finding_count == 0
+
+    @pytest.mark.asyncio
+    async def test_unit_extent_width_still_flags_an_outsider(self) -> None:
+        voter = _row(0.0, 1.0, 500.0, order=0)
+        outsider = _row(-50.0, -49.95, 500.0, order=1)
+        outsider.points = [[-50.0, 450.0], [-49.95, 450.0]] + [
+            [-49.95, 550.0],
+            [-50.0, 550.0],
+            [-50.0, 525.0],
+            [-49.95, 525.0],
+            [-49.95, 475.0],
+            [-50.0, 475.0],
+        ]
+        service, part = _service([voter, outsider], width=None, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.page_width == pytest.approx(1.0)
+        assert [s.line_id for s in report.suspects] == [str(outsider.id)]
+        assert report.finding_count == 1
+
 
 async def _missing_part(_session, _part_id):
     return None

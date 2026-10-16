@@ -863,6 +863,19 @@ class TestMergeKillerPins:
             [10.0, 0.0],
         ]
 
+    def test_merge_baselines_rounds_fractional_x(self) -> None:
+        assert merge_baselines([[0.05, 0.0], [10.0, 0.0]], [[20.0, 0.0], [30.0, 0.0]]) == [
+            [0.1, 0.0],
+            [10.0, 0.0],
+            [20.0, 0.0],
+            [30.0, 0.0],
+        ]
+
+    def test_pinched_sides_keep_the_turning_point(self) -> None:
+        primary = [(0.0, 5.0), (10.0, 0.0), (10.0, 10.0)]
+        fragment = [(0.0, 5.0), (10.0, 2.0), (10.0, 8.0)]
+        assert merge_polygons(primary, fragment) == [[0.0, 5.0], [10.0, 0.0], [10.0, 10.0]]
+
     def test_merge_baselines_single_cluster_falls_back_to_ends(self) -> None:
         assert merge_baselines([[0.0, 0.0], [1.0, 0.0]], [[2.0, 0.0], [2.5, 0.0]]) == [
             [0.0, 0.0],
@@ -1019,3 +1032,29 @@ class TestThreePointKeptPins:
         (trim,) = find_overlaps([upper, lower], stats())
         assert trim.duplicate is False
         assert len(trim.upper_points) == 3
+
+
+class TestOverlapAreaKillerPins:
+    def test_stray_vertex_does_not_add_area(self) -> None:
+        first = [
+            [250.0, 450.0],
+            [300.0, 400.0],
+            [1100.0, 400.0],
+            [1100.0, 500.0],
+            [300.0, 500.0],
+        ]
+        second = rect(300.0, 1100.0, 400.0, 500.0)
+        assert overlap_area(first, second) == 80000.0
+
+    def test_kinked_edge_is_measured(self) -> None:
+        first = rect(300.0, 1100.0, 400.0, 500.0)
+        second = [[300.0, 400.0], [700.0, 450.0], [1100.0, 400.0], [1100.0, 500.0], [300.0, 500.0]]
+        assert overlap_area(first, second) == pytest.approx(60000.0)
+
+    def test_single_point_baseline_kills_the_split(self) -> None:
+        crosser = seg(
+            "c",
+            rect(300.0, 1800.0, 400.0, 500.0),
+            [[500.0, 450.0]],
+        )
+        assert find_spanning([crosser], stats(bands=[(200.0, 1200.0), (1250.0, 1900.0)])) == []
