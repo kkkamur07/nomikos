@@ -313,6 +313,8 @@ def test_isolate_overflow_and_unwind() -> None:
         # W7: the strong tracker decides EN after L, even at odd levels.
         (["L", "EN", "L"], 1, ([2, 2, 2], [0, 1, 2])),
         (["R", "L", "EN"], 0, ([1, 0, 0], [0, 1, 2])),
+        # W7 feeds N1: a converted EN is a neutral boundary like any L.
+        (["RLE", "L", "WS", "EN", "PDF"], 0, ([None, 2, 2, 2, None], [1, 2, 3])),
         # W1: a leading NSM takes sos, including inside isolates.
         (["NSM", "L"], 1, ([1, 2], [1, 0])),
         (["LRI", "NSM", "L"], 0, ([0, 2, 2], [0, 1, 2])),
