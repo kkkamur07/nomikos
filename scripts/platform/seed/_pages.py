@@ -96,8 +96,8 @@ async def _import_part_history(
             line_count=line_count,
             paired_line_count=paired_line_count,
         )
-        timestamp = payload.get("timestamp")
-        created_at = _parse_legacy_timestamp(timestamp if isinstance(timestamp, str) else None)
+        timestamp = cast("str | None", payload.get("timestamp"))
+        created_at = _parse_legacy_timestamp(timestamp)
         if created_at is not None:
             snapshot.created_at = created_at
         session.add(snapshot)
