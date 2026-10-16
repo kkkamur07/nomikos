@@ -170,10 +170,6 @@ def _build_state_dict(
     writes. So this refuses rather than guesses. Extend it against a real
     two-layer TF export, not from the shape of the PyTorch side.
     """
-    # The TF layout this converter knows how to read is the 6-layer stack:
-    #   layers[0]=conv2d, layers[1]=maxpool2d, layers[2]=conv2d,
-    #   layers[3]=maxpool2d, layers[4]=bilstm, layers[5]=dropout.
-    # A config with a different stack is refused here rather than mis-mapped.
     expected_kinds = ("conv2d", "maxpool2d", "conv2d", "maxpool2d", "bilstm", "dropout")
     kind_from_name = {
         "conv2d_0": "conv2d",
