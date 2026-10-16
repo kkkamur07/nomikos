@@ -13,6 +13,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -174,7 +175,7 @@ def pair_device_over_http(
     headers: dict[str, str],
     *,
     name: str = "Researcher laptop",
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Run the whole pairing protocol against the real app and return the token.
 
     A real device credential, minted the way production mints one: helper starts
