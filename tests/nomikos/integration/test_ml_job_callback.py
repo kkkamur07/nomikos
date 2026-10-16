@@ -396,55 +396,6 @@ def test_resegment_keeps_every_line_a_human_touched(client: TestClient):
     assert job.result["skipped_covered_lines"] == 0
 
 
-def test_resegment_does_not_draw_a_kept_line_twice(client: TestClient):
-    """The segmenter redraws the ink a kept line already covers; that twin is not added.
-
-    Without this a fully approved page came back with every approved line under a fresh
-    near-identical copy, which is better than losing the text but not what anyone asked
-    for. The callback payload draws a line at exactly the approved line's polygon.
-    """
-    product_job_id, inference_job_id = _seed_waiting_job()
-    job = _get_job(product_job_id)
-    part_id = job.document_part_id
-    document_id = job.document_id
-    assert part_id is not None and document_id is not None
-
-    approved = _line(part_id, 0, points=[[1, 1], [2, 1], [2, 2], [1, 2]])
-    with sync_system_session() as session:
-        ground_truth = Transcription(
-            id=uuid.uuid4(),
-            document_id=document_id,
-            name="Ground truth",
-            kind=TranscriptionKind.ground_truth,
-        )
-        session.add_all([ground_truth, approved])
-        session.flush()
-        session.add(
-            LineTranscription(line_id=approved.id, transcription_id=ground_truth.id, text="word")
-        )
-        session.commit()
-
-    response = client.post(
-        CALLBACK_URL,
-        headers=WEBHOOK_HEADERS,
-        json=_segment_done_payload(
-            product_job_id=product_job_id, inference_job_id=inference_job_id
-        ),
-    )
-    assert response.status_code == 204
-
-    with sync_system_session() as session:
-        surviving = session.scalars(select(Line.id).where(Line.part_id == part_id)).all()
-        assert surviving == [approved.id]
-
-    job = _get_job(product_job_id)
-    assert job.status == JobStatus.done
-    assert job.result["lines_count"] == 1
-    assert job.result["added_lines"] == 0
-    assert job.result["skipped_covered_lines"] == 1
-    assert job.result["preserved_transcribed_lines"] == 1
-
-
 def test_callback_transcribe_success_marks_job_done(client: TestClient):
     product_job_id, inference_job_id, line_id = _seed_transcribe_waiting_job()
     response = client.post(

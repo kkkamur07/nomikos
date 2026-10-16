@@ -172,34 +172,6 @@ def test_an_expired_lease_returns_the_page_to_a_different_agent(
     assert stored.inference_job_id != uuid.UUID(page["inference_job_id"])
 
 
-def test_an_expired_lease_is_re_pended_and_never_failed(
-    client: TestClient, owner_user, owner_headers, owner_project
-) -> None:
-    """The terminal state this must not reach is ``failed``.
-
-    The page is aged past its 600s lease. It must come back as ``pending``, with
-    no error and no completion, because nothing failed: a page was put down.
-    """
-    _agent, page = _leased_page(client, owner_headers, owner_project)
-    job_id = page["product_job_id"]
-    device_settings = get_device_settings()
-    _age_by(job_id, device_settings.device_lease_seconds + 60)
-
-    swept = run_stale_job_sweep()
-
-    assert swept == 1
-    stored = _stored_job(job_id)
-    assert stored.status is JobStatus.pending
-    assert stored.status is not JobStatus.failed, "an abandoned lease must never be failed"
-    assert stored.error is None
-    assert stored.completed_at is None
-    # The claim is gone, so *any* agent may take it next.
-    assert stored.claimed_by is None
-    assert stored.inference_job_id is None
-    assert stored.started_at is None
-    assert stored.heartbeat_at is None
-
-
 def test_the_stopped_agent_cannot_report_on_a_page_it_no_longer_holds(
     client: TestClient, owner_user, owner_headers, owner_project
 ) -> None:

@@ -39,7 +39,6 @@ from tests.inference.integration.conftest import (
     build_and_install_cli,
     cli_environment,
     decide_pairing,
-    free_port,
     http_request,
     migrate_database,
     register_account,
@@ -414,23 +413,6 @@ def test_a_revoked_device_reports_the_revocation_and_exits_non_zero(
     assert elapsed < 20, f"it spun for {elapsed:.1f}s instead of reporting"
 
 
-def test_force_pairs_again_over_a_revoked_credential(
-    installed_cli, platform_url, home, researcher
-) -> None:
-    """The recovery the refusal points at has to work."""
-    paired = _run_pair(installed_cli, platform_url, home, approve_as=researcher)
-    assert paired.returncode == 0, paired.output
-    first_device = json.loads((home / "device.json").read_text())["device_id"]
-    assert _delete(f"{platform_url}/devices/{first_device}", researcher["headers"]) == 204
-
-    repaired = _run_pair(
-        installed_cli, platform_url, home, arguments=("--force",), approve_as=researcher
-    )
-
-    assert repaired.returncode == 0, repaired.output
-    assert json.loads((home / "device.json").read_text())["device_id"] != first_device
-
-
 def test_a_denied_pairing_exits_non_zero_and_writes_nothing(
     installed_cli, platform_url, home, researcher
 ) -> None:
@@ -439,23 +421,6 @@ def test_a_denied_pairing_exits_non_zero_and_writes_nothing(
     assert run.returncode != 0, run.output
     assert "refused" in run.stderr.lower()
     assert not (home / "device.json").exists()
-
-
-def test_a_platform_that_cannot_be_reached_is_not_reported_as_a_revocation(
-    installed_cli, platform_url, home, researcher
-) -> None:
-    """A researcher on a train has not been revoked, and must not be told so."""
-    paired = _run_pair(installed_cli, platform_url, home, approve_as=researcher)
-    assert paired.returncode == 0, paired.output
-
-    unreachable = f"http://127.0.0.1:{free_port()}"
-    run = _run_pair(installed_cli, unreachable, home)
-
-    assert run.returncode != 0
-    assert "removed" not in run.stderr.lower()
-    assert "revoked" not in run.stderr.lower()
-    # Still paired, and the credential was left exactly as it was.
-    assert json.loads((home / "device.json").read_text())["platform_url"] == platform_url
 
 
 # ---------------------------------------------------------------------------

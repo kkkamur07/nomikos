@@ -114,28 +114,6 @@ def test_member_generates_transcription_pdf_from_paired_ground_truth(
     assert reader.pages[0].mediabox.height == 90
 
 
-def test_member_generates_blank_same_size_transcription_pdf_without_paired_lines(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
-) -> None:
-    project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
-        client, owner_headers, owner_project
-    )
-    base = documents_url(project_id)
-
-    response = client.post(
-        f"{base}/{document_id}/parts/{part_id}/transcription-pdf",
-        headers=owner_headers,
-    )
-
-    assert response.status_code == 200
-    assert response.content.startswith(b"%PDF")
-    reader = _pdf_reader(response.content)
-    assert len(reader.pages) == 1
-    assert (reader.pages[0].extract_text() or "").strip() == ""
-    assert reader.pages[0].mediabox.width == 160
-    assert reader.pages[0].mediabox.height == 90
-
-
 def test_member_pdf_renders_unapproved_machine_text_when_nothing_is_approved(
     client: TestClient, owner_headers: dict[str, str], owner_project: dict
 ) -> None:

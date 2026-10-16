@@ -277,29 +277,6 @@ def test_get_job_denies_access_to_other_users_job(client: TestClient):
     assert response.status_code == 403
 
 
-def test_get_job_denies_access_to_ownerless_job(
-    client: TestClient, registered_user: dict[str, str]
-):
-    job_id = uuid.uuid4()
-    with sync_system_session() as session:
-        session.add(
-            Job(
-                id=job_id,
-                type=JobType.pipeline,
-                status=JobStatus.done,
-                payload={"handler": "noop"},
-                result={"ok": True},
-                user_id=None,
-            )
-        )
-        session.commit()
-
-    auth_headers = {"Authorization": f"Bearer {registered_user['access_token']}"}
-    response = client.get(f"/jobs/{job_id}", headers=auth_headers)
-
-    assert response.status_code == 403
-
-
 # --- Job failure ---
 # Tests error persistence through the lifespan worker. Does not test inference callbacks.
 

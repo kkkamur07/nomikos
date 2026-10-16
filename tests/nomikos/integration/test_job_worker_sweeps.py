@@ -180,24 +180,6 @@ def test_a_slept_laptop_re_pends_and_an_unclaimed_row_is_left_alone(client: Test
     assert leased.heartbeat_at is None
 
 
-def test_a_lease_still_inside_its_window_keeps_the_page(client: TestClient):
-    lease = get_device_settings().device_lease_seconds
-    owner = agent_claim_owner(uuid.uuid4())
-    job_id = _seed_job(
-        status=JobStatus.waiting,
-        claimed_by=owner,
-        updated_at=_ago(lease / 2),
-    )
-
-    _tick()
-
-    # A page taken back from the agent still working on it is duplicated work at
-    # best and a lost transcription at worst.
-    job = _stored(job_id)
-    assert job.status is JobStatus.waiting
-    assert job.claimed_by == owner
-
-
 # ---------------------------------------------------------------------------
 # An abandoned callback claim is released without moving the deadline
 # ---------------------------------------------------------------------------

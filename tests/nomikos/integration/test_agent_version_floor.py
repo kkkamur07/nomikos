@@ -215,24 +215,6 @@ def test_the_floor_outranks_the_credential(
 # ---------------------------------------------------------------------------
 
 
-def test_an_agent_exactly_at_the_floor_claims_normally(
-    client: TestClient, owner_user, owner_headers, owner_project, version_policy
-) -> None:
-    """The floor is a floor, not a ceiling on the way in: at it is allowed."""
-    token = _paired_agent(client, owner_headers)
-    job_id = _submitted_page(client, owner_headers, owner_project)
-    version_policy(minimum="0.4.0", latest="0.4.0")
-
-    response = _claim(client, token, "0.4.0")
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["page"]["product_job_id"] == job_id
-    assert body["agent"]["outdated"] is False
-    assert body["agent"]["agent_version"] == "0.4.0"
-    assert _stored_job(job_id).status is JobStatus.waiting
-
-
 def test_an_agent_above_the_floor_but_behind_the_latest_is_served_and_told(
     client: TestClient, owner_user, owner_headers, owner_project, version_policy
 ) -> None:

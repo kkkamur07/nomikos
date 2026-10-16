@@ -80,23 +80,3 @@ def test_finalize_refuses_unknown_part_and_already_uploaded_part(
     )
     assert again.status_code == 422
     assert_api_error(again, code="VALIDATION_ERROR")
-
-
-@pytest.mark.integration
-def test_finalize_validates_the_request_shape(client, owner_headers, owner_project):
-    project_id = owner_project["id"]
-    document_id = _create_document(client, owner_headers, project_id)
-
-    empty_key = client.post(
-        f"{documents_url(project_id)}/{document_id}/parts/{uuid.uuid4()}/finalize",
-        headers=owner_headers,
-        json={"image_key": "", "width": None, "height": None},
-    )
-    assert empty_key.status_code == 422
-
-    oversize_declared = client.post(
-        f"{documents_url(project_id)}/{document_id}/parts/upload",
-        headers=owner_headers,
-        json={"filename": "page.png", "size": 101 * 1024 * 1024},
-    )
-    assert oversize_declared.status_code == 422

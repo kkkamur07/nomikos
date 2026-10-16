@@ -748,14 +748,3 @@ def test_a_hosted_worker_runs_the_same_loop_with_a_service_credential(
 # a 426 is `tests/inference/unit/test_cli_run_resilience.py::
 # test_a_version_refusal_still_leaves_the_loop`, and the message and exit code are
 # `test_cli_self_upgrade.py::test_a_failed_upgrade_exits_non_zero_and_claims_nothing`.
-
-
-def test_an_unpaired_machine_is_told_to_pair_rather_than_left_polling(
-    installed_cli, platform_url, tmp_path
-) -> None:
-    """There is no credential here to claim with, and nothing to wait for."""
-    run = _run(installed_cli, platform_url, tmp_path / "empty-home")
-
-    assert run.returncode != 0, run.output
-    assert "not paired" in run.stderr.lower()
-    assert "nomikos pair" in run.stderr

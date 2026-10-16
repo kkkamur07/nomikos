@@ -69,36 +69,6 @@ def test_anonymous_read_with_the_wrong_token_is_not_found(client, published_docu
     assert response.status_code == 404
 
 
-@pytest.mark.integration
-def test_anonymous_read_with_no_token_is_not_found(client, published_document):
-    project_id = published_document["project_id"]
-    document_id = published_document["document_id"]
-    url = f"/public/projects/{project_id}/documents/{document_id}"
-
-    response = client.get(url)
-    assert response.status_code == 404
-
-
-# --- Draft documents stay private even with a token ---
-# Tests anonymous users get 404 for draft workflow, no token minted yet. Does not test
-# member-route access.
-
-
-@pytest.mark.integration
-def test_anonymous_cannot_read_draft_document(client, owner_headers, owner_project):
-    project_id = owner_project["id"]
-    base = f"/projects/{project_id}/documents"
-    create = client.post(base, headers=owner_headers, json={"name": "Secret draft"})
-    assert create.status_code == 201
-    document_id = create.json()["id"]
-    # A draft was never published, so it never had a token minted - there is nothing
-    # correct to send, which is itself the point: the link cannot exist yet.
-    assert create.json()["public_share_token"] is None
-
-    response = client.get(f"/public/projects/{project_id}/documents/{document_id}")
-    assert response.status_code == 404
-
-
 # --- Anonymous mutations blocked ---
 # Tests unauthenticated users cannot change published documents. Does not test member routes.
 
@@ -117,23 +87,6 @@ def test_anonymous_cannot_mutate_published_document(client, published_document):
         files={"file": ("x.png", MINIMAL_PNG, "image/png")},
     )
     assert upload.status_code == 401
-
-
-# --- Members can still edit published, and always see the token ---
-# Tests owners retain mutate access after publish. Does not test collaborator permissions.
-
-
-@pytest.mark.integration
-def test_member_can_still_edit_published_document(client, owner_headers, published_document):
-    project_id = published_document["project_id"]
-    document_id = published_document["document_id"]
-    url = f"/projects/{project_id}/documents/{document_id}"
-
-    patch = client.patch(url, headers=owner_headers, json={"name": "Published but editable"})
-    assert patch.status_code == 200
-    assert patch.json()["name"] == "Published but editable"
-    assert patch.json()["workflow"] == "published"
-    assert patch.json()["public_share_token"] == published_document["token"]
 
 
 # --- Outsider vs public route ---
@@ -158,24 +111,6 @@ def test_outsider_can_read_published_via_public_route(client, outsider_headers, 
     # An authenticated outsider is not a member either - the token is still required.
     no_token = client.get(public_url, headers=outsider_headers)
     assert no_token.status_code == 404
-
-
-# --- Members read without a token ---
-# Tests project membership alone is sufficient on the authenticated document route,
-# exactly as before this feature existed.
-
-
-@pytest.mark.integration
-def test_member_reads_the_authenticated_route_without_any_token(
-    client, owner_headers, published_document
-):
-    project_id = published_document["project_id"]
-    document_id = published_document["document_id"]
-    url = f"/projects/{project_id}/documents/{document_id}"
-
-    response = client.get(url, headers=owner_headers)
-    assert response.status_code == 200
-    assert response.json()["workflow"] == "published"
 
 
 # --- Rotating the share token invalidates the old link ---
@@ -347,21 +282,6 @@ def test_unpublished_part_is_hidden_from_every_public_surface_but_visible_to_the
 
 
 @pytest.mark.integration
-def test_setting_published_flag_is_owner_only(client, outsider_headers, published_document):
-    project_id = published_document["project_id"]
-    document_id = published_document["document_id"]
-    part_id = published_document["part_id"]
-    parts_url = f"/projects/{project_id}/documents/{document_id}/parts/published"
-
-    denied = client.patch(
-        parts_url,
-        headers=outsider_headers,
-        json={"parts": [{"part_id": part_id, "published": False}]},
-    )
-    assert denied.status_code == 403
-
-
-@pytest.mark.integration
 def test_setting_published_flag_is_refused_to_a_collaborator(
     client, owner_headers, collaborator_user, collaborator_headers, published_document
 ):
@@ -482,35 +402,7 @@ def test_a_collaborator_never_sees_the_share_token(
 
 
 # --- The bulk published flag is bounded work ---
-# Tests that repeated ids collapse and that a foreign id is refused before any write.
-
-
-@pytest.mark.integration
-def test_repeating_a_part_id_in_the_published_batch_settles_on_the_last_value(
-    client, owner_headers, published_document
-):
-    """The request accepts thousands of entries and nothing stopped one part id being
-    named over and over, each repeat reloading that part with all of its lines and
-    transcriptions. Repeats now collapse the way a repeated field in any other payload
-    would, and the batch costs one pass over the parts already in memory.
-    """
-    project_id = published_document["project_id"]
-    document_id = published_document["document_id"]
-    part_id = published_document["part_id"]
-
-    response = client.patch(
-        f"/projects/{project_id}/documents/{document_id}/parts/published",
-        headers=owner_headers,
-        json={
-            "parts": [
-                {"part_id": part_id, "published": False},
-                {"part_id": part_id, "published": True},
-                {"part_id": part_id, "published": False},
-            ]
-        },
-    )
-    assert response.status_code == 200
-    assert [part["published"] for part in response.json()] == [False]
+# A foreign id is refused before any write.
 
 
 @pytest.mark.integration

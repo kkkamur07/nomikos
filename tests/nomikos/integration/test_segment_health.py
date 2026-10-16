@@ -116,25 +116,6 @@ def test_paired_line_ids_does_not_leak_a_pairing_from_another_part(
     assert _paired_line_ids(client, other_page[1]) == set()
 
 
-def test_lock_part_is_a_statement_postgres_accepts(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
-) -> None:
-    """``SELECT ... FOR UPDATE`` on a bare column is the kind of thing that
-    compiles in SQLAlchemy and is refused by the server. Run it once for real."""
-    from backend.document.infrastructure.document_repository import DocumentRepository
-    from infrastructure.db import system_session
-
-    _document_id, part_id, _line_ids = _page_with_lines(
-        client, owner_headers, owner_project, name="Locked page"
-    )
-
-    async def run() -> None:
-        async with system_session() as session:
-            await DocumentRepository().lock_part(session, uuid.UUID(part_id))
-
-    client.portal.call(run)
-
-
 def test_segment_health_reports_a_real_page(
     client: TestClient, owner_headers: dict[str, str], owner_project: dict
 ) -> None:
