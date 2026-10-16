@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 from sqlalchemy import Update, update
 
 from backend.core.exceptions import ConflictError
-from backend.jobs.infrastructure.job_sql import NON_TERMINAL_STATUSES, rows_affected
+from backend.jobs.infrastructure.job_sql import NON_TERMINAL_STATUSES
 from backend.jobs.infrastructure.notifications import notify_platform_job_status_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus
-from infrastructure.db import sync_system_session
+from infrastructure.db import rows_affected, sync_system_session
 
 
 def _owned_by(statement: Update, claimed_by: str | None) -> Update:

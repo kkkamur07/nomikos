@@ -19,10 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import infrastructure.models  # noqa: F401 - register all ORM mappers
 from backend.core.api.pagination import PageCursor
 from backend.document.infrastructure.orm_models import Document
-from backend.jobs.infrastructure.job_sql import rows_affected
 from backend.jobs.infrastructure.job_terminal import apply_cancellation
 from backend.jobs.infrastructure.notifications import notify_platform_job_status_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
+from infrastructure.db import rows_affected
 
 _TERMINAL_STATUSES = (JobStatus.done, JobStatus.failed, JobStatus.cancelled)
 

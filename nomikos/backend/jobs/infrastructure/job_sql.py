@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
-
-from sqlalchemy import ColumnElement, CursorResult, Result
+from sqlalchemy import ColumnElement
 
 import infrastructure.models  # noqa: F401 - register all ORM mappers
 from backend.jobs.infrastructure.orm_models import Job, JobStatus
@@ -20,13 +18,3 @@ AGENT_CLAIM_PREFIX = "agent:"
 def held_by_agent() -> ColumnElement[bool]:
     """SQL for "an inference agent holds this page"."""
     return Job.claimed_by.startswith(AGENT_CLAIM_PREFIX)
-
-
-def rows_affected(result: Result[tuple[object, ...]]) -> int:
-    """Rows an UPDATE or DELETE touched.
-
-    ``Session.execute`` is typed as returning ``Result`` for every statement,
-    but a DML statement always yields a ``CursorResult``, which is where
-    ``rowcount`` lives.
-    """
-    return cast(CursorResult[tuple[object, ...]], result).rowcount or 0
