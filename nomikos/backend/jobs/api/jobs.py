@@ -113,7 +113,7 @@ async def clear_job_history(
 ) -> ClearJobHistoryResponse:
     """Delete finished jobs of a project. Active jobs are left running."""
     await _project_service.get_project(db, current_user, project_id)
-    deleted = await service.clear_project_job_history(project_id)
+    deleted = await service.clear_project_job_history(project_id, user_id=current_user.id)
     return ClearJobHistoryResponse(deleted=deleted)
 
 

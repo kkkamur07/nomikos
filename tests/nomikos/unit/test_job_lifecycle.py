@@ -624,16 +624,16 @@ def test_process_one_job_runs_every_stale_sweep(monkeypatch: pytest.MonkeyPatch)
 
 
 # --- Clear job history ---
-# Tests the terminal-only filter on DELETE /jobs/history.
+# Tests the terminal-only and caller-only filters on DELETE /jobs/history.
 # Does not test project membership, which reuses ProjectService.get_project.
 
 
-async def test_clear_history_deletes_only_terminal_project_jobs():
+async def test_clear_history_deletes_only_the_callers_terminal_project_jobs():
     session = _FakeAsyncSession(rowcount=4)
-    project_id = uuid.uuid4()
+    project_id, user_id = uuid.uuid4(), uuid.uuid4()
 
     deleted = await job_repository.JobRepository(session).delete_terminal_jobs_for_project(
-        project_id
+        project_id, user_id=user_id
     )
 
     assert deleted == 4
@@ -644,6 +644,8 @@ async def test_clear_history_deletes_only_terminal_project_jobs():
     assert "JOIN documents ON jobs.document_id = documents.id" in sql
     values = _params(session.statements[0])
     assert values["project_id_1"] == project_id
+    # Another member's finished jobs are theirs to clear, not the caller's.
+    assert values["user_id_1"] == user_id
     # pending/running/waiting are absent, so active jobs survive the clear.
     assert set(values["status_1"]) == {JobStatus.done, JobStatus.failed, JobStatus.cancelled}
 

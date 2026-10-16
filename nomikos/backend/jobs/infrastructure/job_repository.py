@@ -2,8 +2,9 @@
 
 The other half - the sync claim/sweep/transition machinery that runs on
 ``sync_system_session()`` from the worker loop and the on-read stale sweep -
-lives in ``job_claim_engine``, ``job_sweeps`` and ``job_terminal``. Different session types, different lifecycles,
-different callers; the sync half exists per ADR 0005.
+lives in ``job_claim_engine``, ``job_sweeps`` and ``job_terminal``. Different
+session types, different lifecycles, different callers; the sync half exists
+per ADR 0005.
 """
 
 from __future__ import annotations
@@ -102,12 +103,19 @@ class JobRepository:
         # little ahead of this host's would otherwise report a negative age.
         return max((datetime.now(UTC) - oldest_created_at).total_seconds(), 0.0)
 
-    async def delete_terminal_jobs_for_project(self, project_id: uuid.UUID) -> int:
-        """Delete finished jobs of a project; pending/running/waiting rows are kept."""
+    async def delete_terminal_jobs_for_project(
+        self, project_id: uuid.UUID, *, user_id: uuid.UUID
+    ) -> int:
+        """Delete *user_id*'s finished jobs of a project; active rows are kept.
+
+        Scoped to the caller: project membership lets someone read the project's
+        history, not erase another member's.
+        """
         terminal_ids = (
             select(Job.id)
             .join(Document, Job.document_id == Document.id)
             .where(Document.project_id == project_id)
+            .where(Job.user_id == user_id)
             .where(Job.status.in_(_TERMINAL_STATUSES))
             .scalar_subquery()
         )
