@@ -38,6 +38,7 @@ vi.mock("../../../api/client", () => ({
 
 function setup() {
   const setPairingError = vi.fn();
+  const setLineError = vi.fn();
   const setSubmissionRefusal = vi.fn();
   const trackJobAndWait = vi.fn().mockResolvedValue({ status: "done" });
   // Captures the listener so a test can fire a completion that this hook did
@@ -62,7 +63,7 @@ function setup() {
       setLayout: vi.fn(),
       lines: [],
       setLines: vi.fn(),
-      setLineError: vi.fn(),
+      setLineError,
       setTextLines: vi.fn(),
       setPairingProgress: vi.fn(),
       setPairingError,
@@ -79,6 +80,7 @@ function setup() {
   return {
     view,
     setPairingError,
+    setLineError,
     setSubmissionRefusal,
     trackJobAndWait,
     jobCompletionListeners,
@@ -424,5 +426,39 @@ describe("useLayoutMutations auto segment", () => {
     });
 
     expect(view.result.current.canUndo).toBe(true);
+  });
+
+  it("says who may draw when the server refuses a new Segment", async () => {
+    createPartLine.mockRejectedValue(new ApiError("Forbidden", 403));
+    const { view, setLineError } = setup();
+
+    await act(async () => {
+      await view.result.current.replaceWithManualLine("rectangle", [
+        [0, 0],
+        [10, 0],
+        [10, 10],
+      ]);
+    });
+
+    expect(setLineError).toHaveBeenLastCalledWith(
+      "Only project members can edit layout.",
+    );
+  });
+
+  it("keeps its own fallback for a failure with no message", async () => {
+    createPartLine.mockRejectedValue("offline");
+    const { view, setLineError } = setup();
+
+    await act(async () => {
+      await view.result.current.replaceWithManualLine("rectangle", [
+        [0, 0],
+        [10, 0],
+        [10, 10],
+      ]);
+    });
+
+    expect(setLineError).toHaveBeenLastCalledWith(
+      "Failed to save Segment geometry.",
+    );
   });
 });

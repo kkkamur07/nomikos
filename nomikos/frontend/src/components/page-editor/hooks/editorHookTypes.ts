@@ -28,11 +28,14 @@ export function errorMessage(error: unknown, fallback: string): string {
 }
 
 /** The banner for a failed layout write: a 403 says who may edit layout. */
-export function layoutMutationMessage(error: unknown): string {
+export function layoutMutationMessage(
+  error: unknown,
+  fallback = "Layout update failed.",
+): string {
   if (error instanceof ApiError && error.status === 403) {
     return "Only project members can edit layout.";
   }
-  return errorMessage(error, "Layout update failed.");
+  return errorMessage(error, fallback);
 }
 
 /**

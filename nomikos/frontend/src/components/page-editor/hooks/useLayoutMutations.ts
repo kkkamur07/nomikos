@@ -200,7 +200,9 @@ export function useLayoutMutations({
       setLineError(null);
       onDrawComplete();
     } catch (err) {
-      setLineError(layoutMutationMessage(err));
+      setLineError(
+        layoutMutationMessage(err, "Failed to save Segment geometry."),
+      );
     }
   }
 
