@@ -1,25 +1,23 @@
-import { useEffect, useRef } from "react";
 import Link from "next/link";
 import type {
   DocumentWithPartsResponse,
   InferenceModelResponse,
   LineResponse,
-  SegmentHealthResponse,
+  PageTranscriptionTextLineResponse,
+  PairingProgressResponse,
 } from "../../api/client";
+import type { PageEditorProcessingKind } from "./hooks/usePageEditorRunState";
 import { PageEditorBackLink } from "./PageEditorNavHeader";
 import { PageEditorModelSelect } from "./PageEditorModelSelect";
 import { PageEditorPager } from "./PageEditorPager";
-import { PageEditorSharingMenu } from "./PageEditorSharingMenu";
-import { PageEditorPageXmlButton } from "./PageEditorPageXmlButton";
-import { exportFileStem } from "../../utils/exportFilename";
-import { SettingsIcon } from "./EditorIcons";
-import { PageEditorSettingsPanel } from "./PageEditorSettingsPanel";
-import {
-  PageEditorSegmentHealthPanel,
-  type SegmentHealthAction,
-} from "./PageEditorSegmentHealthPanel";
-import { PageEditorInferenceStatus } from "./PageEditorInferenceStatus";
 import type { PageEditorCanvasSettings } from "./pageEditorSettings";
+import { ToolbarRunButtons } from "./ToolbarRunButtons";
+import {
+  SegmentHealthPopover,
+  SettingsPopover,
+  type ToolbarSegmentHealth,
+} from "./ToolbarPanels";
+import { ToolbarWorkflowMenu } from "./ToolbarWorkflowMenu";
 
 type PageEditorToolbarProps = {
   projectId: string | undefined;
@@ -33,14 +31,10 @@ type PageEditorToolbarProps = {
   onPreviousPart: () => void;
   onNextPart: () => void;
   lines: LineResponse[];
-  pairingProgress: {
-    paired_lines: number;
-    total_lines: number;
-    percent: number;
-  };
+  pairingProgress: PairingProgressResponse;
   partId: string;
   selectedSegmentId: string | null;
-  textLines: { order: number; text: string; paired_line_id: string | null }[];
+  textLines: PageTranscriptionTextLineResponse[];
   onPairTextLine: (order: number) => void;
   onDocumentWorkflowChange: (
     workflow: DocumentWithPartsResponse["workflow"],
@@ -49,7 +43,8 @@ type PageEditorToolbarProps = {
   onActionsOpenChange: (open: boolean) => void;
   segmenting: boolean;
   ocrRunning: boolean;
-  ocrScope?: "segment" | "page" | null;
+  /** What the page is busy with, from `usePageEditorRunState`. */
+  processingKind: PageEditorProcessingKind | null;
   transcribeModels: InferenceModelResponse[];
   selectedTranscribeModelId: string | null;
   onSelectedTranscribeModelIdChange: (modelId: string | null) => void;
@@ -68,14 +63,7 @@ type PageEditorToolbarProps = {
   onSegmentHealthOpenChange: (open: boolean) => void;
   /** Passed through from ``useSegmentHealth`` as one object: the toolbar owns
    *  none of this state, it only decides where the panel hangs. */
-  segmentHealth: {
-    report: SegmentHealthResponse | null;
-    loading: boolean;
-    error: string | null;
-    pending: string | null;
-    apply: (action: SegmentHealthAction) => void;
-    refresh: () => void;
-  };
+  segmentHealth: ToolbarSegmentHealth;
   canvasSettings: PageEditorCanvasSettings;
   onCanvasSettingsChange: (settings: PageEditorCanvasSettings) => void;
   preferLocalInference: boolean;
@@ -86,135 +74,49 @@ type PageEditorToolbarProps = {
   hostPreferenceLoading: boolean;
 };
 
-export function PageEditorToolbar({
-  projectId,
-  documentId,
-  partId,
+/** The toolbar's shorter wording for what the page is busy with. */
+const BUSY_LABELS: Record<PageEditorProcessingKind, string> = {
+  segmentation: "Segmenting",
+  "transcription-page": "Transcribing page",
+  "transcription-segment": "Transcribing",
+};
+
+function modelName(
+  models: InferenceModelResponse[],
+  modelId: string | null,
+): string | undefined {
+  return models.find((model) => model.id === modelId)?.name;
+}
+
+/** Screen-reader copies of what the bar shows, and the pairing buttons. */
+function ToolbarAnnouncements({
   document,
   partIndex,
   pageCount,
-  hasPreviousPart,
-  hasNextPart,
-  onPreviousPart,
-  onNextPart,
-  lines,
+  lineCount,
   pairingProgress,
   selectedSegmentId,
   textLines,
   onPairTextLine,
-  onDocumentWorkflowChange,
-  actionsOpen,
-  onActionsOpenChange,
-  segmenting,
-  ocrRunning,
-  ocrScope = null,
-  transcribeModels,
-  selectedTranscribeModelId,
-  onSelectedTranscribeModelIdChange,
-  segmentModels,
-  selectedSegmentModelId,
-  onSelectedSegmentModelIdChange,
-  onRunAutoSegment,
-  onRunSegmentOcr,
-  onRunPageOcr,
-  transcriptionPdfOpen,
-  onOpenTranscriptionPdf,
-  onCloseTranscriptionPdf,
-  settingsOpen,
-  onSettingsOpenChange,
-  segmentHealthOpen,
-  onSegmentHealthOpenChange,
-  segmentHealth,
-  canvasSettings,
-  onCanvasSettingsChange,
-  preferLocalInference,
-  onPreferLocalInferenceChange,
-  preferenceSaving,
-  hasLocalCapacity,
-  hostPreferenceLoading,
-}: PageEditorToolbarProps) {
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const settingsRef = useRef<HTMLDivElement>(null);
-  const segmentHealthRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!actionsOpen && !settingsOpen && !segmentHealthOpen) return;
-    function handleClick(event: MouseEvent) {
-      const target = event.target as Node;
-      if (
-        actionsOpen &&
-        dropdownRef.current &&
-        !dropdownRef.current.contains(target)
-      ) {
-        onActionsOpenChange(false);
-      }
-      if (
-        settingsOpen &&
-        settingsRef.current &&
-        !settingsRef.current.contains(target)
-      ) {
-        onSettingsOpenChange(false);
-      }
-      if (
-        segmentHealthOpen &&
-        segmentHealthRef.current &&
-        !segmentHealthRef.current.contains(target)
-      ) {
-        onSegmentHealthOpenChange(false);
-      }
-    }
-    globalThis.document.addEventListener("click", handleClick);
-    return () => globalThis.document.removeEventListener("click", handleClick);
-  }, [
-    actionsOpen,
-    settingsOpen,
-    segmentHealthOpen,
-    onActionsOpenChange,
-    onSettingsOpenChange,
-    onSegmentHealthOpenChange,
-  ]);
-
-  const segmentLabel = lines.length === 1 ? "seg" : "segs";
-  const pairingPercent =
-    pairingProgress.total_lines > 0
-      ? Math.round(
-          (pairingProgress.paired_lines / pairingProgress.total_lines) * 100,
-        )
-      : 0;
-  const processing = segmenting || ocrRunning;
-  const processingLabel = segmenting
-    ? "Segmenting"
-    : ocrRunning
-      ? ocrScope === "page"
-        ? "Transcribing page"
-        : "Transcribing"
-      : null;
-
-  const selectedModelName =
-    transcribeModels.find((model) => model.id === selectedTranscribeModelId)
-      ?.name ?? "not selected";
-  const selectedSegmentModelName =
-    segmentModels.find((model) => model.id === selectedSegmentModelId)?.name ??
-    "Default";
-
-  // The quick button transcribes what the researcher is looking at: the
-  // selected segment if there is one, otherwise the page. Naming the scope on
-  // the button is what keeps a one-click run from being a guess.
-  const transcribeScope = selectedSegmentId ? "segment" : "page";
-  const canTranscribe =
-    !processing &&
-    Boolean(selectedTranscribeModelId) &&
-    (Boolean(selectedSegmentId) || lines.length > 0);
-
+}: {
+  document: DocumentWithPartsResponse;
+  partIndex: number;
+  pageCount: number;
+  lineCount: number;
+  pairingProgress: PairingProgressResponse;
+  selectedSegmentId: string | null;
+  textLines: PageTranscriptionTextLineResponse[];
+  onPairTextLine: (order: number) => void;
+}) {
   return (
-    <header className="pe-toolbar" role="banner">
+    <>
       <span className="visually-hidden">ANNOTE PAGE WORKSPACE</span>
       <span className="visually-hidden">
         Pairing progress: {pairingProgress.paired_lines}/
         {pairingProgress.total_lines} Lines paired
       </span>
       <span className="visually-hidden">
-        {lines.length} {lines.length === 1 ? "Segment" : "Segments"}
+        {lineCount} {lineCount === 1 ? "Segment" : "Segments"}
       </span>
 
       <div className="visually-hidden">
@@ -223,7 +125,6 @@ export function PageEditorToolbar({
             <button
               key={textLine.order}
               type="button"
-              disabled={!selectedSegmentId}
               onClick={() => void onPairTextLine(textLine.order)}
             >
               Pair Text line {textLine.order + 1}
@@ -240,6 +141,152 @@ export function PageEditorToolbar({
       <span className="visually-hidden" role="status" aria-live="polite">
         Page {partIndex} of {pageCount}
       </span>
+    </>
+  );
+}
+
+/** The way back to the document, the document's name, and the pager. */
+function ToolbarTitle({
+  projectId,
+  documentId,
+  documentName,
+  partIndex,
+  pageCount,
+  ...pager
+}: {
+  projectId: string | undefined;
+  documentId: string | undefined;
+  documentName: string;
+  partIndex: number;
+  pageCount: number;
+  hasPreviousPart: boolean;
+  hasNextPart: boolean;
+  onPreviousPart: () => void;
+  onNextPart: () => void;
+}) {
+  return (
+    <div className="pe-toolbar__title">
+      {projectId && documentId && (
+        <PageEditorBackLink
+          to={`/projects/${projectId}/documents/${documentId}`}
+        />
+      )}
+      <div className="pe-toolbar__sep" aria-hidden="true" />
+      <h1
+        className="pe-toolbar__doc"
+        title={`${documentName} · Page ${partIndex}`}
+      >
+        {documentName}
+        <span className="pe-toolbar__doc-page"> · p.{partIndex}</span>
+      </h1>
+      <PageEditorPager
+        pageNumber={partIndex}
+        pageCount={pageCount}
+        {...pager}
+      />
+    </div>
+  );
+}
+
+/** What the page is busy with, its Segment count, and pairing progress. */
+function ToolbarStats({
+  busyLabel,
+  lineCount,
+  pairingProgress,
+}: {
+  busyLabel: string | null;
+  lineCount: number;
+  pairingProgress: PairingProgressResponse;
+}) {
+  const { paired_lines: paired, total_lines: total } = pairingProgress;
+  const pairingPercent = total > 0 ? Math.round((paired / total) * 100) : 0;
+  return (
+    <div className="pe-toolbar__center" aria-label="Page statistics">
+      {busyLabel && (
+        <div
+          className="pe-toolbar__processing"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="pe-toolbar__processing-dot" aria-hidden="true" />
+          {busyLabel}
+        </div>
+      )}
+      <div className="pe-toolbar__stat">
+        <strong>{lineCount}</strong> {lineCount === 1 ? "seg" : "segs"}
+      </div>
+      <div
+        className="pe-toolbar__progress"
+        title={`${paired} of ${total} lines paired`}
+      >
+        <span className="pe-toolbar__stat">
+          <strong>{paired}</strong>/{total}
+        </span>
+        <div
+          className="pe-toolbar__progress-track"
+          role="progressbar"
+          aria-valuenow={pairingPercent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Pairing progress"
+        >
+          <div
+            className="pe-toolbar__progress-fill"
+            style={{ width: `${pairingPercent}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function PageEditorToolbar(props: PageEditorToolbarProps) {
+  const {
+    projectId,
+    documentId,
+    document,
+    partIndex,
+    lines,
+    selectedSegmentId,
+    selectedTranscribeModelId,
+    onActionsOpenChange,
+  } = props;
+  const processing = props.processingKind !== null;
+  const hasModel = Boolean(selectedTranscribeModelId);
+  const transcribeModelName =
+    modelName(props.transcribeModels, selectedTranscribeModelId) ??
+    "not selected";
+
+  // The quick button transcribes what the researcher is looking at: the
+  // selected segment if there is one, otherwise the page. Naming the scope on
+  // the button is what keeps a one-click run from being a guess.
+  const transcribeScope = selectedSegmentId ? "segment" : "page";
+  const canTranscribe =
+    !processing && hasModel && (Boolean(selectedSegmentId) || lines.length > 0);
+
+  function runAutoSegment() {
+    onActionsOpenChange(false);
+    void props.onRunAutoSegment();
+  }
+
+  function runTranscribe() {
+    onActionsOpenChange(false);
+    if (selectedSegmentId) void props.onRunSegmentOcr();
+    else void props.onRunPageOcr();
+  }
+
+  return (
+    <header className="pe-toolbar" role="banner">
+      <ToolbarAnnouncements
+        document={document}
+        partIndex={partIndex}
+        pageCount={props.pageCount}
+        lineCount={lines.length}
+        pairingProgress={props.pairingProgress}
+        selectedSegmentId={selectedSegmentId}
+        textLines={props.textLines}
+        onPairTextLine={props.onPairTextLine}
+      />
 
       <Link
         href="/projects"
@@ -250,85 +297,36 @@ export function PageEditorToolbar({
         <span>nomikos</span>
       </Link>
 
-      <div className="pe-toolbar__title">
-        {projectId && documentId && (
-          <PageEditorBackLink
-            to={`/projects/${projectId}/documents/${documentId}`}
-          />
-        )}
-        <div className="pe-toolbar__sep" aria-hidden="true" />
-        <h1
-          className="pe-toolbar__doc"
-          title={`${document.name} · Page ${partIndex}`}
-        >
-          {document.name}
-          <span className="pe-toolbar__doc-page"> · p.{partIndex}</span>
-        </h1>
-        <PageEditorPager
-          pageNumber={partIndex}
-          pageCount={pageCount}
-          hasPreviousPart={hasPreviousPart}
-          hasNextPart={hasNextPart}
-          onPreviousPart={onPreviousPart}
-          onNextPart={onNextPart}
-        />
-      </div>
+      <ToolbarTitle
+        projectId={projectId}
+        documentId={documentId}
+        documentName={document.name}
+        partIndex={partIndex}
+        pageCount={props.pageCount}
+        hasPreviousPart={props.hasPreviousPart}
+        hasNextPart={props.hasNextPart}
+        onPreviousPart={props.onPreviousPart}
+        onNextPart={props.onNextPart}
+      />
 
-      <div className="pe-toolbar__center" aria-label="Page statistics">
-        {processingLabel && (
-          <div
-            className="pe-toolbar__processing"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="pe-toolbar__processing-dot" aria-hidden="true" />
-            {processingLabel}
-          </div>
-        )}
-        <div className="pe-toolbar__stat">
-          <strong>{lines.length}</strong> {segmentLabel}
-        </div>
-        <div
-          className="pe-toolbar__progress"
-          title={`${pairingProgress.paired_lines} of ${pairingProgress.total_lines} lines paired`}
-        >
-          <span className="pe-toolbar__stat">
-            <strong>{pairingProgress.paired_lines}</strong>/
-            {pairingProgress.total_lines}
-          </span>
-          <div
-            className="pe-toolbar__progress-track"
-            role="progressbar"
-            aria-valuenow={pairingPercent}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="Pairing progress"
-          >
-            <div
-              className="pe-toolbar__progress-fill"
-              style={{ width: `${pairingPercent}%` }}
-            />
-          </div>
-        </div>
-      </div>
+      <ToolbarStats
+        busyLabel={props.processingKind && BUSY_LABELS[props.processingKind]}
+        lineCount={lines.length}
+        pairingProgress={props.pairingProgress}
+      />
 
       <div className="pe-toolbar__actions">
         <div className="pe-toolbar__cluster">
           <PageEditorModelSelect
             label="HTR"
             ariaLabel="HTR transcription model"
-            models={transcribeModels}
+            models={props.transcribeModels}
             selectedModelId={selectedTranscribeModelId}
-            onSelectedModelIdChange={onSelectedTranscribeModelIdChange}
+            onSelectedModelIdChange={props.onSelectedTranscribeModelIdChange}
             disabled={processing}
           />
         </div>
 
-        {/*
-          The two runs a researcher makes all day get their own buttons. Behind
-          a menu they taxed the most repeated action in the editor; the menu
-          keeps the variants that need a choice made first.
-        */}
         <div
           className="pe-toolbar__cluster"
           role="group"
@@ -337,245 +335,72 @@ export function PageEditorToolbar({
           <PageEditorModelSelect
             label="Seg"
             ariaLabel="Segmentation model"
-            models={segmentModels}
-            selectedModelId={selectedSegmentModelId}
-            onSelectedModelIdChange={onSelectedSegmentModelIdChange}
+            models={props.segmentModels}
+            selectedModelId={props.selectedSegmentModelId}
+            onSelectedModelIdChange={props.onSelectedSegmentModelIdChange}
             disabled={processing}
             includeDefaultOption
           />
-          <button
-            type="button"
-            className="pe-tb-btn"
-            disabled={processing}
-            onClick={() => {
-              onActionsOpenChange(false);
-              void onRunAutoSegment();
-            }}
-            title="Segment this page with blla-segment"
-          >
-            <svg
-              className="pe-tb-btn__icon"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <rect x="2.2" y="2.6" width="11.6" height="3" rx="0.8" />
-              <rect x="2.2" y="6.9" width="11.6" height="3" rx="0.8" />
-              <path d="M2.2 12.6h7.4" />
-            </svg>
-            {segmenting ? "Segmenting…" : "Segment"}
-          </button>
-          <button
-            type="button"
-            className="pe-tb-btn"
-            disabled={!canTranscribe}
-            onClick={() => {
-              onActionsOpenChange(false);
-              if (selectedSegmentId) void onRunSegmentOcr();
-              else void onRunPageOcr();
-            }}
-            title={
-              selectedTranscribeModelId
-                ? `Transcribe the ${transcribeScope} with ${selectedModelName}`
-                : "Choose a model before transcribing"
-            }
-          >
-            <svg
-              className="pe-tb-btn__icon"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="M2.6 4.2h10.8M8 4.2v8.2M5.6 12.4h4.8" />
-            </svg>
-            {ocrRunning ? "Transcribing…" : "Transcribe"}
-            <span className="pe-tb-btn__scope">{transcribeScope}</span>
-          </button>
+          <ToolbarRunButtons
+            processing={processing}
+            segmenting={props.segmenting}
+            ocrRunning={props.ocrRunning}
+            transcribeScope={transcribeScope}
+            canTranscribe={canTranscribe}
+            transcribeModelName={hasModel ? transcribeModelName : null}
+            onRunAutoSegment={runAutoSegment}
+            onRunTranscribe={runTranscribe}
+          />
         </div>
 
-        <div className="pe-toolbar__cluster pe-dropdown-wrap" ref={dropdownRef}>
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={actionsOpen}
-            onClick={() => onActionsOpenChange(!actionsOpen)}
-            className={`pe-tb-btn${actionsOpen ? " pe-tb-btn--on" : ""}`}
-          >
-            Workflow ▾
-          </button>
-          {actionsOpen && (
-            <div className="pe-dropdown" role="menu" aria-label="Workflow">
-              <div className="pe-dd-section">Segment</div>
-              <p className="pe-dd-model">
-                Model <strong>{selectedSegmentModelName}</strong>
-              </p>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={processing}
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  void onRunAutoSegment();
-                }}
-                className="pe-dd-item"
-              >
-                {segmenting ? "Segmenting…" : "Auto segment page"}
-              </button>
-              <div className="pe-dd-divider" />
-              <div className="pe-dd-section">Transcribe</div>
-              <p className="pe-dd-model">
-                Model <strong>{selectedModelName}</strong>
-              </p>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={
-                  !selectedSegmentId || processing || !selectedTranscribeModelId
-                }
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  void onRunSegmentOcr();
-                }}
-                className="pe-dd-item"
-              >
-                {ocrRunning ? "Transcribing…" : "Selected segment"}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={
-                  processing || lines.length === 0 || !selectedTranscribeModelId
-                }
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  void onRunPageOcr();
-                }}
-                className="pe-dd-item"
-              >
-                {ocrRunning ? "Transcribing…" : "Whole page"}
-              </button>
-              {/*
-                Export is a workflow step, not a permanent fixture of the bar.
-                PDF and XML were two of the least-pressed controls in the
-                editor holding two of its most valuable slots, next to the
-                settings gear. In the menu they sit beside Sharing, which is
-                the same act at a different fidelity.
-              */}
-              <div className="pe-dd-divider" />
-              <div className="pe-dd-section">Export</div>
-              <button
-                type="button"
-                role="menuitemcheckbox"
-                className="pe-dd-item"
-                aria-checked={transcriptionPdfOpen}
-                onClick={() => {
-                  onActionsOpenChange(false);
-                  if (transcriptionPdfOpen) onCloseTranscriptionPdf();
-                  else onOpenTranscriptionPdf();
-                }}
-              >
-                Transcription PDF
-                <span className="pe-dd-meta">
-                  {transcriptionPdfOpen ? "open" : "preview"}
-                </span>
-              </button>
-              {projectId && documentId && (
-                <PageEditorPageXmlButton
-                  projectId={projectId}
-                  documentId={documentId}
-                  partId={partId}
-                  className="pe-dd-item"
-                  role="menuitem"
-                  onActivate={() => onActionsOpenChange(false)}
-                  downloadFilename={`${exportFileStem(document.name, partIndex)}.zip`}
-                />
-              )}
-              {projectId && documentId && (
-                <PageEditorSharingMenu
-                  projectId={projectId}
-                  documentId={documentId}
-                  workflow={document.workflow}
-                  publicShareToken={document.public_share_token ?? null}
-                  onWorkflowChange={onDocumentWorkflowChange}
-                  disabled={processing}
-                />
-              )}
-              {/*
-                Where the work runs belongs with the menu that starts the work.
-                In the bar it announced the ordinary state permanently, which
-                teaches people to stop reading the one spot a real warning would
-                appear in. Here it is one glance away from the button that cares.
-              */}
-              <div className="pe-dd-divider" />
-              <div className="pe-dd-footer">
-                <PageEditorInferenceStatus
-                  loading={hostPreferenceLoading}
-                  hasLocalCapacity={hasLocalCapacity}
-                  preferLocalInference={preferLocalInference}
-                />
-              </div>
-            </div>
-          )}
-        </div>
+        <ToolbarWorkflowMenu
+          open={props.actionsOpen}
+          onOpenChange={onActionsOpenChange}
+          processing={processing}
+          segmenting={props.segmenting}
+          ocrRunning={props.ocrRunning}
+          segmentModelName={
+            modelName(props.segmentModels, props.selectedSegmentModelId) ??
+            "Default"
+          }
+          transcribeModelName={transcribeModelName}
+          hasTranscribeModel={hasModel}
+          hasSelectedSegment={selectedSegmentId !== null}
+          hasSegments={lines.length > 0}
+          onRunAutoSegment={props.onRunAutoSegment}
+          onRunSegmentOcr={props.onRunSegmentOcr}
+          onRunPageOcr={props.onRunPageOcr}
+          projectId={projectId}
+          documentId={documentId}
+          partId={props.partId}
+          document={document}
+          partIndex={partIndex}
+          onDocumentWorkflowChange={props.onDocumentWorkflowChange}
+          transcriptionPdfOpen={props.transcriptionPdfOpen}
+          onOpenTranscriptionPdf={props.onOpenTranscriptionPdf}
+          onCloseTranscriptionPdf={props.onCloseTranscriptionPdf}
+          hostPreferenceLoading={props.hostPreferenceLoading}
+          hasLocalCapacity={props.hasLocalCapacity}
+          preferLocalInference={props.preferLocalInference}
+        />
 
         <div className="pe-toolbar__cluster">
-          <div className="pe-dropdown-wrap" ref={segmentHealthRef}>
-            <button
-              type="button"
-              className={`pe-tb-btn${segmentHealthOpen ? " pe-tb-btn--on" : ""}`}
-              aria-haspopup="dialog"
-              aria-expanded={segmentHealthOpen}
-              title="Look for segmentation mistakes on this page"
-              disabled={lines.length === 0}
-              onClick={() => onSegmentHealthOpenChange(!segmentHealthOpen)}
-            >
-              Check page
-              {/* The count only appears once a report has been read, so an
-                  unopened panel never implies the page is clean. */}
-              {segmentHealth.report && segmentHealth.report.finding_count > 0
-                ? ` · ${segmentHealth.report.finding_count}`
-                : ""}
-            </button>
-            {segmentHealthOpen && (
-              <PageEditorSegmentHealthPanel
-                report={segmentHealth.report}
-                loading={segmentHealth.loading}
-                error={segmentHealth.error}
-                pending={segmentHealth.pending}
-                onApply={segmentHealth.apply}
-                onRefresh={segmentHealth.refresh}
-              />
-            )}
-          </div>
-          <div className="pe-dropdown-wrap" ref={settingsRef}>
-            <button
-              type="button"
-              className={`pe-tb-btn pe-tb-btn--icon${settingsOpen ? " pe-tb-btn--on" : ""}`}
-              aria-haspopup="dialog"
-              aria-expanded={settingsOpen}
-              aria-label="Editor settings"
-              title="Editor settings"
-              onClick={() => onSettingsOpenChange(!settingsOpen)}
-            >
-              <SettingsIcon />
-            </button>
-            {settingsOpen && (
-              <PageEditorSettingsPanel
-                settings={canvasSettings}
-                onSettingsChange={onCanvasSettingsChange}
-                preferLocalInference={preferLocalInference}
-                onPreferLocalInferenceChange={onPreferLocalInferenceChange}
-                preferenceSaving={preferenceSaving}
-                hasLocalCapacity={hasLocalCapacity}
-              />
-            )}
-          </div>
+          <SegmentHealthPopover
+            open={props.segmentHealthOpen}
+            onOpenChange={props.onSegmentHealthOpenChange}
+            segmentHealth={props.segmentHealth}
+            hasSegments={lines.length > 0}
+          />
+          <SettingsPopover
+            open={props.settingsOpen}
+            onOpenChange={props.onSettingsOpenChange}
+            canvasSettings={props.canvasSettings}
+            onCanvasSettingsChange={props.onCanvasSettingsChange}
+            preferLocalInference={props.preferLocalInference}
+            onPreferLocalInferenceChange={props.onPreferLocalInferenceChange}
+            preferenceSaving={props.preferenceSaving}
+            hasLocalCapacity={props.hasLocalCapacity}
+          />
         </div>
       </div>
     </header>

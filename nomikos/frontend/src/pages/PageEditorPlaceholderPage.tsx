@@ -348,7 +348,7 @@ export function PageEditorPlaceholderPage() {
             onActionsOpenChange={setActionsOpen}
             segmenting={segmenting}
             ocrRunning={ocrRunning}
-            ocrScope={ocrScope}
+            processingKind={runState.processingKind}
             transcribeModels={transcribeModels}
             selectedTranscribeModelId={selectedTranscribeModelId}
             onSelectedTranscribeModelIdChange={setSelectedTranscribeModelId}

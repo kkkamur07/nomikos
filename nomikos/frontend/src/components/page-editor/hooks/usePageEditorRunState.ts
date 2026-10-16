@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useBackgroundJobs } from "../../../context/BackgroundJobsContext";
 
-type PageEditorProcessingKind =
+export type PageEditorProcessingKind =
   "segmentation" | "transcription-page" | "transcription-segment";
 
 const PROCESSING_LABELS: Record<PageEditorProcessingKind, string> = {
