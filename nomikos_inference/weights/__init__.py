@@ -17,9 +17,8 @@ import os
 from importlib import resources
 from pathlib import Path, PurePosixPath
 
-INFERENCE_ROOT = Path(__file__).resolve().parents[1]
+from nomikos_inference import INFERENCE_ROOT
 
-DEFAULT_WEIGHTS_ROOT = INFERENCE_ROOT / "weights"
 LOCAL_BUNDLED_PREFIX = "local/"
 LOCAL_BUNDLED_ROOT_ENV = "NOMIKOS_LOCAL_WEIGHTS_ROOT"
 
@@ -54,6 +53,79 @@ def local_bundled_root() -> Path:
     )
 
 
+def _resolve_hf_weights(
+    uri: str,
+    *,
+    registry_model_id: str | None,
+    registry_tag: str | None,
+    hub_revision: str | None,
+    artifact_sha256: str | None,
+    architecture: str | None,
+) -> Path:
+    if not registry_model_id or not registry_tag:
+        raise ValueError("hf weights source requires registry_model_id and registry_tag")
+    from nomikos_inference.hub import resolve_hf_weights_source
+
+    return resolve_hf_weights_source(
+        uri,
+        registry_model_id=registry_model_id,
+        registry_tag=registry_tag,
+        hub_revision=hub_revision,
+        artifact_sha256=artifact_sha256,
+        architecture=architecture,
+    )
+
+
+def _resolve_package_weights(uri: str, *, artifact_sha256: str | None) -> Path:
+    package_resource = uri.removeprefix("package://")
+    package_name, _, resource_name = package_resource.partition("/")
+    if not package_name or not resource_name:
+        raise ValueError("package weights source must be package://<package>/<resource>")
+    # ``importlib.resources ... joinpath`` follows pathlib's absolute-override
+    # semantics: an absolute ``resource_name`` ("/etc/passwd") escapes the
+    # package root entirely, and the ``..`` check below never fires because
+    # there is no ``..`` segment. Reject both shapes before joining.
+    if PurePosixPath(resource_name).is_absolute() or ".." in resource_name.split("/"):
+        raise ValueError("package weights source must stay within the package")
+    if not artifact_sha256:
+        raise ValueError("package weights source requires a pinned artifact_sha256")
+    resource = resources.files(package_name).joinpath(resource_name)
+    if not resource.is_file():
+        raise FileNotFoundError(f"package weights source not found: {uri}")
+    resolved_path = Path(str(resource))
+    from nomikos_inference.hub.artifacts import verify_artifact_sha256
+
+    verify_artifact_sha256(resolved_path, artifact_sha256)
+    return resolved_path
+
+
+def _resolve_file_weights(uri: str, *, inference_root: Path, artifact_sha256: str | None) -> Path:
+    relative = uri.removeprefix("file://")
+    if not relative:
+        raise ValueError("file weights source must name a path")
+    if Path(relative).is_absolute():
+        raise ValueError(
+            "file weights source must be relative to INFERENCE_ROOT or the local "
+            "bundled weights root"
+        )
+    if relative.startswith(LOCAL_BUNDLED_PREFIX):
+        resolved_root = local_bundled_root().resolve()
+        root_label = "the local bundled weights root"
+    else:
+        resolved_root = inference_root.resolve()
+        root_label = "INFERENCE_ROOT"
+    resolved_path = (resolved_root / relative).resolve()
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"file weights source must stay within {root_label}") from exc
+    if artifact_sha256:
+        from nomikos_inference.hub.artifacts import verify_artifact_sha256
+
+        verify_artifact_sha256(resolved_path, artifact_sha256)
+    return resolved_path
+
+
 def resolve_weights_source(
     uri: str,
     *,
@@ -65,11 +137,7 @@ def resolve_weights_source(
     architecture: str | None = None,
 ) -> Path:
     if uri.startswith("hf://"):
-        if not registry_model_id or not registry_tag:
-            raise ValueError("hf weights source requires registry_model_id and registry_tag")
-        from nomikos_inference.hub import resolve_hf_weights_source
-
-        return resolve_hf_weights_source(
+        return _resolve_hf_weights(
             uri,
             registry_model_id=registry_model_id,
             registry_tag=registry_tag,
@@ -77,58 +145,10 @@ def resolve_weights_source(
             artifact_sha256=artifact_sha256,
             architecture=architecture,
         )
-
     if uri.startswith("package://"):
-        package_resource = uri.removeprefix("package://")
-        package_name, _, resource_name = package_resource.partition("/")
-        if not package_name or not resource_name:
-            raise ValueError("package weights source must be package://<package>/<resource>")
-        # ``importlib.resources ... joinpath`` follows pathlib's absolute-override
-        # semantics: an absolute ``resource_name`` ("/etc/passwd") escapes the
-        # package root entirely, and the ``..`` check below never fires because
-        # there is no ``..`` segment. Reject both shapes before joining.
-        if PurePosixPath(resource_name).is_absolute() or ".." in resource_name.split("/"):
-            raise ValueError("package weights source must stay within the package")
-        if not artifact_sha256:
-            raise ValueError("package weights source requires a pinned artifact_sha256")
-        resource = resources.files(package_name).joinpath(resource_name)
-        if not resource.is_file():
-            raise FileNotFoundError(f"package weights source not found: {uri}")
-        resolved_path = Path(str(resource))
-        from nomikos_inference.hub.artifacts import verify_artifact_sha256
-
-        verify_artifact_sha256(resolved_path, artifact_sha256)
-        return resolved_path
-
-    if not uri.startswith("file://"):
-        raise ValueError(f"unsupported weights source scheme: {uri}")
-
-    relative = uri.removeprefix("file://")
-    if not relative:
-        raise ValueError("file weights source must name a path")
-    source_path = Path(relative)
-    if source_path.is_absolute():
-        raise ValueError(
-            "file weights source must be relative to INFERENCE_ROOT or the local "
-            "bundled weights root"
+        return _resolve_package_weights(uri, artifact_sha256=artifact_sha256)
+    if uri.startswith("file://"):
+        return _resolve_file_weights(
+            uri, inference_root=inference_root, artifact_sha256=artifact_sha256
         )
-
-    if relative.startswith(LOCAL_BUNDLED_PREFIX):
-        resolved_root = local_bundled_root().resolve()
-        resolved_path = (resolved_root / source_path).resolve()
-        root_label = "the local bundled weights root"
-    else:
-        resolved_root = inference_root.resolve()
-        resolved_path = (resolved_root / source_path).resolve()
-        root_label = "INFERENCE_ROOT"
-
-    try:
-        resolved_path.relative_to(resolved_root)
-    except ValueError as exc:
-        raise ValueError(f"file weights source must stay within {root_label}") from exc
-
-    if artifact_sha256:
-        from nomikos_inference.hub.artifacts import verify_artifact_sha256
-
-        verify_artifact_sha256(resolved_path, artifact_sha256)
-    return resolved_path
+    raise ValueError(f"unsupported weights source scheme: {uri}")
