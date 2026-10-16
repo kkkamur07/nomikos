@@ -22,11 +22,13 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from nomikos_inference.cli.api import InsecurePlatformURL, is_secure_platform_url
+from nomikos_inference.cli.dto import _parse_datetime
 
 # The same root the **Hub cache** uses (`nomikos_inference/hub/cache.py`). One directory
 # in the researcher's home for everything the installed package writes, rather
@@ -105,14 +107,13 @@ def _isoformat(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _parse_datetime(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+def _missing_fields(payload: dict) -> list[str]:
+    """Required credential fields that are absent or empty."""
+    return [
+        field
+        for field in ("platform_url", "device_id", "device_token")
+        if not isinstance(payload.get(field), str) or not payload[field]
+    ]
 
 
 def load_credential(path: Path | None = None) -> DeviceCredential | None:
@@ -121,6 +122,10 @@ def load_credential(path: Path | None = None) -> DeviceCredential | None:
     A malformed file raises rather than reading as "not paired": silently
     starting a second pairing because a byte flipped would leave an orphan
     device row on the account and no explanation for it.
+
+    The group/other readability check below applies on POSIX only: on Windows
+    `stat` reports 0o666 for ordinary files, so the check would refuse every
+    paired Windows helper.
     """
     target = path or credential_path()
     try:
@@ -130,6 +135,14 @@ def load_credential(path: Path | None = None) -> DeviceCredential | None:
     except OSError as exc:
         raise CredentialError(f"Cannot read {target}: {exc}") from exc
 
+    mode = file_mode(target)
+    if os.name == "posix" and mode & 0o077:
+        raise CredentialError(
+            f"{target} is readable by others (mode {mode:04o}), so it cannot be "
+            "trusted to hold only this machine's device token. "
+            "Delete it and run `nomikos pair` again to replace it."
+        )
+
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -137,12 +150,7 @@ def load_credential(path: Path | None = None) -> DeviceCredential | None:
     if not isinstance(payload, dict):
         raise CredentialError(f"{target} does not contain a device credential")
 
-    missing = [
-        field
-        for field in ("platform_url", "device_id", "device_token")
-        if not isinstance(payload.get(field), str) or not payload[field]
-    ]
-    if missing:
+    if missing := _missing_fields(payload):
         raise CredentialError(f"{target} is missing {', '.join(missing)}")
 
     return DeviceCredential(
@@ -178,12 +186,13 @@ def save_credential(credential: DeviceCredential, path: Path | None = None) -> P
     # directory holds a bearer credential for the researcher's account.
     os.chmod(directory, CREDENTIAL_DIR_MODE)
 
-    temporary = directory / f".{target.name}.tmp"
-    descriptor = os.open(temporary, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, CREDENTIAL_FILE_MODE)
+    # A unique temporary per write, created exclusively: two concurrent
+    # `nomikos pair` runs no longer truncate each other's file mid-write.
+    descriptor, temporary_name = tempfile.mkstemp(dir=directory, prefix=f".{target.name}.")
+    temporary = Path(temporary_name)
     try:
-        # The umask is subtracted from the mode above, so it is re-applied here.
-        # A umask of 0 would otherwise be the only configuration in which the
-        # requested mode is the mode that lands.
+        # Belt and braces over `mkstemp`'s own 0600: the mode this file must
+        # have should not depend on which call created it.
         os.fchmod(descriptor, CREDENTIAL_FILE_MODE)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(credential.to_json(), handle, indent=2, sort_keys=True)
@@ -193,10 +202,10 @@ def save_credential(credential: DeviceCredential, path: Path | None = None) -> P
             # module advertises.
             handle.flush()
             os.fsync(handle.fileno())
+        os.replace(temporary, target)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
-    os.replace(temporary, target)
     _fsync_directory(directory)
     return target
 
