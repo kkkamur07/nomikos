@@ -6,7 +6,8 @@
  * module that owns it (`./projects`, `./documents`, `./parts`,
  * `./publicDocuments`, `./jobs`, `./devices`), the transport in `./http`,
  * paths in `./paths` and wire types in `./types`. What stays here is the
- * `api` object and the re-exports, so no importer path changes.
+ * `api` object and the re-exports importers actually read; anything else is
+ * imported from its owning module directly.
  */
 import { documentsApi } from "./documents";
 import { jobsApi, waitForJob } from "./jobs";
@@ -19,20 +20,9 @@ export {
   API_BASE_URL,
   apiRequest,
   fetchBinaryApi,
-  fetchWithAuthRecovery,
-  postCsrfProtected,
   refreshAccessToken,
-  rememberCsrfToken,
 } from "./http";
-export type { RequestBody, RequestOptions } from "./http";
-export {
-  cursorQuery,
-  documentPath,
-  partPath,
-  publicPartMediaUrl,
-  reviewedOnlyQuery,
-  withShareToken,
-} from "./paths";
+export { publicPartMediaUrl } from "./paths";
 export { waitForJob };
 
 export const api = {

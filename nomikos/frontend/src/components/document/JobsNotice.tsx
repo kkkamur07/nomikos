@@ -23,7 +23,7 @@ function shortId(jobId: string): string {
   return jobId.slice(0, 8);
 }
 
-export type JobsNoticeProps = {
+type JobsNoticeProps = {
   enableTestJobs?: boolean;
 };
 

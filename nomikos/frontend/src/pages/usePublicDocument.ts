@@ -19,12 +19,12 @@ import { linesForPart, publicLinesToRegions } from "../utils/publicLayout";
  * published, or never existed - and gets its own copy, so the two are kept apart
  * rather than collapsed into one message.
  */
-export type PublicDocumentData = {
+type PublicDocumentData = {
   document: DocumentWithPartsResponse;
   layout: PublicLayoutResponse;
 };
 
-export type PublicDocumentFailure =
+type PublicDocumentFailure =
   { kind: "not-found" } | { kind: "message"; text: string };
 
 export interface PublicDocumentModel {
@@ -183,7 +183,7 @@ function usePublicDocumentQuery(): {
 
 export function usePublicDocument(): PublicDocumentModel {
   const query = usePublicDocumentQuery();
-  const { document, layout, parts, token } = query;
+  const { layout, parts, token } = query;
   const [activePartId, setActivePartId] = useState<string | null>(null);
   const [selectedLineIndex, setSelectedLineIndex] = useState<number | null>(
     null,

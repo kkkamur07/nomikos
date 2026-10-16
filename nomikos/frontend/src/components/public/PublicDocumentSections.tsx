@@ -193,7 +193,7 @@ function PublicTranscriptPane(model: PublicDocumentModel): ReactNode {
   );
 }
 
-export function PublicWorkspace(model: PublicDocumentModel): ReactNode {
+function PublicWorkspace(model: PublicDocumentModel): ReactNode {
   return (
     <>
       <PublicWorkspaceToolbar {...model} />

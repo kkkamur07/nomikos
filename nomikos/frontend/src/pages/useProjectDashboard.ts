@@ -16,7 +16,7 @@ import {
 } from "../auth/session";
 import { useServerQuery } from "../hooks/useServerQuery";
 
-export type ProjectDashboardData = {
+type ProjectDashboardData = {
   me: UserResponse;
   project: ProjectResponse;
   documents: DocumentResponse[];

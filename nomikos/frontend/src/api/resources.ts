@@ -23,8 +23,6 @@ import {
   type ResourceTag,
 } from "./queryClient";
 
-export type { ResourceTag };
-
 export const resourceTags = {
   currentUser: "current-user",
   devices: "devices",

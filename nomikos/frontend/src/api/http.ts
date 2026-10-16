@@ -29,9 +29,9 @@ const CSRF_COOKIE_NAME =
  * client never sends: a JSON-serialisable object, a multipart form, or a
  * pre-encoded string.
  */
-export type RequestBody = object | FormData | string;
+type RequestBody = object | FormData | string;
 
-export type RequestOptions = Omit<RequestInit, "body"> & {
+type RequestOptions = Omit<RequestInit, "body"> & {
   body?: RequestBody;
   skipAuth?: boolean;
   /** Bypass in-flight GET deduplication (default: dedupe GETs). */

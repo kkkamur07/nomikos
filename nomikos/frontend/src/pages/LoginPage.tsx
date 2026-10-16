@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "../components/ui/toast";
-import { api, type LoginRequest } from "../api/client";
+import { api } from "../api/client";
 import { userFacingMessage } from "../api/userFacingError";
 import { authRedirectTarget } from "../auth/redirect";
+import { submitAuthForm } from "../auth/authSubmit";
 import { useAuthSession } from "../auth/AuthProvider";
 import { AuthFormWrap, AuthLayout } from "../components/layout/AuthLayout";
 import { SessionRestoring } from "../components/SessionRestoring";
@@ -33,20 +33,16 @@ export function LoginPage() {
     return <SessionRestoring label="Taking you back…" />;
   }
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setLoading(true);
-    const values: LoginRequest = { email, password };
-    try {
-      const token = await api.login(values);
-      establish(token.access_token);
-      toast.success("Signed in");
-      router.replace(from);
-    } catch (err) {
-      toast.error(userFacingMessage(err, "Sign in failed"));
-    } finally {
-      setLoading(false);
-    }
+    void submitAuthForm({
+      setLoading,
+      request: () => api.login({ email, password }),
+      establish,
+      successMessage: "Signed in",
+      failureMessage: (err) => userFacingMessage(err, "Sign in failed"),
+      redirect: () => router.replace(from),
+    });
   };
 
   return (

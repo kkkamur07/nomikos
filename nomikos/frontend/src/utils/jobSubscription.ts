@@ -6,7 +6,7 @@ const JOB_NO_EVENT_TIMEOUT_MS = 12_000;
 type GetJob = (jobId: string) => Promise<JobResponse>;
 type JobListener = (job: JobResponse) => void;
 
-export type JobSubscriptionOptions = {
+type JobSubscriptionOptions = {
   eventsUrl: string;
   getJob: GetJob;
   onUpdate: JobListener;

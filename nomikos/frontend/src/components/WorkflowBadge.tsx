@@ -1,6 +1,6 @@
 import type { DocumentWorkflow } from "../api/client";
 
-export const WORKFLOW_LABEL: Record<DocumentWorkflow, string> = {
+const WORKFLOW_LABEL: Record<DocumentWorkflow, string> = {
   draft: "Draft",
   published: "Live",
   archived: "Archived",

@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 
 type FocusTarget = "first" | "last";
 
-export type ActionMenuProps = {
+type ActionMenuProps = {
   /** Trigger text. The caret is appended here so every trigger wears the same one. */
   label: string;
   /** Names the popup for a screen reader. Defaults to {@link label}. */
@@ -256,7 +256,7 @@ export function ActionMenu({
   );
 }
 
-export type ActionMenuItemProps = {
+type ActionMenuItemProps = {
   label: string;
   /**
    * The accessible name, when the visible label is not unique on its own.
@@ -326,7 +326,7 @@ export function ActionMenuDivider() {
   return <div className="action-menu__divider" role="separator" />;
 }
 
-export type ActionMenuConfirmProps = {
+type ActionMenuConfirmProps = {
   /** What is about to happen, in the numbers the person is about to expose or lose. */
   question: string;
   /** The consequence, spelled out. */

@@ -22,7 +22,7 @@ export const HOST_PREFERENCE_LABEL = "Use my computer when it is available";
 export const HOST_PREFERENCE_HINT =
   "Jobs run on this computer while the nomikos agent is running, and in the cloud otherwise. Each job says which one it used.";
 
-export type HostPreference = {
+interface HostPreference {
   /** `null` until the account setting has been read. */
   preference: ExecutionPreferenceResponse | null;
   preferLocalInference: boolean;
@@ -41,7 +41,7 @@ export type HostPreference = {
   setPreferLocalInference: (preferLocal: boolean) => Promise<void>;
   /** Re-read the account setting and capacity with it. */
   refresh: () => Promise<void>;
-};
+}
 
 function readSettled(
   signal: AbortSignal | undefined,

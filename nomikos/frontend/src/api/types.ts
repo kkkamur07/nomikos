@@ -109,7 +109,7 @@ export type TranscribeJobResult = {
 export type LinePoint = [number, number];
 /** The same pair, under the name the layout overlay uses. */
 export type LayoutPoint = LinePoint;
-export type GeometryValue =
+type GeometryValue =
   | LayoutPoint[]
   | {
       points?: LayoutPoint[];
@@ -130,8 +130,6 @@ type NarrowGeometry<T> = {
 };
 
 type BlockResponse = NarrowGeometry<components["schemas"]["BlockResponse"]>;
-export type LineGeometryKind = components["schemas"]["LineGeometryKind"];
-export type LineSource = components["schemas"]["LineSource"];
 export type LineResponse = Omit<
   NarrowGeometry<components["schemas"]["LineResponse"]>,
   "line_transcriptions"
@@ -194,10 +192,6 @@ export type PartLayoutResponse = {
   lines: LayoutLineResponse[];
 };
 
-export type PageTranscriptionTextLineResponse =
-  components["schemas"]["PageTranscriptionTextLineResponse"];
-export type PairingProgressResponse =
-  components["schemas"]["PairingProgressResponse"];
 export type PagePairingResponse = components["schemas"]["PagePairingResponse"];
 export type PageTranscriptionImportRequest =
   components["schemas"]["PageTranscriptionImportRequest"];
@@ -212,20 +206,6 @@ export type CopyToGroundTruthResponse =
 /** What the Workflow and Download menus put in their count badges. */
 export type DocumentWorkflowCounts =
   components["schemas"]["DocumentWorkflowCountsResponse"];
-
-/**
- * Which pages a batch segment touches.
- *
- * `unsegmented` is the safe one: it skips any page that already has lines, so
- * nothing anybody has transcribed is thrown away. `all` re-runs every page; lines
- * a human touched (approved text, a pairing, hand-drawn geometry) survive, every
- * other line is redrawn and the model's unapproved text on it is discarded, which
- * is why the item that sends it is confirmed at the call site.
- */
-export type DocumentSegmentScope = components["schemas"]["SegmentScope"];
-
-/** Which pages a batch transcribe touches. */
-export type DocumentTranscribeScope = components["schemas"]["TranscribeScope"];
 
 /**
  * Which pages to segment, and with which model. Null means "whatever the
