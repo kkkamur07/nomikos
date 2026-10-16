@@ -313,3 +313,52 @@ def test_refinement_merge_overlap_ratio_reaches_the_merge() -> None:
 
     assert [line.members for line in loose][-1] == (3, 4)
     assert [line.members for line in strict][-2:] == [(3,), (4,)]
+
+
+def test_builder_bands_continue_past_a_column_without_builders() -> None:
+    quads = [_quad(500, 0, 510, 9), _quad(0, 0, 100, 20)]
+    layout = _layout(_column((0,), ()), _column((1,), (1,)))
+
+    assert _builder_bands(layout, quads) == [(0, 100)]
+
+
+def test_bbox_angle_of_a_point_and_of_a_box_under_a_pixel() -> None:
+    assert _bbox_angle([[5.0, 5.0], [5.0, 5.0]]) == 90.0
+    assert _bbox_angle([[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]) == pytest.approx(45.0)
+
+
+def test_classification_continues_past_a_spared_initial() -> None:
+    quads = [_quad(0, y, 100, y + 20) for y in (0, 40, 80)]
+    works = [_box(0, y, 100, y + 20) for y in (0, 40, 80)]
+    works[0].role = "initial"
+    works.append(_box(400, 30, 450, 40))
+
+    assert _classified(quads, works) == [
+        (False, ""),
+        (False, ""),
+        (False, ""),
+        (True, "outside_bands"),
+    ]
+
+
+def test_refined_line_keeps_a_tilted_baseline() -> None:
+    work = _box(0, 0, 10, 5)
+    work.baseline = ((0.0, 4.0), (10.0, 2.0))
+
+    assert _refined_line(work).baseline == [[0.0, 4.0], [10.0, 2.0]]
+
+
+def test_refinement_spacing_falls_back_to_the_median_quad_height() -> None:
+    """No rows on the layout: the stacked pair is judged against height 30.
+
+    Baselines 20 apart are not under half of 30, so the pair is cut at the
+    mid-baseline line y 32.5.
+    """
+    quads = [_quad(0, 0, 100, 30), _quad(0, 20, 100, 50)]
+
+    lines = refine_to_lines(quads, layout_lines([]), merge=False, classify=False)
+
+    assert [line.points for line in lines] == [
+        [[0.0, 30.0], [100.0, 30.0], [100.0, 0.0], [0.0, 0.0]],
+        [[0.0, 50.0], [100.0, 50.0], [100.0, 32.5], [0.0, 32.5]],
+    ]

@@ -427,25 +427,6 @@ def test_resolve_overlaps_drops_duplicates_and_returns_the_rest_in_order() -> No
     assert [work.overlap_unresolved for work in kept] == [False, False]
 
 
-def test_resolve_overlaps_handles_the_largest_share_first() -> None:
-    """Of two duplicates of one line, the closer one is judged first.
-
-    Line 0 shares 0.9 with line 1 and 0.8 with line 2. Taking the 0.9 pair
-    first drops 0 (lower score than 1); the 0.8 pair then has a dropped
-    member and 2 survives. Taking 0.8 first would drop 2 instead.
-    """
-    works = [
-        _box(0, 0, 100, 20, score=0.5),
-        _box(0, 2, 100, 22, score=0.9, members=(1,)),
-        _box(0, 4, 100, 24, score=0.4, members=(2,)),
-    ]
-
-    kept = resolve_overlaps(works, layout_lines([]), median_height=40.0)
-
-    assert [work.members for work in kept] == [(1,)]
-    assert [work.dropped for work in works] == [True, False, True]
-
-
 def test_resolve_overlaps_acts_on_a_share_equal_to_the_threshold() -> None:
     upper = _box(0, 0, 100, 30, ((0.0, 20.0), (100.0, 20.0)))
     lower = _box(0, 20, 100, 50, ((0.0, 40.0), (100.0, 40.0)), members=(1,))
@@ -498,3 +479,54 @@ def test_resolve_overlaps_stops_after_the_first_pass_without_change(
 
     assert calls == [True, False]
     assert lower.poly.bounds == (0.0, 30.0, 100.0, 50.0)
+
+
+def test_median_line_spacing_ignores_rows_with_the_same_centre() -> None:
+    # Three nested lines centred on y 20 are separate rows with no pitch.
+    quads = [
+        _quad(0, 0, 100, 40),
+        _quad(0, 10, 100, 30),
+        _quad(0, 15, 100, 25),
+        _quad(0, 50, 100, 70),
+    ]
+    layout = layout_lines(quads)
+
+    assert layout.columns[0].rows == ((0,), (1,), (2,), (3,))
+    assert _median_line_spacing(layout, 9.0) == 40.0
+
+
+def test_cut_pair_along_a_forty_five_degree_line() -> None:
+    upper = _box(0, 0, 20, 20, ((0.0, 0.0), (20.0, 20.0)))
+    lower = _box(0, 10, 20, 30, ((0.0, 10.0), (20.0, 30.0)), members=(1,))
+
+    assert _cut_pair(upper, lower) is True
+    assert (upper.area, lower.area) == (287.5, 287.5)
+
+
+def test_cut_pair_with_baselines_far_under_a_pixel_still_cuts() -> None:
+    upper = _box(0, 0, 100, 30, ((50.0, 20.0), (50.0005, 20.0)))
+    lower = _box(0, 20, 100, 50, ((50.0, 40.0), (50.0005, 40.0)), members=(1,))
+
+    assert _cut_pair(upper, lower) is True
+    assert lower.poly.bounds == (0.0, 30.0, 100.0, 50.0)
+
+
+def test_resolve_overlaps_takes_the_largest_share_first() -> None:
+    """Line 0 shares 0.9 with line 1 and 0.6 with line 2.
+
+    Largest first, 0 drops against the higher-scored 1, and the 0.6 pair
+    is then skipped, so 2 survives next to 1 (flagged: they share 0.5 of
+    the larger). Smallest first would drop 2 against 0 and then 0 against 1.
+    """
+    works = [
+        _box(0, 0, 100, 20, score=0.7),
+        _box(0, 2, 100, 22, score=0.9, members=(1,)),
+        _box(0, -8, 100, 12, score=0.5, members=(2,)),
+    ]
+
+    kept = resolve_overlaps(works, layout_lines([]), median_height=40.0)
+
+    assert [(work.members, work.overlap_unresolved) for work in kept] == [
+        ((1,), True),
+        ((2,), True),
+    ]

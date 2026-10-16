@@ -7,6 +7,8 @@ tall-quad height. Layout fields are compared whole.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from nomikos_inference.architectures.ppocr_det import reading_order
@@ -322,3 +324,82 @@ def test_order_lines_of_two_bands_and_nothing_between() -> None:
 def test_bad_direction_message() -> None:
     with pytest.raises(ValueError, match=r'^reading direction must be "ltr" or "rtl"$'):
         layout_lines([], direction="ttb")
+
+
+def test_nearest_column_prefers_an_overlapped_column_to_one_under_a_pixel_away() -> None:
+    assert _nearest_column([(0.0, 100.0), (200.0, 300.0)], 100.5, 250) == 1
+
+
+def test_place_in_rows_lowers_the_row_top_and_left_edge() -> None:
+    rows: list[list[int]] = [[0]]
+    ranges = [[10.0, 30.0, 300.0, 400.0]]
+
+    _place_in_rows(1, _ext(410, 5, 500, 35), False, rows, ranges)
+    _place_in_rows(2, _ext(200, 6, 290, 34), False, rows, ranges)
+
+    assert rows == [[0, 1, 2]]
+    assert ranges == [[5, 35, 200, 500]]
+
+
+FLAT_LEFT = _quad(0, 10, 100, 10)
+FLAT_RIGHT = _quad(210, 18, 300, 18)
+
+
+def test_row_groups_with_flat_builders_have_no_tall_quads() -> None:
+    # Median builder height 0: nothing is tall, so the 20 px quad stretches
+    # the row down to 20 and the flat right line at y 18 joins it.
+    assert _groups([FLAT_LEFT, FLAT_RIGHT, _quad(110, 0, 200, 20)], {0, 1}) == [[0, 2, 1]]
+
+
+def test_row_groups_with_builders_under_a_pixel_still_find_tall_quads() -> None:
+    # Median builder height 0.5: the 20 px quad is tall and leaves the row
+    # at 10 to 10.5, so the right line at 18 opens a row of its own.
+    left, right = _quad(0, 10, 100, 10.5), _quad(210, 18, 300, 18.5)
+
+    assert _groups([left, right, _quad(110, 1, 200, 21)], {0, 1}) == [[0, 2], [1]]
+
+
+def test_rows_with_the_same_centre_read_from_the_higher_top() -> None:
+    assert _groups([_quad(0, 0, 100, 40), _quad(0, 10, 100, 30)], {0, 1}) == [[0], [1]]
+    assert _groups([_quad(0, 10, 100, 30), _quad(0, 0, 100, 40)], {0, 1}) == [[1], [0]]
+
+
+def test_width_classes_under_a_pixel() -> None:
+    extents = [
+        _ext(0, 10 * i, width, 10 * i + 5) for i, width in enumerate([0.8, 0.8, 0.8, 0.3, 1.3])
+    ]
+
+    assert _width_classes(extents) == ([3], [4], [0, 1, 2])
+
+
+def test_narrow_quads_join_the_column_nearest_their_own_edges() -> None:
+    columns = [_quad(0, y, 100, y + 20) for y in (0, 40, 80)]
+    columns += [_quad(200, y, 300, y + 20) for y in (0, 40, 80)]
+    # 20 px from the left column, 35 from the right one.
+    nearer_left = _quad(120, 10, 165, 15)
+    # 33 px from the left column, 22 from the right one.
+    nearer_right = _quad(133, 50, 178, 60)
+
+    layout = layout_lines(columns + [nearer_left, nearer_right])
+
+    assert [column.members for column in layout.columns] == [(0, 1, 2, 6), (3, 4, 5, 7)]
+
+
+def test_spanning_quads_sort_by_centre_not_by_width() -> None:
+    columns = [_quad(0, y, 100, y + 20) for y in (0, 40, 80)]
+    columns += [_quad(200, y, 300, y + 20) for y in (0, 40, 80)]
+
+    lower_narrower = [_quad(0, 200, 290, 220), _quad(0, 120, 300, 140)]
+    level = [_quad(0, 120, 300, 140), _quad(10, 120, 250, 140)]
+
+    assert layout_lines(columns + lower_narrower).spanning == (7, 6)
+    # Same centre y: the one centred further left reads first.
+    assert layout_lines(columns + level).spanning == (7, 6)
+
+
+def test_layouts_are_frozen() -> None:
+    layout = layout_lines(_spread())
+
+    for target, name in ((layout, "direction"), (layout.columns[0], "xmin")):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(target, name, 5.0)

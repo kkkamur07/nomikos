@@ -144,6 +144,14 @@ def test_merge_run_breaks_a_right_edge_tie_by_the_top() -> None:
     assert work.baseline == ((0.0, 10.0), (20.0, 15.0))
 
 
+def test_merge_run_of_members_under_one_pixel_still_weighs_scores() -> None:
+    quads = [_quad(0, 0, 0.5, 1, score=0.8), _quad(0.5, 0, 1, 1, score=0.4)]
+
+    work = _merge_run([0, 1], quads, _points(quads), 0.5)
+
+    assert work.score == pytest.approx(0.6)
+
+
 def test_row_runs_include_the_gap_bounds_and_exclude_past_them() -> None:
     quads = [
         _quad(0, 0, 10, 20),
@@ -300,3 +308,9 @@ def test_mark_initials_uses_the_builder_median_and_the_ratio() -> None:
 
     assert [work.role for work in loose] == ["line"] * 5 + ["initial"]
     assert [work.role for work in strict] == ["line"] * 6
+
+
+def test_a_row_keeps_its_runs_after_a_merged_one() -> None:
+    quads = _page(_quad(0, 120, 60, 140), _quad(63, 120, 120, 140), _quad(150, 120, 200, 140))
+
+    assert _merged_members(quads) == [(0,), (1,), (2,), (3,), (4,), (5, 6), (7,)]
