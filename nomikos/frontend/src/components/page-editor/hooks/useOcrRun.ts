@@ -105,6 +105,27 @@ function ocrPrecondition(input: OcrRunInput, scope: OcrScope): string | null {
 }
 
 /**
+ * The layer a finished OCR run leaves open: the one that was open if the
+ * reload still has it, else Ground truth. See refreshAfterOcr.
+ */
+function layerToShowAfterOcr(
+  layers: TranscriptionLayerResponse[],
+  openLayerId: string | null,
+  groundTruthId: string | null,
+): string | null {
+  const stillPresent = (layerId: string | null) =>
+    layerId !== null && layers.some((layer) => layer.id === layerId)
+      ? layerId
+      : null;
+  return (
+    stillPresent(openLayerId) ??
+    stillPresent(groundTruthId) ??
+    groundTruthLayer(layers)?.id ??
+    null
+  );
+}
+
+/**
  * Segment and page OCR: enqueue, wait on the job, then fold the new model
  * layer into the page. A run can take half an hour, so everything it does
  * after the wait reads the selection as it is then, not as it was at the start.
@@ -143,15 +164,11 @@ export function useOcrRun(input: OcrRunInput) {
     setLines(reloadedLines);
     input.setTranscriptionLayers(layers);
     const openLayerId = input.selectedTranscriptionLayerIdRef.current;
-    const stillPresent = (layerId: string | null) =>
-      layerId !== null && layers.some((layer) => layer.id === layerId)
-        ? layerId
-        : null;
-    const layerToShow =
-      stillPresent(openLayerId) ??
-      stillPresent(input.groundTruthTranscriptionId) ??
-      groundTruthLayer(layers)?.id ??
-      null;
+    const layerToShow = layerToShowAfterOcr(
+      layers,
+      openLayerId,
+      input.groundTruthTranscriptionId,
+    );
     if (layerToShow === null) return;
     if (layerToShow !== openLayerId) {
       input.setSelectedTranscriptionLayerId(layerToShow);
