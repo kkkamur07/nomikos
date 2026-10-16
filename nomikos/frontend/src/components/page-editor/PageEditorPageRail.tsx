@@ -27,7 +27,7 @@ const RAIL_UNMEASURED_SPAN = 12;
 const RAIL_THUMB_WIDTH = 200;
 
 /** The rail and the toolbar button that shows it, named so each can find the other. */
-export const PAGE_RAIL_ID = "pe-page-rail";
+const PAGE_RAIL_ID = "pe-page-rail";
 export const PAGE_RAIL_TOGGLE_ID = "pe-page-rail-toggle";
 
 /**

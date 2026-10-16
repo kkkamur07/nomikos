@@ -1,9 +1,14 @@
 import { useMemo } from "react";
 import { useBackgroundJobs } from "../../../context/BackgroundJobsContext";
-import {
-  getPageEditorProcessingLabel,
-  type PageEditorProcessingKind,
-} from "../PageEditorProcessingBanner";
+
+type PageEditorProcessingKind =
+  "segmentation" | "transcription-page" | "transcription-segment";
+
+const PROCESSING_LABELS: Record<PageEditorProcessingKind, string> = {
+  segmentation: "Segmentation in progress",
+  "transcription-page": "Full-page transcription in progress",
+  "transcription-segment": "Segment transcription in progress",
+};
 
 type PageEditorRunStateInput = {
   segmenting: boolean;
@@ -11,9 +16,9 @@ type PageEditorRunStateInput = {
   ocrScope: "segment" | "page" | null;
 };
 
-export type PageEditorRunState = {
+type PageEditorRunState = {
   /** Which operation the page is busy with, or `null` when it is idle. */
-  processingKind: PageEditorProcessingKind;
+  processingKind: PageEditorProcessingKind | null;
   /** Sentence for the canvas hint, or `null` when idle. */
   processingLabel: string | null;
   /** Whether the app-wide queue is working on anything at all. */
@@ -37,7 +42,7 @@ export function usePageEditorRunState({
   const { activeCount } = useBackgroundJobs();
 
   return useMemo(() => {
-    const processingKind: PageEditorProcessingKind = segmenting
+    const processingKind: PageEditorProcessingKind | null = segmenting
       ? "segmentation"
       : ocrRunning
         ? ocrScope === "page"
@@ -46,7 +51,7 @@ export function usePageEditorRunState({
         : null;
     return {
       processingKind,
-      processingLabel: getPageEditorProcessingLabel(processingKind),
+      processingLabel: processingKind && PROCESSING_LABELS[processingKind],
       backgroundJobsActive: activeCount > 0,
     };
   }, [activeCount, ocrRunning, ocrScope, segmenting]);

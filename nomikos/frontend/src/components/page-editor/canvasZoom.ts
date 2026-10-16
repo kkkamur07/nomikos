@@ -15,11 +15,11 @@ export const PINCH_ZOOM_RATE = 0.01;
 /** The largest delta one event may contribute; driver flings exceed a notch. */
 export const MAX_WHEEL_DELTA = 250;
 /** Time constant, in ms, of the glide toward the target scale. */
-export const ZOOM_GLIDE_TAU_MS = 50;
+const ZOOM_GLIDE_TAU_MS = 50;
 /** Remaining log distance below which the glide snaps to its target. */
 const ZOOM_SETTLE = 0.0005;
 
-export function clampScale(scale: number, min: number, max: number): number {
+function clampScale(scale: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, scale));
 }
 

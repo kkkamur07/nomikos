@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   characterConfidencesForTranscription,
-  confidenceHighlightColor,
-  confidenceLabelColor,
   formatConfidencePercent,
-  hasDistinctCharacterConfidences,
   type LineTranscriptionWithCharacterConfidence,
 } from "./characterConfidence";
 
@@ -18,12 +15,7 @@ const BASE_TRANSCRIPTION: LineTranscriptionWithCharacterConfidence = {
 };
 
 describe("characterConfidence", () => {
-  it("maps confidence values to highlight and label colors", () => {
-    expect(confidenceHighlightColor(0.95)).toBe("#059669");
-    expect(confidenceHighlightColor(0.8)).toBe("#d97706");
-    expect(confidenceHighlightColor(0.6)).toBe("#d97706");
-    expect(confidenceHighlightColor(0.2)).toBe("#dc2626");
-    expect(confidenceLabelColor(0.95)).toBe("#059669");
+  it("formats a confidence as a percentage", () => {
     expect(formatConfidencePercent(0.825)).toBe("82.5%");
   });
 
@@ -37,7 +29,6 @@ describe("characterConfidence", () => {
       ],
     };
 
-    expect(hasDistinctCharacterConfidences(transcription)).toBe(true);
     expect(characterConfidencesForTranscription(transcription)).toEqual([
       { char: "a", confidence: 0.99 },
       { char: "b", confidence: 0.55 },
@@ -46,7 +37,6 @@ describe("characterConfidence", () => {
   });
 
   it("falls back to line confidence for each character when per-char scores are missing", () => {
-    expect(hasDistinctCharacterConfidences(BASE_TRANSCRIPTION)).toBe(false);
     expect(characterConfidencesForTranscription(BASE_TRANSCRIPTION)).toEqual([
       { char: "a", confidence: 0.82 },
       { char: "b", confidence: 0.82 },

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DocumentPartResponse } from "../../../api/client";
 
 /** The editor route for one page of a document. */
-export function partEditorHref(
+function partEditorHref(
   projectId: string,
   documentId: string,
   partId: string,
@@ -83,7 +83,11 @@ export function useDocumentPaging({
       // Forward still walk the pages (popstate is a real navigation, and the
       // route-sync effect above picks the new partId up from useParams).
       // push, not replace: paging through a manuscript is history.
-      window.history.pushState(null, "", partEditorHref(projectId, documentId, partId));
+      window.history.pushState(
+        null,
+        "",
+        partEditorHref(projectId, documentId, partId),
+      );
     },
     [projectId, documentId],
   );

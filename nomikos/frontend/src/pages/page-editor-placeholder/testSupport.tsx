@@ -304,7 +304,7 @@ export async function flushPageEditorEffects() {
  * a PUT changes it and every later GET reflects the change. Canned responses
  * would let a "setting" that never persisted still pass its own test.
  */
-export function seedExecutionPreference(preferLocalInference = false): void {
+function seedExecutionPreference(preferLocalInference = false): void {
   let stored = preferLocalInference;
   const current = (): ExecutionPreferenceResponse => ({
     prefer_local_inference: stored,

@@ -1,6 +1,6 @@
 import type { LayoutPoint, LinePoint } from "../../api/client";
 
-export type GeometryInput =
+type GeometryInput =
   | LinePoint[]
   | LayoutPoint[]
   | number[][]
@@ -113,7 +113,7 @@ export function canvasHandleRadius(
 }
 
 /** Minimum spacing between consecutive polygon vertices (image px). */
-export const MIN_VERTEX_SPACING = 3;
+const MIN_VERTEX_SPACING = 3;
 
 function pointDistance(a: LinePoint, b: LinePoint): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);

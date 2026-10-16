@@ -37,11 +37,11 @@ type PageEditorSegmentHealthPanelProps = {
 };
 
 /** Short, stable label for a line, so a row can name one without a full uuid. */
-export function shortLineId(lineId: string): string {
+function shortLineId(lineId: string): string {
   return lineId.slice(0, 8);
 }
 
-export function percent(value: number): string {
+function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 

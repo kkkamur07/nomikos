@@ -26,11 +26,8 @@ import {
 } from "../../../auth/session";
 import { useBackgroundJobs } from "../../../context/BackgroundJobsContext";
 
+/** A 401 never reaches here: the caller redirects to login first. */
 function accessMessage(error: ApiError): string {
-  if (error.status === 401) {
-    redirectToLogin();
-    return "";
-  }
   if (error.status === 403 || error.status === 404) {
     return "This page is not available to your account.";
   }
