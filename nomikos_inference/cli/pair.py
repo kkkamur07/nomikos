@@ -31,6 +31,8 @@ import time
 import webbrowser
 from datetime import UTC, datetime
 
+from rich.markup import escape
+
 from nomikos_inference.cli import console as ui
 from nomikos_inference.cli.api import (
     DEVICE_NAME_LIMIT,
@@ -333,7 +335,9 @@ def _wait_for_approval(console, errors, client: PlatformClient, started: Started
                 errors.print("Run `nomikos pair` to start a new one.")
                 return None
             if poll.status not in (STATUS_AUTHORIZATION_PENDING, STATUS_SLOW_DOWN):
-                errors.print(f"[red]The platform answered an unknown state: {poll.status!r}[/red]")
+                errors.print(
+                    f"[red]The platform answered an unknown state: {escape(repr(poll.status))}[/red]"
+                )
                 return None
             if time.monotonic() >= deadline:
                 errors.print("[red]Gave up waiting for approval.[/red]")
