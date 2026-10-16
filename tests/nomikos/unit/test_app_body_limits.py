@@ -109,3 +109,25 @@ def test_real_app_rejects_a_5mb_json_body(monkeypatch) -> None:
     )
 
     assert response.status_code == 413
+
+
+def test_cors_exposes_the_error_id(monkeypatch) -> None:
+    """The frontend reads X-Error-ID across origins; CORS must expose it."""
+    from fastapi.middleware.cors import CORSMiddleware
+
+    from backend.core.app import create_app
+
+    monkeypatch.setenv("JWT_SECRET", "xQ7v2Kd9RmZ4pB6wLt1yHs3nCf8jUa5eG0oV")
+    reset_settings_caches()
+
+    options = [m.kwargs for m in create_app().user_middleware if m.cls is CORSMiddleware]
+
+    assert options == [
+        {
+            "allow_origins": options[0]["allow_origins"],
+            "allow_credentials": True,
+            "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            "allow_headers": ["Authorization", "Content-Type", "X-CSRF-Token"],
+            "expose_headers": ["X-Error-ID"],
+        }
+    ]

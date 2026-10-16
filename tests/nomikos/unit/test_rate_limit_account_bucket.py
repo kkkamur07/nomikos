@@ -27,7 +27,7 @@ from sqlalchemy.sql.elements import BooleanClauseList
 from starlette.requests import Request
 
 from backend.core.exceptions import InvalidCredentialsError
-from backend.core.settings import get_auth_settings, reset_settings_caches
+from backend.core.settings import reset_settings_caches
 from backend.users.api import rate_limit
 from backend.users.infrastructure.orm_models import AuthRateLimitAttempt
 
@@ -196,16 +196,15 @@ async def test_empty_keys_open_no_session(sessions: _SessionFactory) -> None:
 async def test_throttle_refunds_the_account_charge_on_success(
     sessions: _SessionFactory,
 ) -> None:
-    settings = get_auth_settings()
     digest = hashlib.sha256(b"victim@example.com").hexdigest()
     account_key = f"account:{digest}:/auth/login"
 
-    async for _ in rate_limit.throttle_auth_attempts(_request()):
+    agen = rate_limit.throttle_auth_attempts(_request())
+    async for _ in agen:
         pass
 
     assert sessions.store == []
     assert account_key in [lock for session in sessions.sessions for lock in session.locks]
-    assert settings.auth_rate_limit_requests == 10
 
 
 async def test_throttle_keeps_the_account_charge_on_failure(

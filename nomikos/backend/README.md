@@ -181,7 +181,7 @@ flowchart LR
 | Trigger | Location | Typical new status |
 |---------|----------|-------------------|
 | Platform worker claims a job | `jobs/infrastructure/job_repository.py` → `claim_next_pending_job` | `running` |
-| Job submitted to inference | `mark_job_waiting` | `waiting` |
+| Job submitted to inference | `job_claim_service.claim_one_page` | `waiting` |
 | Job completes | `mark_job_done` | `done` |
 | Job fails | `mark_job_failed` | `failed` |
 | Inference callback updates product job | `jobs/application/job_callback_service.py` | `done` / `failed` |
