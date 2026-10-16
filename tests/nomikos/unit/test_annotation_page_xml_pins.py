@@ -304,6 +304,7 @@ class TestKillerPins:
 
     def test_stem_strips_a_trailing_underscore(self) -> None:
         assert export_file_stem("Codex_", 1) == "Codex_page_1"
+        assert export_file_stem("CODEX_", 1) == "CODEX_page_1"
 
     def test_three_point_outline_falls_back_to_its_lower_edge(self) -> None:
         line = _line(

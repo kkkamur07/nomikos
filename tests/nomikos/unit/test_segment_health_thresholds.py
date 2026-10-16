@@ -664,7 +664,8 @@ class TestFragmentKillerPins:
             [[980.0, 535.0], [1040.0, 535.0]],
             manual=True,
         )
-        (merge,) = find_fragments([first, second, manual], stats())
+        fourth = seg("c", rect(1100.0, 1200.0, 450.0, 550.0), [[1100.0, 550.0], [1200.0, 550.0]])
+        (merge,) = find_fragments([first, second, manual, fourth], stats())
         assert (merge.primary_id, merge.fragment_id) == ("a", "b")
 
     def test_ten_pixel_offset_still_merges(self) -> None:
@@ -746,3 +747,275 @@ class TestOverlapKillerPins:
         lower = seg("l", rect(350.0, 950.0, 450.0, 460.0), [[350.0, 455.0], [950.0, 455.0]])
         (trim,) = find_overlaps([upper, lower], stats())
         assert trim.duplicate is True
+
+
+class TestExtentAtPins:
+    def _triangle(self) -> list[list[float]]:
+        return [[5.0, 0.0], [15.0, 10.0], [5.0, 10.0]]
+
+    def test_outside_vertical_is_nothing(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        assert _extent_at(rect(5.0, 15.0, 0.0, 10.0), -5.0) is None
+
+    def test_touching_vertical_counts(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        assert _extent_at(self._triangle(), 5.0) == (0.0, 10.0)
+
+    def test_just_outside_vertical_is_excluded(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        low, high = _extent_at(self._triangle(), 5.0 + 1.5e-9)
+        assert low > 0.0
+        assert high == 10.0
+
+    def test_below_edge_is_excluded(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        low, high = _extent_at(self._triangle(), 5.0 - 1e-9)
+        assert low < 0.0
+        assert high == 10.0
+
+    def test_above_edge_is_excluded(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        assert _extent_at(self._triangle(), 15.0 + 1.5e-9) is None
+
+    def test_below_edge_tolerance_is_tight(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        assert _extent_at(self._triangle(), 5.0 - 1.5e-9) is None
+
+    def test_exact_high_edge_counts(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        low, high = _extent_at(self._triangle(), 15.0 + 1e-9)
+        assert high > 10.0
+
+    def test_interior_interpolates(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _extent_at
+
+        assert _extent_at(self._triangle(), 10.0) == (5.0, 10.0)
+
+
+class TestMergeKillerPins:
+    def test_stacked_same_xs_merges_to_a_ring(self) -> None:
+        primary = rect(0.0, 10.0, 0.0, 10.0)
+        fragment = rect(0.0, 10.0, 20.0, 30.0)
+        assert merge_polygons(primary, fragment) == [
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 30.0],
+            [0.0, 30.0],
+        ]
+
+    def test_identical_rects_merge_to_one_ring(self) -> None:
+        square = rect(0.0, 10.0, 0.0, 10.0)
+        assert merge_polygons(square, square) == [
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 10.0],
+            [0.0, 10.0],
+        ]
+
+    def test_fractional_fallback_rounds(self) -> None:
+        primary = [[0.05, 0.0], [0.05, 10.0], [0.05, 10.0]]
+        fragment = [[0.05, 20.0], [0.05, 30.0], [0.05, 30.0]]
+        assert merge_polygons(primary, fragment) == [
+            [0.1, 0.0],
+            [0.1, 10.0],
+            [0.1, 20.0],
+            [0.1, 30.0],
+        ]
+
+    def test_fractional_bridge_rounds(self) -> None:
+        primary = [[0.05, 0.0], [10.0, 0.0], [10.0, 10.0], [0.05, 10.0]]
+        fragment = [[14.0, 0.0], [20.0, 0.0], [20.0, 10.0], [14.0, 10.0]]
+        merged = merge_polygons(primary, fragment)
+        assert merged[0] == [0.1, 0.0]
+        assert bbox(merged) == (0.1, 20.0, 0.0, 10.0)
+
+    def test_dedupe_keeps_a_single_point(self) -> None:
+        from backend.annotation.application.segment_health.geometry import _dedupe
+
+        assert _dedupe([[5.0, 5.0]]) == [[5.0, 5.0]]
+        assert _dedupe([[1.0, 2.0], [3.0, 4.0], [1.0, 2.0]]) == [[1.0, 2.0], [3.0, 4.0]]
+
+    def test_merge_baselines_keeps_every_point(self) -> None:
+        assert merge_baselines([[0.0, 0.0], [10.0, 0.0]], [[14.0, 0.0], [30.0, 0.0]]) == [
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [14.0, 0.0],
+            [30.0, 0.0],
+        ]
+
+    def test_merge_baselines_skips_near_duplicates(self) -> None:
+        assert merge_baselines([[0.0, 0.0], [10.0, 0.0]], [[12.0, 1.0], [30.0, 0.0]]) == [
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [30.0, 0.0],
+        ]
+
+    def test_merge_baselines_two_point_result_keeps_ends(self) -> None:
+        assert merge_baselines([[0.0, 0.0], [10.0, 0.0]], [[11.0, 0.0], [12.0, 0.0]]) == [
+            [0.0, 0.0],
+            [10.0, 0.0],
+        ]
+
+    def test_merge_baselines_single_cluster_falls_back_to_ends(self) -> None:
+        assert merge_baselines([[0.0, 0.0], [1.0, 0.0]], [[2.0, 0.0], [2.5, 0.0]]) == [
+            [0.0, 0.0],
+            [2.5, 0.0],
+        ]
+
+    def test_merge_baselines_rounds_fractional_y(self) -> None:
+        assert merge_baselines([[0.0, 0.05], [10.0, 0.0]], [[20.0, 0.0], [30.0, 0.0]]) == [
+            [0.0, 0.1],
+            [10.0, 0.0],
+            [20.0, 0.0],
+            [30.0, 0.0],
+        ]
+
+
+class TestSlantedClipPins:
+    def test_vertex_on_the_cut_is_kept_once(self) -> None:
+        clipped = clip_half([[0.0, 0.0], [4.0, 2.0], [0.0, 4.0]], 4.0, keep_left=True)
+        assert clipped == [[0.0, 0.0], [4.0, 2.0], [0.0, 4.0]]
+
+    def test_vertex_on_the_right_cut_is_kept_once(self) -> None:
+        clipped = clip_half([[0.0, 2.0], [4.0, 0.0], [4.0, 4.0]], 0.0, keep_left=False)
+        assert clipped == [[0.0, 2.0], [4.0, 0.0], [4.0, 4.0]]
+
+
+class TestSlantedBaselinePins:
+    def test_low_endpoint_rounds_fractional_y(self) -> None:
+        assert clip_baseline([[0.0, 0.0], [20.0, 10.0]], 0.05, 19.95) == [
+            [0.1, 0.0],
+            [19.9, 10.0],
+        ]
+
+    def test_three_point_endpoints_discriminate(self) -> None:
+        first = [[3.0, 0.0], [9.0, 30.0], [25.0, 15.0]]
+        second = [[5.0, 10.0], [20.0, 10.0], [30.0, 10.0]]
+        assert baseline_distance(first, second) == pytest.approx(10.0653409)
+
+    def test_low_uses_the_first_endpoint(self) -> None:
+        first = [[1.0, 0.0], [9.0, 30.0]]
+        second = [[2.0, 10.0], [40.0, 10.0]]
+        assert baseline_distance(first, second) == pytest.approx(17.625)
+
+    def test_low_uses_the_second_start(self) -> None:
+        first = [[3.0, 0.0], [9.0, 30.0]]
+        second = [[2.0, 10.0], [5.0, 10.0], [40.0, 10.0]]
+        assert baseline_distance(first, second) == pytest.approx(17.6363636)
+
+    def test_high_uses_the_first_end(self) -> None:
+        first = [[3.0, 0.0], [9.0, 30.0], [35.0, 15.0]]
+        second = [[5.0, 10.0], [20.0, 10.0]]
+        assert baseline_distance(first, second) == pytest.approx(11.5874126)
+
+    def test_high_uses_the_second_end(self) -> None:
+        first = [[3.0, 0.0], [9.0, 30.0]]
+        second = [[5.0, 10.0], [20.0, 10.0], [40.0, 10.0]]
+        assert baseline_distance(first, second) == pytest.approx(18.0454545)
+
+
+class TestOverlapKillerPins2:
+    def _rect_pair(self, upper_y, lower_y):
+        upper = seg(
+            "u",
+            rect(300.0, 1100.0, upper_y, upper_y + 100.0),
+            [[300.0, upper_y + 80.0], [1100.0, upper_y + 80.0]],
+        )
+        lower = seg(
+            "l",
+            rect(300.0, 1100.0, lower_y, lower_y + 100.0),
+            [[300.0, lower_y + 80.0], [1100.0, lower_y + 80.0]],
+        )
+        return upper, lower
+
+    def test_exact_defect_ratio_offers(self) -> None:
+        from backend.annotation.application.segment_health.finders import OVERLAP_DEFECT_RATIO
+
+        assert OVERLAP_DEFECT_RATIO == 0.2
+        upper, lower = self._rect_pair(400.0, 480.0)
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.ratio == pytest.approx(0.2)
+        assert trim.duplicate is False
+
+    def test_exact_duplicate_ratio_reports_no_trim(self) -> None:
+        from backend.annotation.application.segment_health.finders import OVERLAP_DUPLICATE_RATIO
+
+        assert OVERLAP_DUPLICATE_RATIO == 0.5
+        upper, lower = self._rect_pair(400.0, 450.0)
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.ratio == pytest.approx(0.5)
+        assert trim.duplicate is True
+
+    def test_fractional_duplicate_cut_rounds_once(self) -> None:
+        upper = seg("u", rect(300.0, 1100.0, 400.0, 500.0), [[300.0, 480.0], [1100.0, 480.0]])
+        lower = seg("l", rect(300.0, 1100.0, 405.0, 505.0), [[300.0, 541.1], [1100.0, 541.1]])
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.duplicate is True
+        assert trim.cut == 510.6
+
+    def test_fractional_trim_cut_rounds_once(self) -> None:
+        upper = seg("u", rect(300.0, 1100.0, 400.0, 500.0), [[300.0, 470.05], [1100.0, 490.05]])
+        lower = seg("l", rect(300.0, 1100.0, 460.0, 560.0), [[300.0, 530.05], [1100.0, 550.05]])
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.duplicate is False
+        assert trim.cut == 510.0
+
+    def test_degenerate_first_skips_to_the_pair(self) -> None:
+        degenerate = seg("d", [[300.0, 800.0], [700.0, 800.0], [1100.0, 800.0]])
+        upper = seg("u", rect(300.0, 1100.0, 750.0, 850.0), [[300.0, 830.0], [1100.0, 830.0]])
+        lower = seg("l", rect(300.0, 1100.0, 810.0, 910.0), [[300.0, 890.0], [1100.0, 890.0]])
+        (trim,) = find_overlaps([degenerate, upper, lower], stats())
+        assert (trim.upper_id, trim.lower_id) == ("u", "l")
+
+    def test_degenerate_second_skips_the_pair(self) -> None:
+        upper = seg("u", rect(300.0, 1100.0, 750.0, 850.0), [[300.0, 830.0], [1100.0, 830.0]])
+        degenerate = seg("d", [[300.0, 800.0], [700.0, 800.0], [1100.0, 800.0]])
+        assert find_overlaps([upper, degenerate], stats()) == []
+
+    def test_reversed_tiny_order_reports_a_duplicate(self) -> None:
+        big = seg("g", rect(200.0, 400.0, 390.0, 410.0), [[200.0, 405.0], [400.0, 405.0]])
+        tiny = seg("t", [(300.0, 400.0), (301.0, 400.0), (300.0, 401.0)])
+        (trim,) = find_overlaps([big, tiny], stats())
+        assert trim.duplicate is True
+
+    def test_sliver_guard_needs_both_sides_short(self) -> None:
+        crosser = seg("c", rect(300.0, 1800.0, 400.0, 500.0), [[300.0, 450.0], [1800.0, 450.0]])
+        assert len(find_spanning([crosser], stats(bands=[(200.0, 1200.0), (1250.0, 1900.0)]))) == 1
+
+    def test_zero_spacing_finds_nothing(self) -> None:
+        pair = [
+            seg("a", rect(300.0, 700.0, 450.0, 550.0), [[300.0, 550.0], [700.0, 550.0]]),
+            seg("b", rect(760.0, 900.0, 450.0, 550.0), [[760.0, 550.0], [900.0, 550.0]]),
+        ]
+        assert find_fragments(pair, stats(spacing=0.0)) == []
+
+    def test_half_spacing_still_merges(self) -> None:
+        pair = [
+            seg("a", rect(300.0, 700.0, 450.0, 550.0), [[300.0, 550.0], [700.0, 550.0]]),
+            seg("b", rect(760.0, 900.0, 450.0, 550.0), [[760.0, 550.0], [900.0, 550.0]]),
+        ]
+        assert len(find_fragments(pair, stats(spacing=0.5))) == 1
+
+
+class TestThreePointKeptPins:
+    def test_triangle_kept_side_has_three_points(self) -> None:
+        upper = seg(
+            "u",
+            [(300.0, 600.0), (1100.0, 600.0), (700.0, 400.0)],
+            [[300.0, 450.0], [1100.0, 450.0]],
+        )
+        lower = seg(
+            "l",
+            rect(300.0, 1100.0, 550.0, 750.0),
+            [[300.0, 700.0], [1100.0, 700.0]],
+        )
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.duplicate is False
+        assert len(trim.upper_points) == 3
