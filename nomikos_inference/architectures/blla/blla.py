@@ -12,9 +12,9 @@ deployment however it fails.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -22,6 +22,7 @@ from nomikos_inference.admission import open_image_bytes
 from nomikos_inference.architectures.artifact import ArtifactHandle, resolve_artifact
 from nomikos_inference.architectures.blla.blla_preprocessing import preprocess_blla_image
 from nomikos_inference.architectures.blla.blla_runtime import build_blla_segment_response
+from nomikos_inference.architectures.shared.onnx_session import OnnxSession, open_checked_session
 from nomikos_inference.contracts.segment import SegmentRunResponse
 
 BLLA_ARTIFACT_SUFFIXES = frozenset({".onnx"})
@@ -52,46 +53,44 @@ def _resolve_blla_artifact(
     )
 
 
+def _checked_blla_session(session: OnnxSession) -> tuple[OnnxSession, str]:
+    """The input name of a graph this decoder can read."""
+    metadata = session.get_modelmeta().custom_metadata_map
+    if metadata.get("format") != "blla-onnx-v1":
+        raise BLLAUnavailableError("unsupported BLLA ONNX model format")
+    if metadata.get("input_layout") != "NCHW":
+        raise BLLAUnavailableError("unsupported BLLA ONNX input layout")
+    if metadata.get("input_height") != str(BLLA_INPUT_HEIGHT) or metadata.get(
+        "input_channels"
+    ) != str(BLLA_INPUT_CHANNELS):
+        raise BLLAUnavailableError("unsupported BLLA ONNX input dimensions")
+    inputs = session.get_inputs()
+    outputs = session.get_outputs()
+    if len(inputs) != 1 or len(outputs) != 1:
+        raise BLLAUnavailableError("BLLA ONNX graph must have one input and output")
+    if len(inputs[0].shape) != 4 or len(outputs[0].shape) != 4:
+        raise BLLAUnavailableError("BLLA ONNX graph must use 4D tensors")
+    return session, inputs[0].name
+
+
 @lru_cache(maxsize=4)
 def _load_blla_session(
     model_path: str,
     fingerprint: tuple[int, int] | None = None,
-) -> tuple[Any, str]:
+) -> tuple[OnnxSession, str]:
     """Open a session and check the graph is the one this decoder can read.
 
     ``fingerprint`` is part of the cache key rather than an argument the loader
     reads: it is what makes a *replaced* artifact file miss the cache instead of
     serving the previous model for the life of the process.
     """
-    try:
-        import onnxruntime as ort
-
-        session = ort.InferenceSession(
-            model_path,
-            providers=["CPUExecutionProvider"],
-        )
-        metadata = session.get_modelmeta().custom_metadata_map
-        if metadata.get("format") != "blla-onnx-v1":
-            raise BLLAUnavailableError("unsupported BLLA ONNX model format")
-        if metadata.get("input_layout") != "NCHW":
-            raise BLLAUnavailableError("unsupported BLLA ONNX input layout")
-        if metadata.get("input_height") != str(BLLA_INPUT_HEIGHT) or metadata.get(
-            "input_channels"
-        ) != str(BLLA_INPUT_CHANNELS):
-            raise BLLAUnavailableError("unsupported BLLA ONNX input dimensions")
-        inputs = session.get_inputs()
-        outputs = session.get_outputs()
-        if len(inputs) != 1 or len(outputs) != 1:
-            raise BLLAUnavailableError("BLLA ONNX graph must have one input and output")
-        if len(inputs[0].shape) != 4 or len(outputs[0].shape) != 4:
-            raise BLLAUnavailableError("BLLA ONNX graph must use 4D tensors")
-        return session, inputs[0].name
-    except BLLAUnavailableError:
-        raise
-    except ImportError as error:
-        raise BLLAUnavailableError("onnxruntime is required for the BLLA runtime") from error
-    except Exception as error:
-        raise BLLAUnavailableError("unable to load BLLA ONNX model") from error
+    return open_checked_session(
+        model_path,
+        unavailable=BLLAUnavailableError,
+        missing_runtime_message="onnxruntime is required for the BLLA runtime",
+        load_failure_message="unable to load BLLA ONNX model",
+        check=_checked_blla_session,
+    )
 
 
 def run_blla_logits(
@@ -127,7 +126,7 @@ def run_blla_segment(
     *,
     model_path: Path,
     artifact_sha256: str | None = None,
-    params: dict[str, Any] | None = None,
+    params: Mapping[str, object] | None = None,
 ) -> SegmentRunResponse:
     """Run BLLA and return the legacy-compatible segment contract."""
 
