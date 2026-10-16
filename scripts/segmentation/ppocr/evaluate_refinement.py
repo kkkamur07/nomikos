@@ -308,8 +308,6 @@ def _build_variants(
 
 
 def _score_variant_page(
-    page: str,
-    name: str,
     params: dict | None,
     image_bytes: bytes,
     targets: list[dict],
@@ -433,7 +431,7 @@ def main() -> int:
         targets = load_targets(args.gt, page)
         pages[page] = {}
         for name, params in variants.items():
-            entry = _score_variant_page(page, name, params, image_bytes, targets, args)
+            entry = _score_variant_page(params, image_bytes, targets, args)
             pages[page][name] = entry
             _accumulate_totals(totals[name], entry)
         if not sweep and page in OVERLAY_PAGES:
