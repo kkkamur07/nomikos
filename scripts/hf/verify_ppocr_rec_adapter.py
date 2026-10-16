@@ -29,17 +29,18 @@ the adapter under test is this checkout::
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
-import re
 import sys
-import tempfile
 from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 
-IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff")
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.hf._ppocr_rec_inputs import collect_file_crops, collect_page_crops
 
 
 def _parse_args() -> argparse.Namespace:
@@ -54,98 +55,24 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _strip_custom_attributes(xml_text: str) -> str:
-    """Drop ``custom="..."`` so kraken's ``parse_page_custom`` accepts the file."""
-    return re.sub(r' custom="[^"]*"', "", xml_text)
-
-
-def _has_real_boundary(line) -> bool:
-    """A boundary that is not just the baseline polyline stored twice."""
-    if line.boundary is None:
-        return False
-    return list(map(tuple, line.boundary)) != list(map(tuple, line.baseline))
-
-
-def _build_real_inputs(pages_dir, xml_dir, line_files, *, height, pad, max_lines):
+def _build_real_inputs(pages_dir, xml_dir, line_files, *, max_lines):
     """Cut every line with kraken's own extractor; returns crops and counters."""
-    from kraken.containers import Segmentation
-    from kraken.lib.segmentation import extract_polygons
-    from kraken.lib.xml import XMLPage
-    from PIL import Image
-
+    records, counters = collect_page_crops(pages_dir, xml_dir, max_lines=max_lines)
+    records.extend(
+        collect_file_crops(line_files, already=len(records), max_lines=max_lines)
+    )
     inputs = []
-    counters = {"pages": 0, "polygon_lines": 0, "box_lines": 0, "skipped_lines": 0}
-    budget = max_lines
-
-    def take(line_image, name, truth):
+    for record in records:
         output = BytesIO()
-        line_image.save(output, format="PNG")
+        record.crop.save(output, format="PNG")
         inputs.append(
-            {"name": name, "crop": line_image.copy(), "png": output.getvalue(), "truth": truth}
+            {
+                "name": record.name,
+                "crop": record.crop.copy(),
+                "png": output.getvalue(),
+                "truth": record.truth,
+            }
         )
-
-    if xml_dir is not None and pages_dir is not None:
-        cleaner = tempfile.TemporaryDirectory(prefix="ppocr-rec-adapter-xml-")
-        for xml_path in sorted(xml_dir.glob("*.xml")):
-            page_path = None
-            for suffix in IMAGE_SUFFIXES:
-                candidate = pages_dir / (xml_path.stem + suffix)
-                if candidate.is_file():
-                    page_path = candidate
-                    break
-            if page_path is None:
-                print(f"no page image for {xml_path.name}, skipping page", file=sys.stderr)
-                continue
-            cleaned = Path(cleaner.name) / xml_path.name
-            cleaned.write_text(
-                _strip_custom_attributes(xml_path.read_text(encoding="utf-8")),
-                encoding="utf-8",
-            )
-            page = XMLPage(str(cleaned), linetype="baselines")
-            if page.type != "baselines" or not page.lines:
-                print(f"{xml_path.name} has no baselines, skipping page", file=sys.stderr)
-                continue
-            counters["pages"] += 1
-            with Image.open(page_path) as image:
-                image = image.convert("RGB")
-                for number, xml_line in enumerate(page.get_sorted_lines()):
-                    if budget is not None and len(inputs) >= budget:
-                        break
-                    name = f"{xml_path.stem}#{number}"
-                    try:
-                        if _has_real_boundary(xml_line):
-                            single = dataclasses.replace(page.to_container(), lines=[xml_line])
-                            crop, _ = next(extract_polygons(image, single))
-                            counters["polygon_lines"] += 1
-                            take(crop, name, xml_line.text)
-                        else:
-                            box = xml_line.to_bbox(text_direction="horizontal-lr")
-                            single = Segmentation(
-                                type="bbox",
-                                imagename=page.imagename,
-                                text_direction="horizontal-lr",
-                                script_detection=True,
-                                lines=[box],
-                                regions={},
-                            )
-                            crop, _ = next(extract_polygons(image, single))
-                            counters["box_lines"] += 1
-                            take(crop, name, xml_line.text)
-                    except (StopIteration, ValueError) as error:
-                        counters["skipped_lines"] += 1
-                        print(f"cannot cut {name}: {error}", file=sys.stderr)
-                        continue
-            if budget is not None and len(inputs) >= budget:
-                break
-
-    for extra in line_files:
-        if budget is not None and len(inputs) >= budget:
-            break
-        from PIL import Image
-
-        with Image.open(extra) as image:
-            take(image.convert("RGB"), Path(extra).name, None)
-
     return inputs, counters
 
 
@@ -179,7 +106,7 @@ def _kraken_reference(model, tensor, *, temperature, decoder):
     return record.logical_order().prediction
 
 
-def _kraken_masked_text(model, tensor, width, *, temperature, decoder):
+def _kraken_masked_text(model, tensor, width):
     """Kraken's decode with ``seq_lens=[W]``: the known quirk, info only."""
     import torch
 
@@ -237,8 +164,6 @@ def main() -> int:
         args.pages_dir,
         args.xml_dir,
         args.lines,
-        height=height,
-        pad=pad,
         max_lines=args.max_lines,
     )
     if not inputs:
@@ -266,9 +191,7 @@ def main() -> int:
         same_text = kraken_text == adapter_text
         text_identical += int(same_text)
 
-        masked_text = _kraken_masked_text(
-            model, reference, width, temperature=temperature, decoder=greedy_decoder
-        )
+        masked_text = _kraken_masked_text(model, reference, width)
         if masked_text != kraken_text:
             masked_differing.append(entry["name"])
 
