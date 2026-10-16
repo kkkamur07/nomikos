@@ -18,7 +18,6 @@ from PIL import Image
 
 from backend.annotation.application.page_xml_export_service import (
     PAGE_XML_NAMESPACE,
-    PAGE_XML_SCHEMA,
     PageXmlExportService,
     _baseline_export_points,
     _format_coord,
@@ -85,9 +84,11 @@ class TestDocumentEnvelope:
         xml, part, _line = self._xml()
         assert xml.startswith(b"<?xml version='1.0' encoding='utf-8'?>")
         root = fromstring(xml)  # noqa: S314 - XML produced by this test
-        assert root.tag == f"{{{PAGE_XML_NAMESPACE}}}PcGts"
+        assert root.tag == "{http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15}PcGts"
         assert (
-            root.get("{http://www.w3.org/2001/XMLSchema-instance}schemaLocation") == PAGE_XML_SCHEMA
+            root.get("{http://www.w3.org/2001/XMLSchema-instance}schemaLocation")
+            == "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15 "
+            "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15/pagecontent.xsd"
         )
         assert root.get("pcGtsId") == f"pcgts_{part.id}"
 
@@ -247,7 +248,7 @@ class TestServicePaths:
         service, _document, project_id, _document_id = self._context(part, [])
         part.document_id = uuid4()
 
-        with pytest.raises(NotFoundError, match="Part not found"):
+        with pytest.raises(NotFoundError, match="^Part not found$"):
             await service.export_part(object(), object(), project_id, uuid4(), part.id)
 
     @pytest.mark.asyncio
@@ -287,3 +288,81 @@ def _without_created(xml: bytes) -> bytes:
     root = fromstring(xml)  # noqa: S314 - XML produced by this test
     root.find("p:Metadata/p:Created", NS).text = "fixed"
     return tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+class TestKillerPins:
+    def test_text_equiv_parent_tag_is_exact(self) -> None:
+        service = _service()
+        part = _part()
+        line = _line(points=[[0.0, 0.0], [9.0, 0.0]], text="α")
+        xml = service._export_part_lines(part, [line], image_filename="s.webp", image_size=None)
+        root = fromstring(xml)  # noqa: S314 - XML produced by this test
+        text_line = root.find(".//p:TextLine", NS)
+        equiv = text_line.find("p:TextEquiv", NS)
+        assert equiv is not None
+        assert equiv.find("p:Unicode", NS).text == "α"
+
+    def test_stem_strips_a_trailing_underscore(self) -> None:
+        assert export_file_stem("Codex_", 1) == "Codex_page_1"
+
+    def test_three_point_outline_falls_back_to_its_lower_edge(self) -> None:
+        line = _line(
+            points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
+            mask={"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]},
+        )
+        assert len(_baseline_export_points(line)) == 2
+
+    @pytest.mark.asyncio
+    async def test_public_bundle_uses_the_published_context(self) -> None:
+        part = _part()
+        lines = [_line(points=[[0.0, 0.0], [9.0, 0.0]], text="α")]
+        document = SimpleNamespace(id=uuid4(), name="Codex")
+        part.document_id = document.id
+        repo = _Repository(part, lines)
+        svc = _DocumentService(document, part, image_bytes=_png_bytes(64, 48))
+        service = PageXmlExportService(documents=repo, document_service=svc)
+
+        bundle = await service.export_part_bundle_public(
+            object(), document.id, document.id, part.id
+        )
+
+        assert bundle.image_filename == "Codex_page_1.webp"
+        assert bundle.stem == "Codex_page_1"
+
+    @pytest.mark.asyncio
+    async def test_bundle_prefers_stored_dimensions(self) -> None:
+        part = _part(width=640, height=480)
+        lines = [_line(points=[[0.0, 0.0], [9.0, 0.0]], text="α")]
+        document = SimpleNamespace(id=uuid4(), name="Codex")
+        part.document_id = document.id
+        repo = _Repository(part, lines)
+        svc = _DocumentService(document, part, image_bytes=_png_bytes(64, 48))
+        service = PageXmlExportService(documents=repo, document_service=svc)
+
+        bundle = await service.export_part_bundle(
+            object(), object(), document.id, document.id, part.id
+        )
+
+        root = fromstring(bundle.xml)  # noqa: S314 - XML produced by this test
+        page = root.find("p:Page", NS)
+        assert page.get("imageWidth") == "640"
+        assert page.get("imageHeight") == "480"
+
+    @pytest.mark.asyncio
+    async def test_bundle_with_half_dimensions_reads_the_header(self) -> None:
+        part = _part(width=640, height=None)
+        lines = [_line(points=[[0.0, 0.0], [9.0, 0.0]], text="α")]
+        document = SimpleNamespace(id=uuid4(), name="Codex")
+        part.document_id = document.id
+        repo = _Repository(part, lines)
+        svc = _DocumentService(document, part, image_bytes=_png_bytes(64, 48))
+        service = PageXmlExportService(documents=repo, document_service=svc)
+
+        bundle = await service.export_part_bundle(
+            object(), object(), document.id, document.id, part.id
+        )
+
+        root = fromstring(bundle.xml)  # noqa: S314 - XML produced by this test
+        page = root.find("p:Page", NS)
+        assert page.get("imageWidth") == "64"
+        assert page.get("imageHeight") == "48"

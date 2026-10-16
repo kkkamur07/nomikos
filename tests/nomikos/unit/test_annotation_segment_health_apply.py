@@ -147,7 +147,11 @@ class TestApplyTrimMask:
         (trim,) = [t for t in report.overlaps if t.upper_id == str(first.id)]
         assert trim.duplicate
 
-        with pytest.raises(ValidationError, match="drawn twice"):
+        with pytest.raises(
+            ValidationError,
+            match="^These two are one line drawn twice, not two that overlap\\. "
+            "Delete one instead of trimming both\\.$",
+        ):
             await service.apply_trim(
                 _Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id, first.id, second.id
             )
@@ -158,7 +162,7 @@ class TestApplyTrimMask:
         lower = _row(300.0, 1100.0, 900.0, order=1)
         service, part = _service([upper, lower])
 
-        with pytest.raises(ValidationError, match="no longer offered"):
+        with pytest.raises(ValidationError, match="^This pair is no longer offered a trim$"):
             await service.apply_trim(
                 _Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id, upper.id, lower.id
             )
@@ -174,8 +178,9 @@ class TestApplyMaskRegression:
         lines.append(crosser)
         service, part = _service(list(lines))
 
+        session = _Session()
         await service.apply_split(
-            _Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id, crosser.id
+            session, object(), uuid.uuid4(), uuid.uuid4(), part.id, crosser.id
         )
 
         assert crosser.mask == {"points": crosser.points}
@@ -185,6 +190,8 @@ class TestApplyMaskRegression:
             [2180.0, 550.0],
             [300.0, 550.0],
         ]
+        (fresh,) = [item for item in session.added if isinstance(item, Line)]
+        assert fresh.mask == {"points": fresh.points}
 
     @pytest.mark.asyncio
     async def test_merge_tracks_the_mask_with_the_merged_outline(self) -> None:
@@ -201,6 +208,7 @@ class TestApplyMaskRegression:
         )
 
         assert primary.mask == {"points": primary.points}
+        assert set(primary.baseline) == {"points"}
 
 
 class TestHistoryGeometryState:
@@ -388,7 +396,7 @@ class TestUsableAndPageSizePins:
         service, part = _service([_row(300.0, 1100.0, 500.0, order=0)])
         part.document_id = uuid.uuid4()
 
-        with pytest.raises(NotFoundError, match="Part not found"):
+        with pytest.raises(NotFoundError, match="^Part not found$"):
             await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
 
     @pytest.mark.asyncio
@@ -398,8 +406,44 @@ class TestUsableAndPageSizePins:
         repo.get_part = _missing_part  # type: ignore[method-assign]
         service = SegmentHealthService(documents=repo, document_service=_DocumentService(part))
 
-        with pytest.raises(NotFoundError, match="Part not found"):
+        with pytest.raises(NotFoundError, match="^Part not found$"):
             await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+
+class TestZeroExtentPins:
+    @pytest.mark.asyncio
+    async def test_zero_extent_width_reports_nothing(self) -> None:
+        lines = [_row(-100.0, 0.0, 500.0, order=0)]
+        service, part = _service(lines, width=None, height=3508.0)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.measured_page is False
+        assert report.finding_count == 0
+
+    @pytest.mark.asyncio
+    async def test_subunit_extent_still_finds_a_sliver(self) -> None:
+        tall = _row(0.0, 1.0, 400.0, order=0)
+        taller = _row(0.0, 1.0, 600.0, order=1)
+        sliver = _row(0.0, 0.02, 450.0, order=2)
+        sliver.points = [[0.0, 450.0], [0.02, 450.0], [0.02, 500.0], [0.0, 500.0]]
+        service, part = _service([tall, taller, sliver], width=None, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.page_width == pytest.approx(1.0)
+        assert report.finding_count == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_page_measures_zero(self) -> None:
+        service, part = _service([], width=None, height=None)
+
+        report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
+
+        assert report.page_width == 0.0
+        assert report.page_height == 0.0
+        assert report.measured_page is False
+        assert report.finding_count == 0
 
 
 async def _missing_part(_session, _part_id):
@@ -471,7 +515,7 @@ class TestLookupPins:
         report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
         assert len(report.fragments) == 2
 
-        with pytest.raises(ValidationError, match="no longer offered"):
+        with pytest.raises(ValidationError, match="^This pair is no longer offered a merge$"):
             await service.apply_merge(
                 _Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id, primary1.id, fragment2.id
             )
@@ -490,7 +534,7 @@ class TestLookupPins:
         report = await service.report(_Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id)
         assert len(report.overlaps) == 2
 
-        with pytest.raises(ValidationError, match="no longer offered"):
+        with pytest.raises(ValidationError, match="^This pair is no longer offered a trim$"):
             await service.apply_trim(
                 _Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id, lines[0].id, lines[3].id
             )

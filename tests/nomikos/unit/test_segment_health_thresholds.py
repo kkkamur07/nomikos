@@ -15,6 +15,7 @@ from backend.annotation.application.segment_health import (
     baseline_distance,
     bbox,
     clip_across,
+    clip_baseline,
     clip_half,
     column_bands,
     find_fragments,
@@ -170,22 +171,18 @@ class TestSuspectBoundaries:
         return [voter, extra]
 
     def test_exactly_at_the_narrow_limit_is_not_noise(self) -> None:
-        limit = NARROW_WIDTH_FRACTION * W
-        candidate = seg("c", rect(0.0, limit, 400.0, 500.0))
+        assert NARROW_WIDTH_FRACTION == 0.06
+        candidate = seg("c", rect(0.0, 120.0, 400.0, 500.0))
         assert find_suspects(self._page(candidate), stats()) == []
 
     def test_just_under_the_narrow_limit_outside_is_noise(self) -> None:
-        candidate = seg("c", rect(0.0, NARROW_WIDTH_FRACTION * W - 0.1, 400.0, 500.0))
+        candidate = seg("c", rect(0.0, 119.9, 400.0, 500.0))
         (suspect,) = find_suspects(self._page(candidate), stats())
         assert suspect.line_id == "c"
         assert suspect.reasons == [
             "narrower than 6% of the page",
             "outside every column",
         ]
-
-    def test_medium_width_outside_is_still_running_text(self) -> None:
-        candidate = seg("c", rect(0.0, 0.5 * W, 400.0, 500.0))
-        assert find_suspects(self._page(candidate), stats()) == []
 
     def test_seven_corners_is_not_a_sliver(self) -> None:
         points = [
@@ -227,9 +224,9 @@ class TestSuspectBoundaries:
 
 class TestColumnBandBoundaries:
     def test_segment_exactly_at_the_vote_width_counts(self) -> None:
-        width = BAND_MIN_WIDTH_FRACTION * W
-        (band,) = column_bands([seg("v", rect(0.0, width, 0.0, 100.0))], W)
-        assert band == (0.0, width)
+        assert BAND_MIN_WIDTH_FRACTION == 0.15
+        (band,) = column_bands([seg("v", rect(0.0, 300.0, 0.0, 100.0))], W)
+        assert band == (0.0, 300.0)
 
     def test_single_voter_at_the_vote_width_still_bands(self) -> None:
         # A lone 300px voter on a 2000px page spans exactly the 0.15 floor, so
@@ -237,9 +234,8 @@ class TestColumnBandBoundaries:
         assert column_bands([seg("v", rect(300.0, 600.0, 0.0, 100.0))], W) == [(300.0, 600.0)]
 
     def test_band_exactly_at_the_floor_width_survives(self) -> None:
-        width = BAND_MIN_WIDTH_FRACTION * W
-        (band,) = column_bands([seg("v", rect(0.0, width, 0.0, 100.0))], W)
-        assert band[1] - band[0] == pytest.approx(width)
+        (band,) = column_bands([seg("v", rect(0.0, 300.0, 0.0, 100.0))], W)
+        assert band[1] - band[0] == pytest.approx(300.0)
 
     def test_two_separated_columns_stay_two_bands(self) -> None:
         left = seg("l", rect(0.0, 300.0, 0.0, 100.0))
@@ -312,16 +308,15 @@ class TestFragmentBoundaries:
         return [first, second]
 
     def test_collinear_boundary_rejects(self) -> None:
-        limit = COLLINEAR_SPACING_RATIO * 100.0
-        assert limit == 40.0
-        pair = self._pair((300.0, 700.0), (760.0, 900.0), second_dy=limit)
+        assert COLLINEAR_SPACING_RATIO == 0.4
+        pair = self._pair((300.0, 700.0), (760.0, 900.0), second_dy=40.0)
         assert find_fragments(pair, stats()) == []
 
     def test_gap_boundary_offers_but_beyond_does_not(self) -> None:
-        limit = ADJACENT_GAP_HEIGHT_RATIO * 100.0
-        at = self._pair((300.0, 700.0), (700.0 + limit, 840.0 + limit))
+        assert ADJACENT_GAP_HEIGHT_RATIO == 1.5
+        at = self._pair((300.0, 700.0), (850.0, 990.0))
         assert len(find_fragments(at, stats())) == 1
-        beyond = self._pair((300.0, 700.0), (700.0 + limit + 0.1, 840.0 + limit + 0.1))
+        beyond = self._pair((300.0, 700.0), (850.1, 990.1))
         assert find_fragments(beyond, stats()) == []
 
     def test_equal_halves_are_two_lines_not_a_fragment(self) -> None:
@@ -378,3 +373,376 @@ class TestSpanningAndOverlapBoundaries:
         assert trim.duplicate is True
         assert trim.upper_points == []
         assert trim.cut == round(trim.cut, 1)
+
+
+class TestYAtPins:
+    def test_clamps_read_three_point_ends(self) -> None:
+        line = [[0.0, 0.0], [5.0, 100.0], [10.0, 20.0]]
+        assert y_at(line, -1.0) == 0.0
+        assert y_at(line, 99.0) == 20.0
+
+    def test_interior_interpolation_uses_x(self) -> None:
+        assert y_at([[10.0, 0.0], [20.0, 30.0]], 15.0) == 15.0
+        assert y_at([[5.0, 50.0], [10.0, 20.0]], 10.0) == 20.0
+        assert y_at([[0.0, 0.0], [10.0, 5.0]], 7.0) == 3.5
+
+
+class TestClipPins:
+    def test_fractional_cut_rounds_to_one_decimal(self) -> None:
+        clipped = clip_half([[1.0, 1.0], [5.0, 3.0], [5.0, 5.0], [1.0, 5.0]], 2.55, keep_left=True)
+        assert clipped == [[1.0, 1.0], [2.5, 1.8], [2.5, 5.0], [1.0, 5.0]]
+
+    def test_cut_on_the_edge_keeps_everything(self) -> None:
+        square = [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]]
+        assert clip_half(square, 4.0, keep_left=True) == square
+        assert clip_half(square, 0.0, keep_left=False) == square
+
+    def test_across_cut_rounds_the_crossing(self) -> None:
+        clipped = clip_across([[0.0, 0.0], [6.0, 2.0], [0.0, 4.0]], 1.55, keep_above=True)
+        assert clipped == [[0.0, 1.6], [0.0, 0.0], [4.7, 1.6]]
+
+
+class TestClipBaselinePins:
+    def test_full_range_returns_the_endpoints(self) -> None:
+        assert clip_baseline([[0.0, 5.0], [20.0, 5.0]], None, None) == [[0, 5], [20, 5]]
+
+    def test_fractional_window_rounds(self) -> None:
+        assert clip_baseline([[0.0, 5.0], [20.0, 5.0]], 0.05, 19.95) == [
+            [0.1, 5.0],
+            [19.9, 5.0],
+        ]
+
+    def test_low_defaults_to_the_first_vertex(self) -> None:
+        baseline = [[3.0, 7.0], [9.0, 1.0], [20.0, 4.0]]
+        assert clip_baseline(baseline, None, None) == [[3, 7], [9.0, 1.0], [20, 4]]
+
+    def test_given_low_clamps_to_the_line(self) -> None:
+        baseline = [[3.0, 7.0], [9.0, 1.0], [20.0, 4.0]]
+        assert clip_baseline(baseline, 5.0, None) == [[5, 5.0], [9.0, 1.0], [20, 4]]
+
+    def test_given_high_clamps_to_the_line(self) -> None:
+        baseline = [[3.0, 7.0], [9.0, 1.0], [20.0, 4.0]]
+        assert clip_baseline(baseline, None, 15.0) == [[3, 7], [9.0, 1.0], [15, 2.6]]
+
+    def test_narrow_window_returns_nothing(self) -> None:
+        baseline = [[0.0, 5.0], [30.0, 5.0]]
+        assert clip_baseline(baseline, 5.0, 12.0) == []
+        assert clip_baseline(baseline, 5.0, 15.0) == [[5, 5.0], [15, 5.0]]
+        assert clip_baseline(baseline, 5.0, 16.0) != []
+
+    def test_inner_points_exclude_the_window_edges(self) -> None:
+        assert clip_baseline([[5.0, 9.0], [10.0, 9.0], [20.0, 9.0]], 5.0, 20.0) == [
+            [5, 9],
+            [10.0, 9.0],
+            [20, 9],
+        ]
+        assert clip_baseline([[0.0, 9.0], [20.0, 9.0], [30.0, 9.0]], 0.0, 30.0) == [
+            [0, 9],
+            [20.0, 9.0],
+            [30, 9],
+        ]
+        assert clip_baseline([[0.0, 5.0], [10.0, 50.0], [20.0, 5.0]], 0.0, 20.0) == [
+            [0, 5],
+            [10.0, 50.0],
+            [20, 5],
+        ]
+
+    def test_short_baseline_returns_nothing(self) -> None:
+        assert clip_baseline([[1.0, 2.0]], None, None) == []
+
+
+class TestBaselineDistancePins:
+    def test_shifted_slanted_lines(self) -> None:
+        first = [[5.0, 0.0], [9.0, 30.0]]
+        second = [[7.0, 10.0], [20.0, 10.0]]
+        assert baseline_distance(first, second) == pytest.approx(16.7045455)
+
+    def test_stacked_flat_lines(self) -> None:
+        first = [[5.0, 5.0], [15.0, 15.0]]
+        second = [[5.0, 15.0], [15.0, 15.0]]
+        assert baseline_distance(first, second) == pytest.approx(5.0)
+
+    def test_vertical_lines_use_mean_heights(self) -> None:
+        first = [[5.0, 0.0], [5.0, 10.0]]
+        second = [[5.0, 20.0], [5.0, 30.0]]
+        assert baseline_distance(first, second) == 20.0
+
+
+def test_clip_baseline_short_range() -> None:
+    assert clip_baseline([[0.0, 1.0], [15.0, 1.0]], None, None) == [[0, 1], [15, 1]]
+
+
+class TestPageStatsPins:
+    def test_empty_points_segment_votes_for_nothing(self) -> None:
+        blank = seg("b", [], baseline=[])
+        assert column_bands([blank], W) == []
+
+    def test_empty_page_has_zero_medians(self) -> None:
+        result = page_stats([], W, H)
+        assert result.median_width == 0.0
+        assert result.median_height == 0.0
+        assert result.line_spacing == 0.0
+        assert result.bands == []
+
+    def test_triangle_counts_as_usable(self) -> None:
+        voter = seg("v", rect(1500.0, 1900.0, 400.0, 500.0))
+        triangle = seg("t", [[300.0, 850.0], [1100.0, 850.0], [700.0, 950.0]])
+        result = page_stats([voter, triangle], W, H)
+        assert result.median_width == 600.0
+
+    def test_span_start_exactly_on_the_window_edge_counts(self) -> None:
+        (band,) = column_bands([seg("v", rect(-10.0, 300.0, 0.0, 100.0))], W)
+        assert band == (-10.0, 300.0)
+
+    def test_span_end_exactly_on_the_window_edge_counts(self) -> None:
+        (band,) = column_bands([seg("v", rect(0.0, 320.0, 0.0, 100.0))], W)
+        assert band == (0.0, 320.0)
+
+    def test_duplicate_baselines_give_zero_spacing(self) -> None:
+        first = seg("a", rect(300.0, 900.0, 400.0, 500.0), [[300.0, 400.0], [900.0, 400.0]])
+        second = seg("b", rect(300.0, 900.0, 400.0, 500.0), [[300.0, 400.0], [900.0, 400.0]])
+        assert line_spacing([first, second], [(200.0, 1200.0)]) == 0.0
+
+    def test_zero_gap_needs_a_positive_gap_beside_it(self) -> None:
+        rows = [
+            seg(f"l{i}", rect(300.0, 900.0, y, y + 100.0), [[300.0, y], [900.0, y]])
+            for i, y in enumerate((400.0, 400.0, 500.0))
+        ]
+        assert line_spacing(rows, [(200.0, 1200.0)]) == 100.0
+
+    def test_half_pixel_gap_is_a_gap(self) -> None:
+        rows = [
+            seg(f"l{i}", rect(300.0, 900.0, y, y + 100.0), [[300.0, y], [900.0, y]])
+            for i, y in enumerate((400.0, 400.5))
+        ]
+        assert line_spacing(rows, [(200.0, 1200.0)]) == 0.5
+
+
+class TestBandIndexPins:
+    def test_two_pixel_mark_outside_is_outside(self) -> None:
+        from backend.annotation.application.segment_health.page_stats import _band_index
+
+        mark = seg("m", rect(0.0, 2.0, 400.0, 500.0))
+        assert _band_index(mark, [(1500.0, 1900.0)]) is None
+
+    def test_exact_tie_prefers_the_first_band(self) -> None:
+        from backend.annotation.application.segment_health.page_stats import _band_index
+
+        segment = seg("s", rect(950.0, 1050.0, 400.0, 500.0))
+        assert _band_index(segment, [(0.0, 1000.0), (1000.0, 2000.0)]) == 0
+
+    def test_half_covered_segment_lives_in_the_band(self) -> None:
+        from backend.annotation.application.segment_health.page_stats import _band_index
+
+        segment = seg("s", rect(1450.0, 1550.0, 400.0, 500.0))
+        assert _band_index(segment, [(1500.0, 1900.0)]) == 0
+
+    def test_grazing_segment_lives_outside(self) -> None:
+        from backend.annotation.application.segment_health.page_stats import _band_index
+
+        segment = seg("s", rect(1420.0, 1520.0, 400.0, 500.0))
+        assert _band_index(segment, [(1500.0, 1900.0)]) is None
+
+    def test_barely_touching_segment_lives_outside(self) -> None:
+        from backend.annotation.application.segment_health.page_stats import _band_index
+
+        segment = seg("s", rect(1890.0, 1990.0, 400.0, 500.0))
+        assert _band_index(segment, [(1500.0, 1900.0)]) is None
+
+
+class TestSuspectKillerPins:
+    def test_triangle_outside_is_flagged(self) -> None:
+        voter = seg("v", rect(1500.0, 1900.0, 400.0, 500.0))
+        triangle = seg("t", [[0.0, 450.0], [100.0, 450.0], [50.0, 550.0]])
+        (suspect,) = find_suspects([voter, triangle], stats())
+        assert suspect.line_id == "t"
+
+    def test_subpixel_median_still_marks_a_sliver(self) -> None:
+        voters = [
+            seg(f"v{i}", rect(1500.0, 1900.0, 400.0, 400.0 + height))
+            for i, height in enumerate((0.4, 0.5, 0.6))
+        ]
+        candidate = seg("c", [[1550.0, 460.0], [1590.0, 460.0], [1630.0, 460.1], [1630.0, 460.2]])
+        page = voters + [candidate]
+        result = page_stats(page, W, H)
+        assert result.median_height == pytest.approx(0.45)
+        (suspect,) = find_suspects(page, result)
+        assert suspect.line_id == "c"
+
+    def test_exact_sliver_height_is_not_tiny(self) -> None:
+        voters = [
+            seg(f"v{i}", rect(1500.0, 1900.0, y, y + 100.0)) for i, y in enumerate((400.0, 600.0))
+        ]
+        candidate = seg("c", rect(1550.0, 1600.0, 440.0, 500.0))
+        page = voters + [candidate]
+        assert find_suspects(page, page_stats(page, W, H)) == []
+
+    def test_sliver_reasons_are_exact(self) -> None:
+        points = [
+            [300.0, 460.0],
+            [340.0, 460.0],
+            [380.0, 470.0],
+            [380.0, 490.0],
+            [340.0, 500.0],
+            [300.0, 500.0],
+        ]
+        voter = seg("v", rect(1500.0, 1900.0, 400.0, 500.0))
+        (suspect,) = find_suspects([voter, seg("c", points)], stats())
+        assert suspect.reasons == [
+            "narrower than 6% of the page",
+            "only 6 corners and shorter than 60% of a typical line",
+        ]
+
+
+class TestSpanningKillerPins:
+    def _bands(self) -> list[tuple[float, float]]:
+        return [(200.0, 1200.0), (1250.0, 1900.0)]
+
+    def test_triangle_crosser_splits(self) -> None:
+        crosser = seg(
+            "c",
+            [[300.0, 400.0], [1800.0, 400.0], [1800.0, 600.0]],
+            [[300.0, 450.0], [1800.0, 450.0]],
+        )
+        (split,) = find_spanning([crosser], stats(bands=self._bands()))
+        assert split.cuts == [1225.0]
+
+    def test_manual_triangle_crosser_is_left_alone(self) -> None:
+        crosser = seg(
+            "c",
+            [[300.0, 400.0], [1800.0, 400.0], [1800.0, 600.0]],
+            [[300.0, 450.0], [1800.0, 450.0]],
+            manual=True,
+        )
+        assert find_spanning([crosser], stats(bands=self._bands())) == []
+
+    def test_exact_half_coverage_counts(self) -> None:
+        crosser = seg("c", rect(1100.0, 1600.0, 400.0, 500.0), [[1100.0, 450.0], [1600.0, 450.0]])
+        (split,) = find_spanning([crosser], stats(bands=self._bands()))
+        assert split.cuts == [1225.0]
+
+    def test_wide_crosser_splits(self) -> None:
+        crosser = seg("c", rect(1000.0, 2900.0, 400.0, 500.0), [[1000.0, 450.0], [2900.0, 450.0]])
+        (split,) = find_spanning([crosser], stats(bands=self._bands()))
+        assert split.cuts == [1225.0]
+
+    def test_grazer_with_a_baseline_is_left_alone(self) -> None:
+        grazer = seg("g", rect(1100.0, 1260.0, 400.0, 500.0), [[1100.0, 450.0], [1260.0, 450.0]])
+        assert find_spanning([grazer], stats(bands=self._bands())) == []
+
+    def test_split_pieces_meet_at_the_cut(self) -> None:
+        crosser = seg("c", rect(300.0, 1800.0, 400.0, 500.0), [[300.0, 450.0], [1800.0, 450.0]])
+        (split,) = find_spanning([crosser], stats(bands=self._bands()))
+        (left_points, left_baseline), (right_points, right_baseline) = split.pieces
+        assert max(point[0] for point in left_points) == 1225.0
+        assert min(point[0] for point in right_points) == 1225.0
+        assert left_baseline == [[300.0, 450.0], [1225.0, 450.0]]
+        assert right_baseline == [[1225.0, 450.0], [1800.0, 450.0]]
+
+
+class TestFragmentKillerPins:
+    def test_triangle_pair_merges(self) -> None:
+        first = seg(
+            "a",
+            [(300.0, 450.0), (700.0, 450.0), (500.0, 550.0)],
+            [[300.0, 545.0], [700.0, 545.0]],
+        )
+        second = seg(
+            "b",
+            [(760.0, 500.0), (900.0, 500.0), (830.0, 560.0)],
+            [[760.0, 555.0], [900.0, 555.0]],
+        )
+        (merge,) = find_fragments([first, second], stats())
+        assert (merge.primary_id, merge.fragment_id) == ("a", "b")
+
+    def test_manual_neighbour_is_not_a_candidate(self) -> None:
+        first = seg("a", rect(300.0, 700.0, 450.0, 550.0), [[300.0, 550.0], [700.0, 550.0]])
+        second = seg("b", rect(760.0, 900.0, 450.0, 550.0), [[760.0, 550.0], [900.0, 550.0]])
+        manual = seg(
+            "m",
+            [(980.0, 500.0), (1040.0, 500.0), (1010.0, 540.0)],
+            [[980.0, 535.0], [1040.0, 535.0]],
+            manual=True,
+        )
+        (merge,) = find_fragments([first, second, manual], stats())
+        assert (merge.primary_id, merge.fragment_id) == ("a", "b")
+
+    def test_ten_pixel_offset_still_merges(self) -> None:
+        first = seg("a", rect(300.0, 700.0, 450.0, 550.0), [[300.0, 550.0], [700.0, 550.0]])
+        second = seg("b", rect(760.0, 900.0, 460.0, 560.0), [[760.0, 560.0], [900.0, 560.0]])
+        (merge,) = find_fragments([first, second], stats())
+        assert (merge.primary_id, merge.fragment_id) == ("a", "b")
+
+    def test_contained_fragment_merges(self) -> None:
+        first = seg("a", rect(300.0, 1000.0, 450.0, 550.0), [[300.0, 550.0], [1000.0, 550.0]])
+        second = seg("b", rect(400.0, 500.0, 460.0, 560.0), [[400.0, 560.0], [500.0, 560.0]])
+        (merge,) = find_fragments([first, second], stats())
+        assert (merge.primary_id, merge.fragment_id) == ("a", "b")
+
+    def test_height_asymmetry_uses_the_taller_line(self) -> None:
+        tall = seg("a", rect(300.0, 700.0, 450.0, 550.0), [[300.0, 550.0], [700.0, 550.0]])
+        short = seg("b", rect(800.0, 940.0, 530.0, 570.0), [[800.0, 570.0], [940.0, 570.0]])
+        short_baseline = seg(
+            "c", rect(800.0, 940.0, 520.0, 620.0), [[800.0, 570.0], [940.0, 570.0]]
+        )
+        assert len(find_fragments([tall, short], stats())) == 1
+        flat = seg("d", rect(300.0, 700.0, 530.0, 570.0), [[300.0, 570.0], [700.0, 570.0]])
+        assert len(find_fragments([flat, short_baseline], stats())) == 1
+
+    def test_exact_sixty_percent_still_merges(self) -> None:
+        first = seg("a", rect(300.0, 800.0, 450.0, 550.0), [[300.0, 550.0], [800.0, 550.0]])
+        second = seg("b", rect(860.0, 1160.0, 450.0, 550.0), [[860.0, 550.0], [1160.0, 550.0]])
+        (merge,) = find_fragments([first, second], stats())
+        assert (merge.primary_id, merge.fragment_id) == ("a", "b")
+
+    def test_claimed_fragment_is_not_reoffered(self) -> None:
+        first = seg("a", rect(300.0, 700.0, 450.0, 550.0), [[300.0, 550.0], [700.0, 550.0]])
+        second = seg("b", rect(760.0, 900.0, 450.0, 550.0), [[760.0, 550.0], [900.0, 550.0]])
+        third = seg("c", rect(960.0, 1040.0, 450.0, 550.0), [[960.0, 550.0], [1040.0, 550.0]])
+        merges = find_fragments([first, second, third], stats())
+        assert [(m.primary_id, m.fragment_id) for m in merges] == [("a", "b")]
+
+
+class TestOverlapKillerPins:
+    def test_slanted_baselines_set_the_cut(self) -> None:
+        upper = seg("u", rect(300.0, 1100.0, 400.0, 500.0), [[300.0, 470.0], [1100.0, 490.0]])
+        lower = seg("l", rect(300.0, 1100.0, 460.0, 560.0), [[300.0, 530.0], [1100.0, 550.0]])
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.cut == 510.0
+
+    def test_triangle_pair_is_considered(self) -> None:
+        first = seg(
+            "a",
+            [(300.0, 400.0), (1100.0, 400.0), (700.0, 600.0)],
+            [[300.0, 480.0], [1100.0, 480.0]],
+        )
+        second = seg(
+            "b",
+            [(300.0, 500.0), (1100.0, 500.0), (700.0, 700.0)],
+            [[300.0, 580.0], [1100.0, 580.0]],
+        )
+        assert len(find_overlaps([first, second], stats())) == 1
+
+    def test_degenerate_first_does_not_hide_a_trim(self) -> None:
+        degenerate = seg("d", [[300.0, 400.0], [700.0, 450.0], [1100.0, 500.0]])
+        upper = seg("u", rect(300.0, 1100.0, 750.0, 850.0), [[300.0, 830.0], [1100.0, 830.0]])
+        lower = seg("l", rect(300.0, 1100.0, 810.0, 910.0), [[300.0, 890.0], [1100.0, 890.0]])
+        (trim,) = find_overlaps([degenerate, upper, lower], stats())
+        assert (trim.upper_id, trim.lower_id) == ("u", "l")
+
+    def test_reversed_tiny_order_still_reports_a_duplicate(self) -> None:
+        big = seg("g", rect(200.0, 400.0, 390.0, 410.0), [[200.0, 405.0], [400.0, 405.0]])
+        tiny = seg("t", [(300.0, 400.0), (301.0, 400.0), (300.0, 401.0)])
+        (trim,) = find_overlaps([big, tiny], stats())
+        assert trim.duplicate is True
+
+    def test_touching_masks_share_nothing(self) -> None:
+        upper = seg("u", rect(300.0, 900.0, 400.0, 500.0), [[300.0, 480.0], [900.0, 480.0]])
+        lower = seg("l", rect(300.0, 900.0, 500.0, 600.0), [[300.0, 520.0], [900.0, 520.0]])
+        assert find_overlaps([upper, lower], stats()) == []
+
+    def test_contained_pair_is_a_duplicate(self) -> None:
+        upper = seg("u", rect(300.0, 900.0, 400.0, 500.0), [[300.0, 450.0], [900.0, 450.0]])
+        lower = seg("l", rect(350.0, 950.0, 450.0, 460.0), [[350.0, 455.0], [950.0, 455.0]])
+        (trim,) = find_overlaps([upper, lower], stats())
+        assert trim.duplicate is True

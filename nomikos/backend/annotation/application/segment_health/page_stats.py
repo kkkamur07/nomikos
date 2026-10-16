@@ -12,6 +12,7 @@ import statistics
 from backend.annotation.application.segment_health.geometry import (
     PageStats,
     Segment,
+    _baseline_mean_y,
     bbox,
     height_of,
     width_of,
@@ -121,10 +122,6 @@ def _band_extent(
     if not inside:
         return (low, high)
     return (min(span[0] for span in inside), max(span[1] for span in inside))
-
-
-def _baseline_mean_y(baseline: list[list[float]]) -> float:
-    return statistics.mean(point[1] for point in baseline)
 
 
 def line_spacing(segments: list[Segment], bands: list[tuple[float, float]]) -> float:
