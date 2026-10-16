@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import NotRequired, TypedDict
+from typing import NotRequired
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
+from typing_extensions import TypedDict
 
 from infrastructure.db import Base
 
