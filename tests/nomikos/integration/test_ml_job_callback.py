@@ -29,6 +29,8 @@ from backend.project.infrastructure.orm_models import Project
 from infrastructure.db import sync_system_session
 from nomikos_inference.contracts.webhooks import INFERENCE_WEBHOOK_SECRET_HEADER
 
+pytestmark = pytest.mark.integration
+
 CALLBACK_URL = "/internal/inference/job-complete"
 WEBHOOK_HEADERS = {INFERENCE_WEBHOOK_SECRET_HEADER: "test-inference-webhook-secret"}
 

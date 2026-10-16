@@ -1,7 +1,10 @@
 """Hosted inference registry endpoint for helper sync."""
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.integration
 
 
 def test_inference_registry_returns_yaml(client: TestClient):

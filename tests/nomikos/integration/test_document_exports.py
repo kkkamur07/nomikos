@@ -12,11 +12,14 @@ from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader
 
 from tests.nomikos.integration.helpers import documents_url
+
+pytestmark = pytest.mark.integration
 
 PAGE_NS = {"page": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"}
 

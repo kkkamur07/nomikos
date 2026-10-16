@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.nomikos.integration.helpers import (  # noqa: F401
@@ -18,6 +19,8 @@ from tests.nomikos.integration.helpers import (  # noqa: F401
     make_part,
     return_pooled_connections_before_leaving,
 )
+
+pytestmark = pytest.mark.integration
 
 TWO_LINES = [
     {
