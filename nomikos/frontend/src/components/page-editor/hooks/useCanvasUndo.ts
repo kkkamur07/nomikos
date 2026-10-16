@@ -28,7 +28,7 @@ function removedSegmentId(
     : null;
 }
 
-export type CanvasUndoInput = {
+type CanvasUndoInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;

@@ -8,7 +8,7 @@ import type { LinePoint, LineResponse } from "../../api/client";
 import { normalizeGeometryPoints, points } from "./canvasGeometry";
 
 /** Enter or Space on a focused shape does what a click does. */
-export function activateWithKeyboard(
+function activateWithKeyboard(
   event: KeyboardEvent<SVGElement>,
   activate: () => void,
 ) {

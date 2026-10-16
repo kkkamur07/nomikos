@@ -17,9 +17,9 @@ import {
 } from "./editorHookTypes";
 import { lineTextForLayer } from "./utils";
 
-export type OcrScope = "segment" | "page";
+type OcrScope = "segment" | "page";
 
-export type OcrRunInput = {
+type OcrRunInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;
@@ -74,7 +74,7 @@ function linesWithText(result: TranscribeJobResult): number {
 }
 
 /** The sentence a finished run reports; a null result is an unread layer. */
-export function ocrCompletionMessage(
+function ocrCompletionMessage(
   scope: OcrScope,
   result: TranscribeJobResult | null,
 ): string {

@@ -16,7 +16,7 @@ import {
   type TrackJobAndWait,
 } from "./editorHookTypes";
 
-export type AutoSegmentInput = {
+type AutoSegmentInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;
@@ -43,7 +43,7 @@ export type AutoSegmentInput = {
  * which is the entire user interface for **execution target** (ADR 0002), and
  * the picker can choose a segmenter other than Kraken.
  */
-export function segmentationMessage(segmentCount: number): string {
+function segmentationMessage(segmentCount: number): string {
   return `Line segmentation completed (${segmentCount} Segment(s)).`;
 }
 

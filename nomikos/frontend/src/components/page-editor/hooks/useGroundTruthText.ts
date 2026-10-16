@@ -18,7 +18,7 @@ import {
   withLocalGroundTruth,
 } from "./utils";
 
-export type GroundTruthTextInput = {
+type GroundTruthTextInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;

@@ -25,7 +25,7 @@ export type StripAccept =
   | { action: "promote"; label: "Accept" }
   | { action: "save-approved"; label: "Save" };
 
-export type StripView = {
+type StripView = {
   modelOutputTranscription: LineTranscriptionResponse | null;
   /** The accessible name of the text box, which says what a save writes. */
   editLabel: string;

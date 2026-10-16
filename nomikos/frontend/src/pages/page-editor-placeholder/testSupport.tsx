@@ -92,7 +92,7 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-export type MockedEditorApi = {
+type MockedEditorApi = {
   getDocument: ReturnType<typeof vi.fn>;
   getPartLayout: ReturnType<typeof vi.fn>;
   listPartLines: ReturnType<typeof vi.fn>;

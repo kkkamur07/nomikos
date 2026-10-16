@@ -15,7 +15,7 @@ type LineGeometry = {
   mask?: LayoutLineResponse["mask"];
 };
 
-export type BaselineEditInput = {
+type BaselineEditInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;

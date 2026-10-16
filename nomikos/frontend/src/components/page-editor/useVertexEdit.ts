@@ -17,7 +17,7 @@ type CommitOptions = {
   clearInteracting?: boolean;
 };
 
-export type VertexEditInput = {
+type VertexEditInput = {
   lines: LineResponse[];
   selectedSegmentId: string | null;
   segmentVertexEditEnabled: boolean;
