@@ -14,7 +14,6 @@ things, and the boundary ADR 0002 drew is the second one.
 """
 
 from nomikos_inference.publish.client import (
-    MockPublishClient,
     PublishClient,
     get_default_publish_client,
     set_default_publish_client,
@@ -58,7 +57,6 @@ __all__ = [
     "CollectionSyncPlan",
     "DatasetPublishPlan",
     "DatasetStagingRef",
-    "MockPublishClient",
     "ModelPublishPlan",
     "ModelStagingRef",
     "PublishClient",
