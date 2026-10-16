@@ -252,7 +252,7 @@ class LayoutService:
         line_id: UUID,
         **updates: object,
     ) -> Line:
-        # Any geometry edit through PATCH marks the line as manually overridden.
+        # Every geometry edit through PATCH marks the line as manually overridden.
         # Bulk PUT /lines and POST /layout/reset are the paths that preserve kraken source.
         reject_unknown_fields(updates, LINE_PATCH_FIELDS, "line patch")
         context = await self._access.require_part(session, user, project_id, document_id, part_id)

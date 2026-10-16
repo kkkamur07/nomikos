@@ -4,7 +4,7 @@ The thumbnail route was the only public route that metered anything, and it is t
 cheapest one on the surface: a decode plus a resize, served from a render cache. The
 expensive ones - a reportlab render of a whole page, a PAGE XML export, a layout read
 that joins lines to their transcriptions - answered anonymous callers as fast as they
-could be asked. Any of them is a better lever on the process than the one route that
+could be asked. Each of them is a better lever on the process than the one route that
 was guarded.
 
 Where the address does not identify one client, nothing is charged. That is the same
