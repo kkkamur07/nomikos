@@ -1,6 +1,5 @@
-"""Device pairing state machine and device lifecycle use cases.
+"""Device pairing state machine (RFC 8628 without the typable user code).
 
-RFC 8628's device authorization grant with the typable ``user_code`` deleted.
 The helper starts a pairing, opens the researcher's default browser at
 ``<app>/pair#<verification_token>``, and polls for the token the browser
 authorises. Nothing is ever typed.
@@ -49,23 +48,23 @@ or device token is ever passed to the logger, and
 from __future__ import annotations
 
 import logging
-import unicodedata
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.exceptions import AccessDeniedError, ConflictError, NotFoundError
+from backend.core.exceptions import ConflictError, NotFoundError
 from backend.core.settings.device import DeviceSettings, get_device_settings
+from backend.ml.application.device_management import _mint_token
+from backend.ml.application.device_status import _clean_text, _device_status, _now
 from backend.ml.application.opaque_tokens import (
     confirmation_code,
-    device_token_prefix,
-    format_device_token,
     hash_secret,
     new_secret,
     secret_matches,
 )
+from backend.ml.application.pairing_types import PairingPollResult, StartedPairing
 from backend.ml.domain.devices import DeviceStatus, PairingStatus
 from backend.ml.infrastructure.device_orm_models import (
     MAX_DEVICE_NAME_LENGTH,
@@ -80,73 +79,6 @@ from backend.ml.infrastructure.device_repository import HelperDeviceRepository
 from backend.users.infrastructure.orm_models import User
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class StartedPairing:
-    """Returned once, to the helper that created the pairing."""
-
-    pairing_id: UUID
-    device_code: str
-    verification_url: str
-    confirmation_code: str
-    expires_in: int
-    interval_seconds: int
-
-
-@dataclass(frozen=True)
-class PairingPollResult:
-    """Poll outcome. ``device_token`` is populated exactly once, ever."""
-
-    status: PairingStatus
-    interval_seconds: int
-    device_id: UUID | None = None
-    device_token: str | None = None
-    token_expires_at: datetime | None = None
-    account_email: str | None = None
-
-
-@dataclass(frozen=True)
-class IssuedDeviceToken:
-    device: HelperDevice
-    device_token: str
-    token_expires_at: datetime
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _clean_text(value: str, *, limit: int, fallback: str = "unknown") -> str:
-    """Normalise a helper-supplied string before it is stored.
-
-    These strings are attacker-controlled: anyone can POST a pairing request.
-    They are rendered on the consent screen, so control characters and
-    over-long values are stripped here, and the UI renders them as inert text
-    under fixed labels.
-    """
-    normalized = unicodedata.normalize("NFC", value or "")
-    stripped = "".join(
-        char for char in normalized if char.isprintable() and unicodedata.category(char) != "Cf"
-    ).strip()
-    return stripped[:limit] or fallback
-
-
-def _device_status(
-    device: HelperDevice, *, settings: DeviceSettings, now: datetime
-) -> DeviceStatus:
-    if device.revoked_at is not None:
-        return DeviceStatus.revoked
-    if not device.token_hash:
-        return DeviceStatus.pairing
-    if device.last_seen_at is None:
-        return DeviceStatus.offline
-    age = (now - device.last_seen_at).total_seconds()
-    if age <= settings.device_online_window_seconds:
-        return DeviceStatus.online
-    if age <= settings.device_idle_window_seconds:
-        return DeviceStatus.idle
-    return DeviceStatus.offline
 
 
 class DevicePairingService:
@@ -176,7 +108,7 @@ class DevicePairingService:
         device_name: str,
         platform: str,
         helper_version: str,
-        capabilities: dict,
+        capabilities: dict[str, str],
         request_ip: str,
         user_agent: str | None = None,
         now: datetime | None = None,
@@ -293,13 +225,13 @@ class DevicePairingService:
         """
         now = now or _now()
         settings = self._settings
-        default_interval = settings.device_pairing_poll_interval_seconds
         pairing = await self._repo.get_pairing_for_update(session, pairing_id)
         if pairing is None:
             # Indistinguishable from a genuinely expired row: an unknown
             # pairing id must not confirm or deny that it ever existed.
             return PairingPollResult(
-                status=PairingStatus.expired, interval_seconds=default_interval
+                status=PairingStatus.expired,
+                interval_seconds=settings.device_pairing_poll_interval_seconds,
             )
 
         if self._polled_too_soon(pairing, now):
@@ -315,32 +247,45 @@ class DevicePairingService:
             )
         pairing.last_polled_at = now
 
-        if not secret_matches(pairing.device_code_hash, device_code, settings.hmac_key()):
-            # Saturating, not wrapping: attempts is a SmallInteger and a burned
-            # row still accepts requests, so an unbounded counter would overflow.
-            if pairing.attempts < settings.device_pairing_max_attempts:
-                pairing.attempts += 1
-            if (
-                pairing.attempts >= settings.device_pairing_max_attempts
-                and pairing.denied_at is None
-            ):
-                pairing.denied_at = now
-                logger.warning(
-                    "device_pairing_burned pairing_id=%s attempts=%s",
-                    pairing.id,
-                    pairing.attempts,
-                )
-            else:
-                logger.warning(
-                    "device_pairing_bad_device_code pairing_id=%s attempts=%s",
-                    pairing.id,
-                    pairing.attempts,
-                )
-            await session.commit()
-            return PairingPollResult(
-                status=PairingStatus.access_denied, interval_seconds=pairing.poll_interval_seconds
-            )
+        rejected = await self._reject_bad_code(session, pairing, device_code, now=now)
+        if rejected is not None:
+            return rejected
+        return await self._collect_approved(session, pairing, now=now)
 
+    async def _reject_bad_code(
+        self, session: AsyncSession, pairing: HelperPairing, device_code: str, *, now: datetime
+    ) -> PairingPollResult | None:
+        """Burn or warn on a wrong code. ``None`` means the code matched."""
+        settings = self._settings
+        if secret_matches(pairing.device_code_hash, device_code, settings.hmac_key()):
+            return None
+        # Saturating, not wrapping: attempts is a SmallInteger and a burned
+        # row still accepts requests, so an unbounded counter would overflow.
+        if pairing.attempts < settings.device_pairing_max_attempts:
+            pairing.attempts += 1
+        if pairing.attempts >= settings.device_pairing_max_attempts and pairing.denied_at is None:
+            pairing.denied_at = now
+            logger.warning(
+                "device_pairing_burned pairing_id=%s attempts=%s",
+                pairing.id,
+                pairing.attempts,
+            )
+        else:
+            logger.warning(
+                "device_pairing_bad_device_code pairing_id=%s attempts=%s",
+                pairing.id,
+                pairing.attempts,
+            )
+        await session.commit()
+        return PairingPollResult(
+            status=PairingStatus.access_denied, interval_seconds=pairing.poll_interval_seconds
+        )
+
+    async def _collect_approved(
+        self, session: AsyncSession, pairing: HelperPairing, *, now: datetime
+    ) -> PairingPollResult:
+        """Resolve a code-verified poll: terminal states, pending wait, or mint."""
+        settings = self._settings
         # Only a caller holding the device code learns the real state.
         if pairing.denied_at is not None or pairing.consumed_at is not None:
             await session.commit()
@@ -374,7 +319,7 @@ class DevicePairingService:
                 status=PairingStatus.access_denied, interval_seconds=pairing.poll_interval_seconds
             )
 
-        issued = self._mint_token(device, now=now)
+        issued = _mint_token(device, settings, now=now)
         pairing.consumed_at = now
         pairing.delivery_count += 1
         await session.commit()
@@ -404,21 +349,6 @@ class DevicePairingService:
             return False
         elapsed = (now - pairing.last_polled_at).total_seconds()
         return elapsed < max(pairing.poll_interval_seconds - 1, 0)
-
-    def _mint_token(self, device: HelperDevice, *, now: datetime) -> IssuedDeviceToken:
-        secret = new_secret()
-        expires_at = now + timedelta(days=self._settings.device_token_ttl_days)
-        device.token_hash = hash_secret(secret, self._settings.hmac_key())
-        device.token_prefix = device_token_prefix(device.id)
-        device.token_issued_at = now
-        device.token_expires_at = expires_at
-        device.previous_token_hash = None
-        device.previous_token_expires_at = None
-        return IssuedDeviceToken(
-            device=device,
-            device_token=format_device_token(device.id, secret),
-            token_expires_at=expires_at,
-        )
 
     # ------------------------------------------------------------------
     # Browser consent (Bearer JWT)
@@ -482,6 +412,12 @@ class DevicePairingService:
                 raise ConflictError("This pairing request is no longer valid")
             return existing
 
+        # The per-user device cap is counted under the user's advisory lock so
+        # two pairings approved in parallel cannot both pass it.
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"device-cap:{user.id}"},
+        )
         live = await self._repo.count_live_devices(session, user.id)
         if live >= settings.device_max_per_user:
             raise ConflictError(
@@ -542,105 +478,3 @@ class DevicePairingService:
             pairing.denied_at = now
             logger.info("device_pairing_denied pairing_id=%s user_id=%s", pairing.id, user.id)
         await session.commit()
-
-    # ------------------------------------------------------------------
-    # Device management (Bearer JWT)
-    # ------------------------------------------------------------------
-
-    async def list_devices(
-        self, session: AsyncSession, *, user: User, include_revoked: bool = False
-    ) -> list[HelperDevice]:
-        return await self._repo.list_devices(session, user.id, include_revoked=include_revoked)
-
-    async def revoke_device(
-        self,
-        session: AsyncSession,
-        *,
-        user: User,
-        device_id: UUID,
-        now: datetime | None = None,
-    ) -> HelperDevice:
-        """Kill a credential. Effective on the device's next request.
-
-        There is no cache and no JWT to wait out: every device request re-reads
-        this row, so revocation lands within one poll cycle.
-        """
-        now = now or _now()
-        device = await self._repo.get_device_for_update(session, device_id)
-        if device is None:
-            raise NotFoundError("Device not found")
-        if device.user_id != user.id:
-            raise AccessDeniedError("Device belongs to another account")
-        if device.revoked_at is None:
-            device.revoked_at = now
-            device.token_hash = ""
-            device.previous_token_hash = None
-            device.previous_token_expires_at = None
-            logger.info(
-                "device_revoked device_id=%s user_id=%s token_prefix=%s",
-                device.id,
-                device.user_id,
-                device.token_prefix,
-            )
-        await session.commit()
-        return device
-
-    # ------------------------------------------------------------------
-    # Device self-service (X-Nomikos-Device-Token)
-    # ------------------------------------------------------------------
-
-    async def touch_device(
-        self,
-        session: AsyncSession,
-        *,
-        device: HelperDevice,
-        request_ip: str | None = None,
-        helper_version: str | None = None,
-        capabilities: dict | None = None,
-        now: datetime | None = None,
-    ) -> HelperDevice:
-        """Record liveness. ``last_seen_at`` is the enqueue-time routing gate."""
-        now = now or _now()
-        device.last_seen_at = now
-        if request_ip:
-            device.last_seen_ip = request_ip[:MAX_IP_LENGTH]
-        if helper_version:
-            device.helper_version = _clean_text(helper_version, limit=MAX_HELPER_VERSION_LENGTH)
-        if capabilities is not None:
-            device.capabilities = capabilities
-        await session.commit()
-        return device
-
-    async def renew_token(
-        self,
-        session: AsyncSession,
-        *,
-        device: HelperDevice,
-        now: datetime | None = None,
-    ) -> IssuedDeviceToken:
-        """Issue a replacement token, keeping the old one valid for an overlap.
-
-        Not per-request rotation: a browser that loses a rotation response logs
-        in again, but a UI-less helper would be bricked with no terminal to
-        recover from. The overlap makes a lost renewal response harmless.
-        """
-        now = now or _now()
-        locked = await self._repo.get_device_for_update(session, device.id)
-        if locked is None or locked.revoked_at is not None:
-            raise NotFoundError("Device not found")
-        previous_hash = locked.token_hash
-        issued = self._mint_token(locked, now=now)
-        if previous_hash:
-            locked.previous_token_hash = previous_hash
-            locked.previous_token_expires_at = now + timedelta(
-                hours=self._settings.device_token_renew_overlap_hours
-            )
-        await session.commit()
-        logger.info(
-            "device_token_renewed device_id=%s user_id=%s token_prefix=%s expires_at=%s",
-            locked.id,
-            locked.user_id,
-            locked.token_prefix,
-            issued.token_expires_at.isoformat(),
-        )
-        return issued

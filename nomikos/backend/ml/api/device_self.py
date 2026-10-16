@@ -16,13 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.ml.api.device_dependencies import require_device_pairing_enabled
 from backend.ml.api.device_schemas import DeviceSelfResponse, DeviceTokenRenewResponse
 from backend.ml.application.device_auth import AuthenticatedDevice
-from backend.ml.application.device_service import DevicePairingService
+from backend.ml.application.device_management import DeviceManagementService
 from backend.users.api.dependencies import get_current_device
 from backend.users.api.rate_limit import client_ip_for_request
 from infrastructure.db import get_db
 
 router = APIRouter(tags=["devices"], dependencies=[Depends(require_device_pairing_enabled)])
-_service = DevicePairingService()
+_service = DeviceManagementService()
 
 
 @router.get("/device/v1/self", response_model=DeviceSelfResponse)

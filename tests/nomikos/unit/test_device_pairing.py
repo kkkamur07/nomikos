@@ -26,7 +26,8 @@ from backend.core.settings.device import DeviceSettings
 from backend.ml.api.device_responses import device_response_from_orm, pairing_response_from_orm
 from backend.ml.application import opaque_tokens
 from backend.ml.application.device_auth import authenticate_device
-from backend.ml.application.device_service import DevicePairingService
+from backend.ml.application.device_management import DeviceManagementService
+from backend.ml.application.pairing_service import DevicePairingService
 from backend.ml.domain.devices import DeviceStatus, PairingStatus
 from backend.ml.infrastructure.device_orm_models import HelperDevice, HelperPairing
 from backend.users.infrastructure.orm_models import User
@@ -45,12 +46,17 @@ class _FakeSession:
     def __init__(self) -> None:
         self.commits = 0
         self.flushes = 0
+        self.executed: list[object] = []
 
     async def commit(self) -> None:
         self.commits += 1
 
     async def flush(self) -> None:
         self.flushes += 1
+
+    async def execute(self, statement: object, params: object = None) -> None:
+        self.executed.append(params)
+        return None
 
 
 class _FakeDeviceRepository:
@@ -174,6 +180,10 @@ def session() -> _FakeSession:
 @pytest.fixture
 def service(repo: _FakeDeviceRepository) -> DevicePairingService:
     return DevicePairingService(repository=repo, settings=_settings())
+
+@pytest.fixture
+def management(repo: _FakeDeviceRepository, service: DevicePairingService) -> DeviceManagementService:
+    return DeviceManagementService(repository=repo, settings=service.settings)
 
 
 @pytest.fixture
@@ -314,22 +324,24 @@ async def test_device_token_resolves_only_to_its_own_user(
 
 
 async def test_revoking_another_users_device_is_denied(
-    service, session, repo, owner, outsider
+    service, session, repo, owner, outsider, management
 ) -> None:
     """403, and the outsider's own listing never shows the device."""
     now = datetime.now(UTC)
     pairing, _ = await _pair(service, session, owner, now=now)
 
     with pytest.raises(AccessDeniedError):
-        await service.revoke_device(session, user=outsider, device_id=pairing.device_id)
+        await management.revoke_device(session, user=outsider, device_id=pairing.device_id)
 
-    assert await service.list_devices(session, user=outsider) == []
-    assert [device.id for device in await service.list_devices(session, user=owner)] == [
+    assert await management.list_devices(session, user=outsider) == []
+    assert [device.id for device in await management.list_devices(session, user=owner)] == [
         pairing.device_id
     ]
 
 
-async def test_revoked_token_fails_on_the_next_request(service, session, repo, owner) -> None:
+async def test_revoked_token_fails_on_the_next_request(
+    service, session, repo, owner, management
+) -> None:
     """No cache, no TTL: revocation lands on the very next device call."""
     now = datetime.now(UTC)
     pairing, device_code = await _pair(service, session, owner, now=now)
@@ -340,7 +352,7 @@ async def test_revoked_token_fails_on_the_next_request(service, session, repo, o
     ).device_token
 
     await authenticate_device(session, token, repository=repo, settings=service.settings, now=now)
-    await service.revoke_device(session, user=owner, device_id=pairing.device_id, now=now)
+    await management.revoke_device(session, user=owner, device_id=pairing.device_id, now=now)
 
     with pytest.raises(InvalidCredentialsError):
         await authenticate_device(
@@ -729,7 +741,7 @@ async def test_device_limit_per_user_is_enforced(service, session, owner) -> Non
 
 
 async def test_renewal_keeps_the_previous_token_valid_during_the_overlap(
-    service, session, repo, owner
+    service, session, repo, owner, management
 ) -> None:
     """A UI-less helper that loses a renewal response must not be bricked."""
     now = datetime.now(UTC)
@@ -741,7 +753,7 @@ async def test_renewal_keeps_the_previous_token_valid_during_the_overlap(
     ).device_token
     device = repo.devices[pairing.device_id]
 
-    renewed = await service.renew_token(session, device=device, now=now)
+    renewed = await management.renew_token(session, device=device, now=now)
     assert renewed.device_token != original
 
     for token in (original, renewed.device_token):
@@ -874,14 +886,14 @@ def test_device_migration_grants_the_runtime_role_access() -> None:
         assert table in migration.split("_grant_runtime_privileges")[1]
 
 
-async def test_touch_device_records_liveness(service, session, repo, owner) -> None:
+async def test_touch_device_records_liveness(service, session, repo, owner, management) -> None:
     now = datetime.now(UTC)
     pairing, device_code = await _pair(service, session, owner, now=now)
     await service.collect_token(session, pairing_id=pairing.id, device_code=device_code, now=now)
     device = repo.devices[pairing.device_id]
     assert service.device_status(device, now=now) is DeviceStatus.offline
 
-    await service.touch_device(session, device=device, request_ip="198.51.100.7", now=now)
+    await management.touch_device(session, device=device, request_ip="198.51.100.7", now=now)
     assert service.device_status(device, now=now) is DeviceStatus.online
     assert device.last_seen_ip == "198.51.100.7"
 
@@ -941,7 +953,7 @@ def test_the_ip_scoped_pairing_recovery_route_is_gone() -> None:
     """
     assert ("GET", "/devices/pairings") not in _app_routes()
 
-    from backend.ml.application.device_service import DevicePairingService as _Service
+    from backend.ml.application.pairing_service import DevicePairingService as _Service
 
     assert not hasattr(_Service, "list_pairings_from_ip")
     from backend.ml.infrastructure.device_repository import HelperDeviceRepository
@@ -1163,7 +1175,9 @@ def test_production_only_warns_while_pairing_is_switched_off(monkeypatch, caplog
 # ---------------------------------------------------------------------------
 
 
-async def test_every_pairing_transition_is_logged(service, session, repo, owner, caplog) -> None:
+async def test_every_pairing_transition_is_logged(
+    service, session, repo, owner, caplog, management
+) -> None:
     """Ten modules shipped without one import of logging; this is the regression."""
     caplog.set_level(logging.INFO)
     now = datetime.now(UTC)
@@ -1188,7 +1202,7 @@ async def test_every_pairing_transition_is_logged(service, session, repo, owner,
     issued = await service.collect_token(
         session, pairing_id=started.pairing_id, device_code=started.device_code, now=now
     )
-    await service.revoke_device(session, user=owner, device_id=issued.device_id, now=now)
+    await management.revoke_device(session, user=owner, device_id=issued.device_id, now=now)
     with pytest.raises(InvalidCredentialsError):
         await authenticate_device(
             session, issued.device_token, repository=repo, settings=service.settings, now=now
@@ -1230,3 +1244,47 @@ async def test_a_burned_pairing_is_logged(service, session, repo, owner, caplog)
 
     assert "device_pairing_burned" in caplog.text
     assert "device_pairing_bad_device_code" in caplog.text
+
+
+async def test_second_renew_keeps_a_live_predecessor(
+    service, session, repo, owner, management
+) -> None:
+    """A lost renewal response must not brick the helper on the second retry."""
+    now = datetime.now(UTC)
+    pairing, device_code = await _pair(service, session, owner, now=now)
+    await service.collect_token(session, pairing_id=pairing.id, device_code=device_code, now=now)
+    device = repo.devices[pairing.device_id]
+
+    await management.renew_token(session, device=device, now=now)
+    first_predecessor = device.previous_token_hash
+    assert first_predecessor
+
+    # The predecessor is still inside its overlap window: rotating again keeps
+    # it instead of replacing it with the token just rotated out.
+    await management.renew_token(session, device=device, now=now)
+    assert device.previous_token_hash == first_predecessor
+
+
+async def test_approve_counts_the_device_cap_under_the_user_lock(
+    service, session, repo, owner
+) -> None:
+    """Two parallel approves must not both pass the per-user device cap."""
+    now = datetime.now(UTC)
+    started = await service.start_pairing(
+        session,
+        device_name="laptop",
+        platform="linux",
+        helper_version="1",
+        capabilities={},
+        request_ip="203.0.113.10",
+        now=now,
+    )
+    await service.approve_pairing(
+        session,
+        user=owner,
+        pairing_id=started.pairing_id,
+        verification_token=started.verification_url.split("#", 1)[1],
+        now=now,
+    )
+
+    assert session.executed == [{"key": f"device-cap:{owner.id}"}]
