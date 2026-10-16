@@ -17,7 +17,7 @@ function partEditorHref(
  * parts only exist once the document has loaded, and the document is loaded
  * for whichever page the hook says is active. The dependency runs one way.
  */
-export function pageNeighbours(
+function pageNeighbours(
   parts: DocumentPartResponse[],
   activePartId: string | undefined,
 ): { previousPartId: string | null; nextPartId: string | null } {
@@ -26,6 +26,33 @@ export function pageNeighbours(
   return {
     previousPartId: index > 0 ? parts[index - 1].id : null,
     nextPartId: index < parts.length - 1 ? parts[index + 1].id : null,
+  };
+}
+
+/**
+ * Page Up / Page Down: a turn to either side, and whether there is a page
+ * there. At either end of the document the turn is undefined, so the key
+ * stays the browser's.
+ */
+export function usePageTurns(
+  parts: DocumentPartResponse[],
+  activePartId: string | undefined,
+  goToPart: (partId: string) => void,
+) {
+  const { previousPartId, nextPartId } = pageNeighbours(parts, activePartId);
+  const goToPreviousPage = useCallback(() => {
+    if (previousPartId) goToPart(previousPartId);
+  }, [previousPartId, goToPart]);
+  const goToNextPage = useCallback(() => {
+    if (nextPartId) goToPart(nextPartId);
+  }, [nextPartId, goToPart]);
+  return {
+    hasPreviousPage: previousPartId !== null,
+    hasNextPage: nextPartId !== null,
+    goToPreviousPage,
+    goToNextPage,
+    turnBack: previousPartId ? goToPreviousPage : undefined,
+    turnForward: nextPartId ? goToNextPage : undefined,
   };
 }
 
