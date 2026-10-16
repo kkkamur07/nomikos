@@ -39,6 +39,7 @@ class AnnotationHistoryService:
         part_id: UUID,
     ) -> AnnotationHistorySnapshot:
         await self._require_part(session, user, project_id, document_id, part_id)
+        await self._documents.lock_part(session, part_id)
         lines = await self._documents.list_part_lines(session, part_id)
         state = {"lines": [self._line_state(line) for line in lines]}
         snapshot = AnnotationHistorySnapshot(
@@ -101,10 +102,10 @@ class AnnotationHistoryService:
                 "id": UUID(line["id"]),
                 "order": line["order"],
                 "kind": LineGeometryKind(line["kind"]),
-                "points": line["points"],
-                "block_id": UUID(line["block_id"]) if line.get("block_id") is not None else None,
                 "source": LineSource(line["source"]),
                 "source_metadata": line["source_metadata"],
+                "baseline": line.get("baseline"),
+                "mask": line.get("mask"),
                 "kraken_ceiling": line["kraken_ceiling"],
                 "approved_text": line["approved_text"],
             }
@@ -173,8 +174,9 @@ class AnnotationHistoryService:
             "order": line.order,
             "kind": line.kind.value,
             "points": line.points,
+            "baseline": line.baseline,
+            "mask": line.mask,
             "source": line.source.value,
-            "source_metadata": line.source_metadata,
             "kraken_ceiling": line.kraken_ceiling,
             "approved_text": ground_truth.text if ground_truth is not None else None,
         }
