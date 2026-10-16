@@ -19,21 +19,21 @@ release report, not in the exit code: this script always exits 0.
 
 Example::
 
-    PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /Users/krishuagarwal/Desktop/Programming/python/greekOCR/.venv/bin/python \\
+    PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 $REPO/.venv/bin/python \\
         scripts/segmentation/ppocr/evaluate_refinement.py \\
-        --fixtures /Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_ppocr-parity/fixtures \\
-        --images /Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_orli-env/server/images \\
-        --gt /Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/human-guide/v4/recon \\
-        --onnx /Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_ppocr-parity/pp-ocrv6-medium-det.onnx \\
-        --output-dir /Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_ppocr-parity/refinement
+        --fixtures $WORK/_ppocr-parity/fixtures \\
+        --images $WORK/_orli-env/server/images \\
+        --gt $WORK/_gt-recon/human-guide/v4/recon \\
+        --onnx $WORK/_ppocr-parity/pp-ocrv6-medium-det.onnx \\
+        --output-dir $WORK/_ppocr-parity/refinement
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -41,20 +41,20 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 from shapely.geometry import LineString, Point, Polygon
 
-PAGES = (
-    "vat-1r",
-    "vat-1v",
-    "vat-2r",
-    "vat-2v",
-    "vat-3r",
-    "vat-7v",
-    "c10",
-    "c11",
-    "c12",
-    "c13",
-    "c14",
-    "c21",
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.segmentation.ppocr._fixtures import (
+    COPTIC_PAGES as PAGES,
 )
+from scripts.segmentation.ppocr._fixtures import (
+    decode_overlay_canvas,
+    load_image_bytes,
+    load_targets,
+    put_order_label,
+)
+
 OVERLAY_PAGES = ("vat-1r", "c13")
 N_SAMPLES = 31
 PAIR_THRESHOLD = 0.20
@@ -94,41 +94,12 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _sweep_ratios(raw: list[str], flag: str) -> list[float]:
-    ratios = []
+    ratios: list[float] = []
     for chunk in raw:
         ratios.extend(float(part) for part in chunk.split(",") if part.strip())
     if not ratios:
         raise ValueError(f"{flag} needs at least one number")
     return ratios
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _load_image(page: str, fixtures: Path, images: Path) -> bytes:
-    fixture = json.loads((fixtures / f"{page}.json").read_text(encoding="utf-8"))
-    data = (images / fixture["image"]).read_bytes()
-    if _sha256(data) != fixture["image_sha256"]:
-        raise ValueError(f"image SHA-256 does not match fixture {page}.json")
-    return data
-
-
-def _load_targets(gt_dir: Path, page: str) -> list[dict]:
-    """Care and ignore target polygons, as in the benchmark's capture_inputs."""
-    doc = json.loads((gt_dir / f"{page}-latest.json").read_text(encoding="utf-8"))
-    paired = {
-        text["paired_line_id"]
-        for text in doc["pairing"]["text_lines"]
-        if text.get("paired_line_id")
-    }
-    targets = []
-    for line in doc["lines"]:
-        polygon = Polygon(line["points"])
-        if not polygon.is_valid:
-            polygon = polygon.buffer(0)
-        targets.append({"id": line["id"], "polygon": polygon, "care": line["id"] in paired})
-    return targets
 
 
 def _axis(polygon: Polygon) -> list[list[float]]:
@@ -146,10 +117,10 @@ def _axis(polygon: Polygon) -> list[list[float]]:
     return points
 
 
-def _score_page(targets: list[dict], polygons: list[Polygon]) -> dict:
-    """One-to-one line matching, per the benchmark's `score` and `finish`."""
-    care = [i for i, target in enumerate(targets) if target["care"]]
-    ignore = [i for i, target in enumerate(targets) if not target["care"]]
+def _eligibility(
+    targets: list[dict], polygons: list[Polygon]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per (prediction, target) eligibility and affinity, per the benchmark's `score`."""
     eligible = np.zeros((len(polygons), len(targets)), dtype=bool)
     affinity = np.zeros(eligible.shape, dtype=float)
     for pi, polygon in enumerate(polygons):
@@ -166,6 +137,13 @@ def _score_page(targets: list[dict], polygons: list[Polygon]) -> dict:
             inside = sum(gt.covers(Point(point)) for point in samples) / N_SAMPLES
             eligible[pi, gi] = inside >= 0.5
             affinity[pi, gi] = (inside + min(overlap, 1.0)) / 2
+    return eligible, affinity
+
+
+def _assign_pairs(
+    eligible: np.ndarray, affinity: np.ndarray, care: list[int]
+) -> tuple[list[tuple[int, int]], set[int]]:
+    """Maximum-cardinality one-to-one assignment over eligible pairs."""
     weight = eligible[:, care] * (min(eligible[:, care].shape) + 1 + affinity[:, care])
     paired: list[tuple[int, int]] = []
     used: set[int] = set()
@@ -175,6 +153,43 @@ def _score_page(targets: list[dict], polygons: list[Polygon]) -> dict:
             if eligible[int(row), care[int(col)]]:
                 paired.append((int(row), care[int(col)]))
                 used.add(int(row))
+    return paired, used
+
+
+def _score_page(targets: list[dict], polygons: list[Polygon]) -> dict:
+    """One-to-one line matching, per the benchmark's `score` and `finish`."""
+    care = [i for i, target in enumerate(targets) if target["care"]]
+    ignore = [i for i, target in enumerate(targets) if not target["care"]]
+    eligible, affinity = _eligibility(targets, polygons)
+    paired, used = _assign_pairs(eligible, affinity, care)
+    return _summarise_match(targets, polygons, eligible, care, ignore, paired, used)
+
+
+def _pairs_above(polygons: list[Polygon], threshold: float) -> int:
+    """Line pairs sharing at least `threshold` of the smaller polygon."""
+    count = 0
+    for left, right in itertools.combinations(polygons, 2):
+        smaller = min(left.area, right.area)
+        if smaller > 0 and left.intersection(right).area / smaller >= threshold:
+            count += 1
+    return count
+
+
+def _match_count(eligible: np.ndarray, pred_count: int, g: int) -> int:
+    """Predictions eligible for target g."""
+    return sum(1 for p in range(pred_count) if eligible[p, g])
+
+
+def _summarise_match(
+    targets: list[dict],
+    polygons: list[Polygon],
+    eligible: np.ndarray,
+    care: list[int],
+    ignore: list[int],
+    paired: list[tuple[int, int]],
+    used: set[int],
+) -> dict:
+    """Precision/recall counts and matched ids, per the benchmark's `finish`."""
     ignored = [
         p
         for p in range(len(polygons))
@@ -184,13 +199,10 @@ def _score_page(targets: list[dict], polygons: list[Polygon]) -> dict:
     ]
     fps = sorted(set(range(len(polygons))) - used - set(ignored))
     fns = sorted(set(care) - {g for _, g in paired})
-    alone = sum(1 for _, g in paired if sum(1 for p in range(len(polygons)) if eligible[p, g]) == 1)
+    coverage = {g: _match_count(eligible, len(polygons), g) for _, g in paired}
+    alone = sum(1 for count in coverage.values() if count == 1)
     paired_ids = sorted(targets[g]["id"] for _, g in paired)
-    alone_ids = sorted(
-        targets[g]["id"]
-        for _, g in paired
-        if sum(1 for p in range(len(polygons)) if eligible[p, g]) == 1
-    )
+    alone_ids = sorted(targets[g]["id"] for g, count in coverage.items() if count == 1)
     return {
         "paired_ids": paired_ids,
         "alone_ids": alone_ids,
@@ -205,16 +217,6 @@ def _score_page(targets: list[dict], polygons: list[Polygon]) -> dict:
     }
 
 
-def _pairs_above(polygons: list[Polygon], threshold: float) -> int:
-    """Line pairs sharing at least `threshold` of the smaller polygon."""
-    count = 0
-    for left, right in itertools.combinations(polygons, 2):
-        smaller = min(left.area, right.area)
-        if smaller > 0 and left.intersection(right).area / smaller >= threshold:
-            count += 1
-    return count
-
-
 def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) -> list[int]:
     """Reading-order overlay: body quads green with numbers, suspects red.
 
@@ -222,15 +224,8 @@ def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) 
     left edge, yellow baselines); suspects use red for both quad and number.
     Returns the suspect line numbers.
     """
-    raw = np.frombuffer(image_bytes, dtype=np.uint8)
-    canvas = cv2.imdecode(raw, cv2.IMREAD_COLOR)
-    if canvas is None:
-        raise ValueError(f"could not decode image for page {page}")
-    height, width = canvas.shape[:2]
-    scale = max(width, height) / 1400.0
+    canvas, scale, width, height = decode_overlay_canvas(image_bytes, page)
     thickness = max(1, int(round(2 * scale)))
-    font_scale = max(0.7, 1.1 * scale)
-    font_thickness = max(1, int(round(2 * scale)))
 
     suspect_numbers = []
     for position, line in enumerate(lines):
@@ -253,33 +248,14 @@ def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) 
                 thickness,
                 cv2.LINE_AA,
             )
-        left_x = float(quad[:, 0].min())
-        mid_y = float(quad[:, 1].mean())
-        label = str(number)
-        (label_w, label_h), _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness
-        )
-        text_x = int(min(max(left_x - label_w - 6 * scale, 0), width - label_w - 1))
-        text_y = int(min(max(mid_y + label_h / 2, label_h), height - 1))
-        cv2.putText(
+        put_order_label(
             canvas,
-            label,
-            (text_x, text_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (0, 0, 0),
-            font_thickness + 2,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            canvas,
-            label,
-            (text_x, text_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (255, 255, 255),
-            font_thickness,
-            cv2.LINE_AA,
+            number,
+            float(quad[:, 0].min()),
+            float(quad[:, 1].mean()),
+            scale,
+            width,
+            height,
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     ok = cv2.imwrite(
@@ -290,18 +266,10 @@ def _draw_overlay(page: str, image_bytes: bytes, lines: list, output_dir: Path) 
     return suspect_numbers
 
 
-def main() -> int:
-    from nomikos_inference.architectures.ppocr_det import run_ppocr_det_segment
-
-    args = _parse_args()
-    gap_sweep = (
-        _sweep_ratios(args.merge_gap_ratio, "--merge-gap-ratio") if args.merge_gap_ratio else []
-    )
-    overlap_sweep = (
-        _sweep_ratios(args.merge_max_overlap_ratio, "--merge-max-overlap-ratio")
-        if args.merge_max_overlap_ratio
-        else []
-    )
+def _build_variants(
+    gap_sweep: list[float], overlap_sweep: list[float]
+) -> tuple[dict[str, dict | None], list[tuple[str, str, str]]]:
+    """Variant param sets plus the sweep ledger; empty sweeps mean off/defaults/drop."""
     if gap_sweep or overlap_sweep:
         variants: dict[str, dict | None] = {
             "off": {
@@ -326,9 +294,9 @@ def main() -> int:
                 "merge_max_overlap_ratio": ratio,
             }
             sweep.append((str(ratio), f"ov-{ratio}", f"dropov-{ratio}"))
-    else:
-        sweep = []
-        variants = {
+        return variants, sweep
+    return (
+        {
             "off": {
                 "merge_fragments": False,
                 "resolve_overlaps": False,
@@ -336,8 +304,116 @@ def main() -> int:
             },
             "defaults": None,
             "drop": {"noise_policy": "drop"},
+        },
+        [],
+    )
+
+
+def _score_variant_page(
+    page: str,
+    name: str,
+    params: dict | None,
+    image_bytes: bytes,
+    targets: list[dict],
+    args: argparse.Namespace,
+) -> dict:
+    """Run one variant on one page and score it against its targets."""
+    from nomikos_inference.architectures.ppocr_det import run_ppocr_det_segment
+
+    response = run_ppocr_det_segment(
+        image_bytes,
+        model_path=args.onnx,
+        artifact_sha256=args.artifact_sha256,
+        params=params,
+    )
+    polygons = [Polygon(line.points) for line in response.lines]
+    scored = _score_page(targets, polygons)
+    suspects = [
+        position
+        for position, line in enumerate(response.lines)
+        if line.source_metadata.get("suspect", False)
+    ]
+    wrong = sum(1 for p in suspects if p in scored["matched_pred"])
+    merged = sum(
+        1 for line in response.lines if line.source_metadata.get("merged_from", 1) > 1
+    )
+    return {
+        **scored,
+        "pairs": _pairs_above(polygons, PAIR_THRESHOLD),
+        "suspects": len(suspects),
+        "wrong": wrong,
+        "merged": merged,
+    }
+
+
+def _accumulate_totals(total: dict[str, float], entry: dict) -> None:
+    """Fold one page-variant score into its running totals."""
+    for key in ("tp", "fp", "fn", "n_pred", "alone"):
+        total[key] += entry[key]
+    total["pairs"] += entry["pairs"]
+    total["suspects"] += entry["suspects"]
+    total["wrong"] += entry["wrong"]
+    total["merged"] += entry["merged"]
+
+
+def _write_page_overlay(
+    page: str, image_bytes: bytes, args: argparse.Namespace, pages: dict
+) -> None:
+    """Re-run the defaults variant and write its reading-order overlay."""
+    from nomikos_inference.architectures.ppocr_det import run_ppocr_det_segment
+
+    defaults = run_ppocr_det_segment(
+        image_bytes, model_path=args.onnx, artifact_sha256=args.artifact_sha256, params=None
+    )
+    serial = [
+        {
+            "points": line.points,
+            "baseline": line.baseline,
+            "source_metadata": line.source_metadata,
         }
-    totals = {
+        for line in defaults.lines
+    ]
+    numbers = _draw_overlay(page, image_bytes, serial, args.output_dir)
+    pages[page]["suspect_numbers"] = numbers
+    print(f"{page} suspect line numbers: {numbers}", flush=True)
+
+
+def _print_variant_totals(
+    variants: dict[str, dict | None], totals: dict[str, dict[str, float]]
+) -> None:
+    """Precision/recall/F1 per variant, in variant order."""
+    for name in variants:
+        total = totals[name]
+        precision = total["tp"] / (total["tp"] + total["fp"]) if total["tp"] + total["fp"] else 0.0
+        recall = total["tp"] / (total["tp"] + total["fn"]) if total["tp"] + total["fn"] else 0.0
+        f1 = (
+            2 * total["tp"] / (2 * total["tp"] + total["fp"] + total["fn"])
+            if 2 * total["tp"] + total["fp"] + total["fn"]
+            else 0.0
+        )
+        total["precision"] = precision
+        total["recall"] = recall
+        total["f1"] = f1
+        print(
+            f"{name} detections={total['n_pred']} P={precision:.4f} R={recall:.4f} "
+            f"F1={f1:.4f} alone={total['alone']} pairs={total['pairs']} "
+            f"suspects={total['suspects']} wrong={total['wrong']} merged={total['merged']}",
+            flush=True,
+        )
+
+
+def main() -> int:
+    args = _parse_args()
+    gap_sweep = (
+        _sweep_ratios(args.merge_gap_ratio, "--merge-gap-ratio") if args.merge_gap_ratio else []
+    )
+    overlap_sweep = (
+        _sweep_ratios(args.merge_max_overlap_ratio, "--merge-max-overlap-ratio")
+        if args.merge_max_overlap_ratio
+        else []
+    )
+    variants, sweep = _build_variants(gap_sweep, overlap_sweep)
+    totals: dict[str, dict[str, float]] = {
         name: {
             "tp": 0,
             "fp": 0,
@@ -357,73 +433,16 @@ def main() -> int:
         flush=True,
     )
     for page in PAGES:
-        image_bytes = _load_image(page, args.fixtures, args.images)
-        targets = _load_targets(args.gt, page)
+        image_bytes = load_image_bytes(page, args.fixtures, args.images)
+        targets = load_targets(args.gt, page)
         pages[page] = {}
         for name, params in variants.items():
-            response = run_ppocr_det_segment(
-                image_bytes,
-                model_path=args.onnx,
-                artifact_sha256=args.artifact_sha256,
-                params=params,
-            )
-            polygons = [Polygon(line.points) for line in response.lines]
-            scored = _score_page(targets, polygons)
-            suspects = [
-                position
-                for position, line in enumerate(response.lines)
-                if line.source_metadata.get("suspect", False)
-            ]
-            wrong = sum(1 for p in suspects if p in scored["matched_pred"])
-            merged = sum(
-                1 for line in response.lines if line.source_metadata.get("merged_from", 1) > 1
-            )
-            pages[page][name] = {
-                **scored,
-                "pairs": _pairs_above(polygons, PAIR_THRESHOLD),
-                "suspects": len(suspects),
-                "wrong": wrong,
-                "merged": merged,
-            }
-            for key in ("tp", "fp", "fn", "n_pred", "alone"):
-                totals[name][key] += scored[key]
-            totals[name]["pairs"] += pages[page][name]["pairs"]
-            totals[name]["suspects"] += len(suspects)
-            totals[name]["wrong"] += wrong
-            totals[name]["merged"] += merged
+            entry = _score_variant_page(page, name, params, image_bytes, targets, args)
+            pages[page][name] = entry
+            _accumulate_totals(totals[name], entry)
         if not sweep and page in OVERLAY_PAGES:
-            defaults = run_ppocr_det_segment(
-                image_bytes, model_path=args.onnx, artifact_sha256=args.artifact_sha256, params=None
-            )
-            serial = [
-                {
-                    "points": line.points,
-                    "baseline": line.baseline,
-                    "source_metadata": line.source_metadata,
-                }
-                for line in defaults.lines
-            ]
-            numbers = _draw_overlay(page, image_bytes, serial, args.output_dir)
-            pages[page]["suspect_numbers"] = numbers
-            print(f"{page} suspect line numbers: {numbers}", flush=True)
-    for name in variants:
-        total = totals[name]
-        precision = total["tp"] / (total["tp"] + total["fp"]) if total["tp"] + total["fp"] else 0.0
-        recall = total["tp"] / (total["tp"] + total["fn"]) if total["tp"] + total["fn"] else 0.0
-        f1 = (
-            2 * total["tp"] / (2 * total["tp"] + total["fp"] + total["fn"])
-            if 2 * total["tp"] + total["fp"] + total["fn"]
-            else 0.0
-        )
-        total["precision"] = precision
-        total["recall"] = recall
-        total["f1"] = f1
-        print(
-            f"{name} detections={total['n_pred']} P={precision:.4f} R={recall:.4f} "
-            f"F1={f1:.4f} alone={total['alone']} pairs={total['pairs']} "
-            f"suspects={total['suspects']} wrong={total['wrong']} merged={total['merged']}",
-            flush=True,
-        )
+            _write_page_overlay(page, image_bytes, args, pages)
+    _print_variant_totals(variants, totals)
     payload: dict = {"pages": pages, "totals": totals}
     if sweep:
         payload["sweep"] = _summarise_sweep(pages, totals, sweep)
