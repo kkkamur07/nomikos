@@ -221,17 +221,18 @@ def _fit_font_size(
     min_size: int = 8,
     max_size: int = 48,
 ) -> int:
-    # A smaller size fits whenever a larger one does, so this finds the same
-    # answer as a linear scan with about six font loads instead of 41.
-    path = str(font_path)
-    best = min_size
-    low, high = min_size, max_size
-    while low <= high:
-        mid = (low + high) // 2
-        bbox = _cached_typeface(path, mid).getbbox(text)
-        if bbox[2] - bbox[0] <= max_width and bbox[3] - bbox[1] <= max_height:
-            best = mid
-            low = mid + 1
-        else:
-            high = mid - 1
+    # The cached face is shared: one FreeType face cannot be measured from two
+    # worker threads at once, so the whole search holds the font lock.
+    with _font_lock:
+        path = str(font_path)
+        best = min_size
+        low, high = min_size, max_size
+        while low <= high:
+            mid = (low + high) // 2
+            bbox = _cached_typeface(path, mid).getbbox(text)
+            if bbox[2] - bbox[0] <= max_width and bbox[3] - bbox[1] <= max_height:
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
     return best

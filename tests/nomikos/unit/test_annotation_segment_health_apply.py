@@ -241,6 +241,7 @@ class TestHistoryGeometryState:
         captured: dict[str, object] = {}
         part = _Part()
         line_id = uuid.uuid4()
+        block_id = uuid.uuid4()
         snapshot = type(
             "Snapshot",
             (),
@@ -250,7 +251,7 @@ class TestHistoryGeometryState:
                     "lines": [
                         {
                             "id": str(line_id),
-                            "block_id": None,
+                            "block_id": str(block_id),
                             "order": 0,
                             "kind": "polygon",
                             "points": [[1.0, 1.0]],
@@ -284,8 +285,23 @@ class TestHistoryGeometryState:
         )
 
         (restored,) = captured["lines"]
+        assert restored["points"] == [[1.0, 1.0]]
+        assert restored["block_id"] == block_id
         assert restored["baseline"] == {"points": [[1.0, 2.0], [3.0, 4.0]]}
         assert restored["mask"] == {"points": [[5.0, 6.0]]}
+        assert set(restored) == {
+            "id",
+            "order",
+            "kind",
+            "points",
+            "block_id",
+            "source",
+            "source_metadata",
+            "baseline",
+            "mask",
+            "kraken_ceiling",
+            "approved_text",
+        }
 
 
 class TestFindingCountPins:

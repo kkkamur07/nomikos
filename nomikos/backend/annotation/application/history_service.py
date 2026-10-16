@@ -105,6 +105,8 @@ class AnnotationHistoryService:
                 "id": UUID(line["id"]),
                 "order": line["order"],
                 "kind": LineGeometryKind(line["kind"]),
+                "points": line["points"],
+                "block_id": UUID(line["block_id"]) if line.get("block_id") is not None else None,
                 "source": LineSource(line["source"]),
                 "source_metadata": line["source_metadata"],
                 "baseline": line.get("baseline"),
