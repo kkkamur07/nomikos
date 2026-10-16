@@ -66,8 +66,7 @@ from sqlalchemy import select
 from backend.document.infrastructure.media_store import get_media_store
 from backend.jobs.application.inference_dispatcher import (
     PageRunRequest,
-    build_page_run_request,
-    page_image_key_for_job,
+    build_page_run,
 )
 from backend.jobs.infrastructure.job_claim_engine import AGENT_CLAIMED_JOB_TYPES
 from backend.jobs.infrastructure.job_sql import AGENT_CLAIM_PREFIX
@@ -180,12 +179,10 @@ def claim_one_page(
 
     page_image_expires_at = now + timedelta(seconds=page_image_ttl_seconds)
     try:
-        request = build_page_run_request(detached_job)
+        run = build_page_run(detached_job)
         page_image_url = urljoin(
             base_url,
-            get_media_store().signed_object_url(
-                page_image_key_for_job(detached_job), expires_at=page_image_expires_at
-            ),
+            get_media_store().signed_object_url(run.image_key, expires_at=page_image_expires_at),
         )
     except Exception:
         # The page is already claimed, so leaving it would park a job on an agent
@@ -210,7 +207,7 @@ def claim_one_page(
         job_type=job_type,
         execution_target=execution_target,
         lease_expires_at=now + timedelta(seconds=lease_seconds),
-        request=request,
+        request=run.request,
         page_image_url=page_image_url,
         page_image_expires_at=page_image_expires_at,
     )

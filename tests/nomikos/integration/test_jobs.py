@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 import infrastructure.models  # noqa: F401 — register all ORM mappers
-from backend.jobs.application.inference_dispatcher import build_page_run_request
+from backend.jobs.application.inference_dispatcher import build_page_run
 from backend.jobs.infrastructure.job_claim_engine import claim_next_pending_job
 from backend.jobs.infrastructure.job_sql import NON_TERMINAL_STATUSES
 from backend.jobs.infrastructure.job_sweeps import reclaim_stale_running_jobs
@@ -387,7 +387,7 @@ def test_transcribe_job_payload_batches_every_selected_line(
     with sync_system_session() as session:
         job = session.get(Job, uuid.UUID(response.json()["job_id"]))
         assert job is not None
-        request = build_page_run_request(job)
+        request = build_page_run(job).request
 
     assert request.task.value == "transcribe"
     assert [line["line_id"] for line in request.params["lines"]] == [line["id"] for line in lines]
