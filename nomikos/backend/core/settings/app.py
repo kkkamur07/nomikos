@@ -11,6 +11,24 @@ from backend.core.settings._cache import settings_cache
 from backend.core.settings._env import REPO_ROOT, env_settings_config
 
 
+def _split_origins(value: str) -> list[str]:
+    return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+
+
+def _check_origin(origin: str) -> str:
+    """Reject anything that is not one explicit http(s) origin."""
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("CORS_ORIGINS must contain explicit http(s) origins only")
+    if parsed.username or parsed.password:
+        raise ValueError("CORS_ORIGINS must contain explicit http(s) origins only")
+    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("CORS_ORIGINS must contain explicit http(s) origins only")
+    if "*" in origin:
+        raise ValueError("CORS_ORIGINS must contain explicit http(s) origins only")
+    return origin
+
+
 class AppSettings(BaseSettings):
     model_config = env_settings_config()
 
@@ -66,24 +84,10 @@ class AppSettings(BaseSettings):
     @field_validator("cors_origins")
     @classmethod
     def _validate_cors_origins(cls, value: str) -> str:
-        origins = [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+        origins = _split_origins(value)
         if not origins:
             raise ValueError("CORS_ORIGINS must include at least one explicit origin")
-        for origin in origins:
-            parsed = urlparse(origin)
-            if (
-                parsed.scheme not in {"http", "https"}
-                or not parsed.netloc
-                or parsed.username
-                or parsed.password
-                or parsed.path not in {"", "/"}
-                or parsed.params
-                or parsed.query
-                or parsed.fragment
-                or "*" in origin
-            ):
-                raise ValueError("CORS_ORIGINS must contain explicit http(s) origins only")
-        return ",".join(dict.fromkeys(origins))
+        return ",".join(dict.fromkeys(_check_origin(origin) for origin in origins))
 
     @property
     def cors_origin_list(self) -> list[str]:

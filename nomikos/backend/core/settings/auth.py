@@ -8,8 +8,7 @@ from zxcvbn import zxcvbn
 
 from backend.core.settings._cache import settings_cache
 from backend.core.settings._env import env_settings_config
-
-_PLACEHOLDER_SECRET_VALUES = {"change-me", "change-me-in-production", "replace-me"}
+from backend.core.settings.secrets import is_placeholder_secret
 
 #: HMAC-SHA256 pads any key shorter than its block-equivalent output, so a
 #: shorter key never contributes more than 256 bits anyway. 32 bytes is the
@@ -29,15 +28,6 @@ MIN_JWT_SECRET_BYTES = 32
 #: ~10^10 guesses, which both memorable strings above clear. It's tuned for "is
 #: this an acceptable human password", a much lower bar than a signing key.
 MIN_JWT_SECRET_GUESSES_LOG10 = 22.0
-
-
-def _is_placeholder_secret(value: str) -> bool:
-    normalized = value.strip().casefold()
-    return (
-        not normalized
-        or normalized in _PLACEHOLDER_SECRET_VALUES
-        or normalized.startswith("replace-with-")
-    )
 
 
 def secret_guesses_log10(value: str) -> float:
@@ -86,7 +76,7 @@ class AuthSettings(BaseSettings):
     def _validate_secret(self) -> "AuthSettings":
         # Placeholders are rejected everywhere: a shipped example value must never
         # sign a token, not even in development.
-        if _is_placeholder_secret(self.jwt_secret):
+        if is_placeholder_secret(self.jwt_secret):
             raise ValueError("JWT_SECRET must be set to a non-placeholder secret value")
         if self.environment.casefold() != "production":
             return self

@@ -32,8 +32,8 @@ from backend.core.schemas.errors import ApiErrorResponse
 from backend.core.settings import (
     get_app_settings,
     get_auth_settings,
+    get_inference_settings,
     get_infrastructure_settings,
-    get_ml_settings,
     get_storage_settings,
 )
 from backend.core.settings.device import get_device_settings
@@ -362,7 +362,7 @@ def create_app() -> FastAPI:
     get_device_settings()
     app_settings = get_app_settings()
     job_settings = get_job_settings()
-    ml_settings = get_ml_settings()
+    ml_settings = get_inference_settings()
     if ml_settings.cloud_inference_enabled or job_settings.job_worker_enabled:
         ml_settings.require_callback_receiver_configuration()
     get_storage_settings()

@@ -21,7 +21,7 @@ the alternative silently ships an unknown model to a researcher's CPU.
 
 from __future__ import annotations
 
-from backend.core.settings.ml import get_ml_settings
+from backend.core.settings.ml import get_inference_settings
 from backend.ml.domain.execution import ALL_EXECUTION_TARGETS, ExecutionTarget
 from backend.ml.infrastructure.orm_models import InferenceModel, InferenceTask
 from nomikos_inference.contracts.common import HostEligibility
@@ -82,7 +82,7 @@ def host_eligibility_for(registry_model_id: str | None) -> HostEligibility:
     if registry_model_id is None:
         return HostEligibility.remote
     try:
-        registry = load_registry(get_ml_settings().inference_registry_path)
+        registry = load_registry(get_inference_settings().inference_registry_path)
     except (OSError, ValueError):
         # An unreadable or invalid Registry must not silently widen eligibility.
         return HostEligibility.remote
