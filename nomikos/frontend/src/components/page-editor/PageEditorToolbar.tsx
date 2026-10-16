@@ -3,7 +3,6 @@ import type {
   DocumentWithPartsResponse,
   InferenceModelResponse,
   LineResponse,
-  PageTranscriptionTextLineResponse,
 } from "../../api/client";
 import type { components } from "../../api/schema";
 import type { PageEditorProcessingKind } from "./hooks/usePageEditorRunState";
@@ -19,6 +18,8 @@ import {
 } from "./ToolbarPanels";
 import { ToolbarWorkflowMenu } from "./ToolbarWorkflowMenu";
 
+type PageTranscriptionTextLineResponse =
+  components["schemas"]["PageTranscriptionTextLineResponse"];
 type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
 
 type PageEditorToolbarProps = {

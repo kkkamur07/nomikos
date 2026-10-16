@@ -4,7 +4,6 @@ import {
   type DocumentPartResponse,
   type DocumentWithPartsResponse,
   type LineResponse,
-  type PageTranscriptionTextLineResponse,
   type PartLayoutResponse,
   type TranscriptionLayerResponse,
 } from "../../../api/client";
@@ -26,6 +25,8 @@ import {
 } from "./fetchPartContent";
 import { useEditorModels } from "./useEditorModels";
 
+type PageTranscriptionTextLineResponse =
+  components["schemas"]["PageTranscriptionTextLineResponse"];
 type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
 
 const EMPTY_LAYOUT: PartLayoutResponse = { blocks: [], lines: [] };

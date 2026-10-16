@@ -2,7 +2,6 @@ import type { Dispatch, SetStateAction } from "react";
 import type {
   EnqueueJobResponse,
   JobResponse,
-  PageTranscriptionTextLineResponse,
   PagePairingResponse,
 } from "../../../api/client";
 import type { components } from "../../../api/schema";
@@ -10,6 +9,8 @@ import { submissionRefusalExplanation } from "../../../inference";
 import { ApiError, isAbortError } from "../../../api/errors";
 import type { PageEditorJobKind } from "../jobProgress";
 
+type PageTranscriptionTextLineResponse =
+  components["schemas"]["PageTranscriptionTextLineResponse"];
 type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
 
 export type SetState<T> = Dispatch<SetStateAction<T>>;
