@@ -311,3 +311,44 @@ def test_weak_rule_tracking_table(
     types: list[str], para: int, expected: tuple[list[int | None], list[int]]
 ) -> None:
     assert resolve_levels(types, None, para) == expected
+
+
+def test_nested_isolate_depth_counts() -> None:
+    assert first_strong_level(["LRI", "LRI", "PDI", "R"], 0, 4) == 0
+    assert first_strong_level(["PDI", "R"], 0, 2) == 1
+
+
+def test_isolate_overflow_at_exactly_max_depth() -> None:
+    levels, _wtypes = _explicit(["RLI"] * 64 + ["L"])
+    assert levels[-2:] == [125, 125]
+
+
+def test_valid_isolate_count_gates_pdi_pops() -> None:
+    two = ["RLI", "RLI", "L", "PDI", "PDI", "R"]
+    assert _explicit(two)[0] == [0, 1, 3, 1, 0, 0]
+    three = ["RLI", "RLI", "L", "PDI", "PDI", "PDI", "R"]
+    assert _explicit(three)[0] == [0, 1, 3, 1, 0, 0, 0]
+
+
+def test_overflow_counters_gate_later_pushes() -> None:
+    deep = ["RLE"] * 64
+    levels, _wtypes = _explicit(deep + ["FSI", "FSI", "PDI", "RLE", "PDI", "PDF", "PDF", "N"])
+    assert levels[-1] == 123
+    levels, _wtypes = _explicit(deep + ["FSI", "PDI", "PDF", "RLE", "PDF", "PDF", "N"])
+    assert levels[-1] == 123
+
+
+def test_valid_pop_resets_embedding_overflow() -> None:
+    levels, _wtypes = _explicit(["RLI"] + ["RLE"] * 63 + ["PDI", "M"] + ["RLE"] * 63 + ["N"])
+    assert levels[64:66] == [0, 0]
+    assert levels[-1] == 125
+
+
+def test_pdf_unwind_arithmetic() -> None:
+    levels, _wtypes = _explicit(["RLE"] * 64 + ["PDF"] * 3 + ["M"])
+    assert levels[-2:] == [None, 121]
+
+
+def test_paragraph_separator_takes_paragraph_level() -> None:
+    levels, _wtypes = _explicit(["RLE", "B", "R"])
+    assert levels == [None, 0, 1]
