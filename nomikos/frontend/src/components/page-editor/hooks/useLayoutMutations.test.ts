@@ -191,6 +191,24 @@ describe("useLayoutMutations auto segment", () => {
   });
 
   it("stays quiet when the researcher cancels the job", async () => {
+    // A cancel from the jobs panel resolves the wait with the cancelled job;
+    // it does not reject.
+    const { view, setPairingError, setSubmissionRefusal, trackJobAndWait } =
+      setup();
+    trackJobAndWait.mockResolvedValueOnce({ status: "cancelled" });
+
+    await act(async () => {
+      await view.result.current.runAutoSegment();
+    });
+
+    // The jobs panel already reported it, and nothing was segmented.
+    expect(setPairingError).not.toHaveBeenCalledWith(expect.any(String));
+    expect(setSubmissionRefusal).not.toHaveBeenCalledWith(expect.any(String));
+    expect(listPartLines).not.toHaveBeenCalled();
+    expect(view.result.current.segmentMessage).toBeNull();
+  });
+
+  it("stays quiet when the request itself is aborted", async () => {
     segmentPart.mockRejectedValueOnce(
       new DOMException("The operation was aborted.", "AbortError"),
     );
@@ -200,9 +218,31 @@ describe("useLayoutMutations auto segment", () => {
       await view.result.current.runAutoSegment();
     });
 
-    // The jobs panel already reported it.
     expect(setPairingError).not.toHaveBeenCalledWith(expect.any(String));
     expect(setSubmissionRefusal).not.toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("does not claim Kraken ran, since the picker can choose another segmenter", async () => {
+    listPartLines.mockResolvedValue([{ id: "line-1" }, { id: "line-2" }]);
+    const { view, trackJobAndWait } = setup();
+
+    await act(async () => {
+      await view.result.current.runAutoSegment("ppocr-segment");
+    });
+
+    expect(segmentPart).toHaveBeenCalledWith(
+      "project-1",
+      "document-1",
+      "part-1",
+      { model_id: "ppocr-segment" },
+    );
+    expect(trackJobAndWait.mock.calls[0]?.[1]).toEqual({
+      label: "Line segmentation",
+      kind: "segmentation",
+    });
+    expect(view.result.current.segmentMessage?.text).toBe(
+      "Line segmentation completed (2 Segment(s)).",
+    );
   });
 
   it("clears the undo and redo stacks once the segmentation reload replaces the Segments", async () => {

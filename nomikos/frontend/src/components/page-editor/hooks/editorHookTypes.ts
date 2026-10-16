@@ -7,7 +7,7 @@ import type {
   PairingProgressResponse,
 } from "../../../api/client";
 import { submissionRefusalExplanation } from "../../../inference";
-import { isAbortError } from "../../../api/errors";
+import { ApiError, isAbortError } from "../../../api/errors";
 import type { PageEditorJobKind } from "../jobProgress";
 
 export type SetState<T> = Dispatch<SetStateAction<T>>;
@@ -25,6 +25,14 @@ export type TrackJobAndWait = (
 /** The text an error banner shows: the error's own message, or `fallback`. */
 export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+/** The banner for a failed layout write: a 403 says who may edit layout. */
+export function layoutMutationMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 403) {
+    return "Only project members can edit layout.";
+  }
+  return errorMessage(error, "Layout update failed.");
 }
 
 /**
