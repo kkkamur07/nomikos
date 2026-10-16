@@ -5,6 +5,7 @@ import {
   useState,
   type MouseEvent,
   type PointerEvent,
+  type SyntheticEvent,
 } from "react";
 import type {
   LinePoint,
@@ -101,6 +102,8 @@ function canvasScale(
     stroke((manual ? 1.0 : 1.2) * settings.baselineStrokeWidth);
   return { stroke, handle, baseline };
 }
+
+type CanvasScale = ReturnType<typeof canvasScale>;
 
 function segmentLook(
   selected: boolean,
@@ -229,6 +232,64 @@ function useDrawingHandlers(
   };
 }
 
+/**
+ * The canvas size: the image's natural size once it has loaded, the page's
+ * recorded size until then.
+ */
+function useNaturalSize(imageWidth: number, imageHeight: number) {
+  const [naturalSize, setNaturalSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const onLoad = useCallback((event: SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = event.currentTarget;
+    if (naturalWidth > 0 && naturalHeight > 0) {
+      setNaturalSize({ width: naturalWidth, height: naturalHeight });
+    }
+  }, []);
+  return {
+    width: naturalSize?.width ?? imageWidth,
+    height: naturalSize?.height ?? imageHeight,
+    onLoad,
+  };
+}
+
+/** The shape being drawn: a dragged rectangle or a polygon in progress. */
+function DraftLayer({
+  props,
+  scale,
+}: {
+  props: CanvasSurfaceProps;
+  scale: CanvasScale;
+}) {
+  const draftRectangle =
+    props.drawingRectangle && props.draftStart && props.draftEnd
+      ? rectanglePoints(props.draftStart, props.draftEnd)
+      : null;
+  return (
+    <>
+      {draftRectangle && (
+        <polygon
+          aria-label="Draft rectangle segment"
+          points={points(draftRectangle)}
+          fill="rgba(13, 31, 60, 0.12)"
+          stroke="rgba(13, 31, 60, 0.75)"
+          strokeWidth={scale.stroke(2)}
+          strokeDasharray={`${scale.stroke(6)},${scale.stroke(3)}`}
+        />
+      )}
+      {props.drawingPolygon && props.draftPolygon.length > 0 && (
+        <DraftPolygonLayer
+          draftPolygon={props.draftPolygon}
+          cursor={props.draftPolygonCursor}
+          stroke={scale.stroke}
+          handleRadius={scale.handle(2.2)}
+        />
+      )}
+    </>
+  );
+}
+
 function CanvasSurfaceInner(props: CanvasSurfaceProps) {
   const {
     imageWidth,
@@ -242,12 +303,11 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
     vertexEditPoints,
     draggedVertexIndex,
   } = props;
-  const [naturalSize, setNaturalSize] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
-  const canvasWidth = naturalSize?.width ?? imageWidth;
-  const canvasHeight = naturalSize?.height ?? imageHeight;
+  const {
+    width: canvasWidth,
+    height: canvasHeight,
+    onLoad,
+  } = useNaturalSize(imageWidth, imageHeight);
   const canvasMax = Math.max(canvasWidth, canvasHeight);
 
   const scale = useMemo(
@@ -290,10 +350,6 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
     },
   );
   const handlers = useDrawingHandlers(props, toPoint, vertexInteracting);
-  const draftRectangle =
-    props.drawingRectangle && props.draftStart && props.draftEnd
-      ? rectanglePoints(props.draftStart, props.draftEnd)
-      : null;
 
   return (
     <div
@@ -309,12 +365,7 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
         compact
         src={props.imageUrl}
         alt={props.imageAlt}
-        onLoad={(event) => {
-          const { naturalWidth, naturalHeight } = event.currentTarget;
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            setNaturalSize({ width: naturalWidth, height: naturalHeight });
-          }
-        }}
+        onLoad={onLoad}
         style={{
           display: "block",
           width: canvasWidth,
@@ -381,24 +432,7 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
             onSelectLine={props.onSelectLine}
           />
         )}
-        {draftRectangle && (
-          <polygon
-            aria-label="Draft rectangle segment"
-            points={points(draftRectangle)}
-            fill="rgba(13, 31, 60, 0.12)"
-            stroke="rgba(13, 31, 60, 0.75)"
-            strokeWidth={scale.stroke(2)}
-            strokeDasharray={`${scale.stroke(6)},${scale.stroke(3)}`}
-          />
-        )}
-        {props.drawingPolygon && props.draftPolygon.length > 0 && (
-          <DraftPolygonLayer
-            draftPolygon={props.draftPolygon}
-            cursor={props.draftPolygonCursor}
-            stroke={scale.stroke}
-            handleRadius={scale.handle(2.2)}
-          />
-        )}
+        <DraftLayer props={props} scale={scale} />
         {segmentVertexEditEnabled && selectedSegmentId && vertexEditPoints && (
           <VertexHandles
             segmentId={selectedSegmentId}
