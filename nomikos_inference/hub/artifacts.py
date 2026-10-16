@@ -36,7 +36,7 @@ _VERIFIED_DIGESTS_MAX = 64
 def _artifact_identity(path: Path) -> tuple[str, int, int]:
     """Identify file *content* well enough to reuse a digest.
 
-    Any write to the artifact changes its size or its mtime, so a rewritten,
+    Every write to the artifact changes its size or its mtime, so a rewritten,
     truncated, or swapped file misses the cache and gets hashed again.
     """
     stat = path.stat()
