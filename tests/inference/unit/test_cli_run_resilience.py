@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from nomikos_inference.cli import claim as claim_module
 from nomikos_inference.cli import console as ui
 from nomikos_inference.cli import run as run_module
 from nomikos_inference.cli.api import (
@@ -193,8 +194,8 @@ def test_an_interrupt_after_the_model_ran_still_reports_the_output(
     `_claim_loop` - which cannot see `output` - reported the page failed and
     terminal. The work was done and thrown away.
     """
-    monkeypatch.setattr(run_module, "_execute", lambda page, image: _FakeResult())
-    monkeypatch.setattr(run_module, "_job_output", lambda page, result: {"kind": "segment"})
+    monkeypatch.setattr(claim_module, "_execute", lambda page, image: _FakeResult())
+    monkeypatch.setattr(claim_module, "_job_output", lambda page, result: {"kind": "segment"})
 
     console = _InterruptingConsole(interrupt_after=2)
     client = StubClient([])
@@ -219,7 +220,7 @@ def test_an_interrupt_while_the_model_runs_is_still_reported_as_failed(
     def _interrupt(page, image):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(run_module, "_execute", _interrupt)
+    monkeypatch.setattr(claim_module, "_execute", _interrupt)
     client = StubClient([])
 
     outcome = run_module._handle_page(ui.out(), ui.err(), client, _identity(), _page(), 1)
@@ -241,7 +242,7 @@ def test_a_dead_page_image_link_fails_the_page_without_spending_a_fetch(
     a reason a researcher can act on.
     """
     fetched: list[str] = []
-    monkeypatch.setattr(run_module, "_execute", lambda page, image: _FakeResult())
+    monkeypatch.setattr(claim_module, "_execute", lambda page, image: _FakeResult())
     client = StubClient([])
     client.fetch_page_image = lambda url: fetched.append(url) or b""  # type: ignore[assignment]
 
@@ -255,8 +256,8 @@ def test_a_dead_page_image_link_fails_the_page_without_spending_a_fetch(
 
 def test_a_live_page_image_link_is_fetched_normally(monkeypatch: pytest.MonkeyPatch) -> None:
     """The expiry check must not refuse a link that is simply still valid."""
-    monkeypatch.setattr(run_module, "_execute", lambda page, image: _FakeResult())
-    monkeypatch.setattr(run_module, "_job_output", lambda page, result: {"kind": "segment"})
+    monkeypatch.setattr(claim_module, "_execute", lambda page, image: _FakeResult())
+    monkeypatch.setattr(claim_module, "_job_output", lambda page, result: {"kind": "segment"})
     client = StubClient([])
 
     page = _page(page_image_expires_at=datetime.now(UTC) + timedelta(seconds=60))
