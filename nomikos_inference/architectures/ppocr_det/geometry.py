@@ -114,7 +114,11 @@ def work_of_quad(index: int, quad: DetectedQuad, baseline_fraction: float) -> Wo
 
 
 def baseline_distance(left: Work, right: Work) -> float:
-    """Perpendicular distance between the two baseline midpoints."""
+    """Perpendicular distance between the two baseline midpoints.
+
+    When both baselines have zero length there is no direction to measure
+    across, so the plain distance between the midpoints stands in.
+    """
     first = np.asarray(left.baseline, dtype=float)
     second = np.asarray(right.baseline, dtype=float)
     first_dir = first[1] - first[0]
@@ -123,10 +127,11 @@ def baseline_distance(left: Work, right: Work) -> float:
         second_dir = -second_dir
     mean = first_dir + second_dir
     norm = float(np.linalg.norm(mean))
+    offset = second.mean(axis=0) - first.mean(axis=0)
     if norm <= 0:
-        return float(np.linalg.norm((first.mean(axis=0) + second.mean(axis=0)) / 2))
+        return float(np.linalg.norm(offset))
     normal = np.array([-mean[1], mean[0]]) / norm
-    return float(abs(np.dot(second.mean(axis=0) - first.mean(axis=0), normal)))
+    return float(abs(np.dot(offset, normal)))
 
 
 __all__ = [
