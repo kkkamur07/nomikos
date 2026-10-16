@@ -10,10 +10,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql.expression import Executable
 
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.media_store.keys import is_pending_key, minted_pending_key
-from backend.document.infrastructure.orm_models import DocumentPart, MediaDeletionIntent
+from backend.document.infrastructure.orm_models import DocumentPart
 
 
 @pytest.mark.parametrize(
@@ -30,32 +32,23 @@ def test_pending_key_parsing(image_key: str, pending: bool, minted: str | None) 
     assert minted_pending_key(image_key) == minted
 
 
-class _Result:
-    def __init__(self, value: object) -> None:
-        self._value = value
-
-    def scalar_one_or_none(self) -> object:
-        return self._value
-
-
 class _Session:
-    def __init__(self, queued: bool = False) -> None:
-        self._queued = queued
-        self.added: list[object] = []
+    def __init__(self) -> None:
+        self.statements: list[Executable] = []
         self.deleted: list[object] = []
         self.commits = 0
 
-    async def execute(self, _statement: object) -> _Result:
-        return _Result(uuid.uuid4() if self._queued else None)
-
-    def add(self, item: object) -> None:
-        self.added.append(item)
+    async def execute(self, statement: Executable) -> None:
+        self.statements.append(statement)
 
     async def delete(self, item: object) -> None:
         self.deleted.append(item)
 
     async def commit(self) -> None:
         self.commits += 1
+
+    def queued_keys(self) -> list[str]:
+        return [statement.compile().params["image_key"] for statement in self.statements]
 
 
 def _part(image_key: str) -> DocumentPart:
@@ -77,16 +70,19 @@ async def test_delete_part_queues_the_blob_the_row_owns(image_key: str, intent_k
 
     await DocumentRepository().delete_part(session, part)
 
-    intents = [item.image_key for item in session.added if isinstance(item, MediaDeletionIntent)]
-    assert intents == ([intent_key] if intent_key else [])
+    assert session.queued_keys() == ([intent_key] if intent_key else [])
     assert session.deleted == [part]
     assert session.commits == 1
 
 
 @pytest.mark.asyncio
-async def test_delete_part_does_not_queue_a_key_twice() -> None:
-    session = _Session(queued=True)
+async def test_queuing_an_already_queued_key_is_a_no_op_insert() -> None:
+    session = _Session()
 
-    await DocumentRepository().delete_part(session, _part("parts/abc.webp"))
+    await DocumentRepository().enqueue_media_deletion_intent(session, "parts/abc.webp")
 
-    assert session.added == []
+    [statement] = session.statements
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+    assert sql.startswith("INSERT INTO media_deletion_intents")
+    assert "ON CONFLICT (image_key) DO NOTHING" in sql
+    assert session.commits == 1
