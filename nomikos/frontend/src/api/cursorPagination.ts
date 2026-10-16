@@ -9,7 +9,7 @@ export type CursorPageOptions = {
   signal?: AbortSignal;
 };
 
-export type CollectCursorPagesOptions = {
+type CollectCursorPagesOptions = {
   maxPages?: number;
   signal?: AbortSignal;
 };

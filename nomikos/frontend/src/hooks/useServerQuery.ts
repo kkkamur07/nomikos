@@ -15,7 +15,7 @@ import {
 /** Cache slot for a query whose key is not known yet; never fetched. */
 const DISABLED_KEY: ResourceKey = ["__disabled__"];
 
-export type ServerQuery<T, E = string> = {
+type ServerQuery<T, E = string> = {
   data: T | null;
   loading: boolean;
   error: E | null;
@@ -28,7 +28,7 @@ export type ServerQuery<T, E = string> = {
   patch: (update: (current: T) => T) => void;
 };
 
-export type ServerQueryOptions<T, E = string> = {
+type ServerQueryOptions<T, E = string> = {
   /**
    * Identity of this read, and the cache entry it fills.
    *

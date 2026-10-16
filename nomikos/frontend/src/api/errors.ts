@@ -1,7 +1,13 @@
-type ValidationErrorItem = {
-  loc?: Array<string | number>;
-  msg?: string;
-};
+function errorFields(
+  value: unknown,
+): { details?: unknown; message?: unknown; ref?: unknown } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  return {
+    details: "details" in value ? value.details : undefined,
+    message: "message" in value ? value.message : undefined,
+    ref: "ref" in value ? value.ref : undefined,
+  };
+}
 
 export class ApiError extends Error {
   readonly status: number;
@@ -15,12 +21,8 @@ export class ApiError extends Error {
   }
 }
 
-function formatDetail(body: unknown): string {
-  if (!body || typeof body !== "object") {
-    return "Request failed";
-  }
-  const error = (body as { error?: { details?: unknown; message?: unknown } })
-    .error;
+function envelopeErrorMessage(value: unknown): string | null {
+  const error = errorFields(value);
   if (error && Array.isArray(error.details)) {
     const detail = formatValidationDetails(error.details);
     if (detail) {
@@ -30,32 +32,50 @@ function formatDetail(body: unknown): string {
   if (error && typeof error.message === "string") {
     return error.message;
   }
-  const detail = (body as { detail?: unknown }).detail;
+  return null;
+}
+
+function fastApiDetailMessage(detail: unknown): string | null {
   if (typeof detail === "string") {
     return detail;
   }
   if (Array.isArray(detail)) {
-    return formatValidationDetails(detail) || "Request failed";
+    return formatValidationDetails(detail) || null;
   }
-  return "Request failed";
+  return null;
+}
+
+function validationItemMessage(item: unknown): string {
+  if (!item || typeof item !== "object") return String(item);
+  const message =
+    "msg" in item && item.msg != null ? String(item.msg) : String(item);
+  const location =
+    "loc" in item && Array.isArray(item.loc) ? item.loc.join(".") : "";
+  return location ? `${location}: ${message}` : message;
+}
+
+function formatDetail(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return "Request failed";
+  }
+  const error = "error" in body ? body.error : undefined;
+  const detail = "detail" in body ? body.detail : undefined;
+  return (
+    envelopeErrorMessage(error) ??
+    fastApiDetailMessage(detail) ??
+    "Request failed"
+  );
 }
 
 function formatValidationDetails(details: unknown[]): string {
-  return details
-    .map((item) => {
-      const err = item as ValidationErrorItem;
-      const message = err.msg ?? String(item);
-      const location = Array.isArray(err.loc) ? err.loc.join(".") : "";
-      return location ? `${location}: ${message}` : message;
-    })
-    .join("; ");
+  return details.map(validationItemMessage).join("; ");
 }
 
 function extractRef(body: unknown, response: Response): string | null {
-  if (body && typeof body === "object") {
-    const error = (body as { error?: { ref?: unknown } }).error;
-    if (error && typeof error.ref === "string" && error.ref.trim()) {
-      return error.ref.trim();
+  if (body && typeof body === "object" && "error" in body) {
+    const ref = errorFields(body.error)?.ref;
+    if (typeof ref === "string" && ref.trim()) {
+      return ref.trim();
     }
   }
   const header = response.headers.get("X-Error-ID");

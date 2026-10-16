@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 
 type FocusTarget = "first" | "last";
 
-export type ActionMenuProps = {
+type ActionMenuProps = {
   /** Trigger text. The caret is appended here so every trigger wears the same one. */
   label: string;
   /** Names the popup for a screen reader. Defaults to {@link label}. */
@@ -49,6 +49,28 @@ function menuItems(container: HTMLElement): HTMLElement[] {
       !item.hasAttribute("disabled") &&
       item.getAttribute("aria-disabled") !== "true",
   );
+}
+
+function menuItemsIn(container: HTMLElement | null): HTMLElement[] {
+  if (!container) return [];
+  return menuItems(container);
+}
+
+function nextFocusIndex(
+  items: HTMLElement[],
+  current: number,
+  delta: 1 | -1,
+): number {
+  if (current === -1) return delta > 0 ? 0 : items.length - 1;
+  return (current + delta + items.length) % items.length;
+}
+
+function jumpMenuFocus(items: HTMLElement[], key: string): void {
+  if (key === "Home") {
+    items[0]?.focus();
+  } else if (key === "End") {
+    items[items.length - 1]?.focus();
+  }
 }
 
 /**
@@ -176,38 +198,22 @@ export function ActionMenu({
       closeAndRestoreFocus();
       return;
     }
-    const container = menuRef.current;
-    if (!container) return;
-    const items = menuItems(container);
+    const items = menuItemsIn(menuRef.current);
     if (items.length === 0) return;
     // -1 when focus is on the popup itself rather than on a row, which is
     // where it sits when every item happens to be disabled.
     const current = items.indexOf(
       globalThis.document.activeElement as HTMLElement,
     );
-
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      items[current === -1 ? 0 : (current + 1) % items.length].focus();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      items[nextFocusIndex(items, current, delta)]?.focus();
       return;
     }
-    if (event.key === "ArrowUp") {
+    if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      items[
-        current === -1
-          ? items.length - 1
-          : (current - 1 + items.length) % items.length
-      ].focus();
-      return;
-    }
-    if (event.key === "Home") {
-      event.preventDefault();
-      items[0].focus();
-      return;
-    }
-    if (event.key === "End") {
-      event.preventDefault();
-      items[items.length - 1].focus();
+      jumpMenuFocus(items, event.key);
     }
   }
 
@@ -250,7 +256,7 @@ export function ActionMenu({
   );
 }
 
-export type ActionMenuItemProps = {
+type ActionMenuItemProps = {
   label: string;
   /**
    * The accessible name, when the visible label is not unique on its own.
@@ -320,7 +326,7 @@ export function ActionMenuDivider() {
   return <div className="action-menu__divider" role="separator" />;
 }
 
-export type ActionMenuConfirmProps = {
+type ActionMenuConfirmProps = {
   /** What is about to happen, in the numbers the person is about to expose or lose. */
   question: string;
   /** The consequence, spelled out. */

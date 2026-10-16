@@ -1,8 +1,6 @@
 import type { MessageInstance } from "antd/es/message/interface";
 import { reportClientFailure } from "../../api/failureBeacon";
 
-export type ToastVariant = "success" | "error";
-
 /** Matches the dismiss delay the hand-rolled stack used, in antd's seconds. */
 const DISMISS_SECONDS = 2.8;
 
