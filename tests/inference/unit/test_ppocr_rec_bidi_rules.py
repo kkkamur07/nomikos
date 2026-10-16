@@ -303,6 +303,16 @@ def test_isolate_overflow_and_unwind() -> None:
         # W4: only a separator at index 1 with equal number neighbors joins.
         (["R", "EN", "ES", "EN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
         (["R", "EN", "ES", "AN"], 0, ([1, 2, 1, 2], [3, 2, 1, 0])),
+        (["EN", "ES", "EN", "L"], 0, ([0, 0, 0, 0], [0, 1, 2, 3])),
+        (["R", "EN", "CS", "EN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
+        (["R", "AN", "CS", "AN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
+        # W5: terminator runs read the true neighbor, not sos, at index 1.
+        (["ET", "L", "EN"], 1, ([1, 2, 2], [1, 2, 0])),
+        (["EN", "ET", "L"], 1, ([2, 2, 2], [0, 1, 2])),
+        (["ET", "EN", "L"], 1, ([2, 2, 2], [0, 1, 2])),
+        # W7: the strong tracker decides EN after L, even at odd levels.
+        (["L", "EN", "L"], 1, ([2, 2, 2], [0, 1, 2])),
+        (["R", "L", "EN"], 0, ([1, 0, 0], [0, 1, 2])),
         # W1: a leading NSM takes sos, including inside isolates.
         (["NSM", "L"], 1, ([1, 2], [1, 0])),
         (["LRI", "NSM", "L"], 0, ([0, 2, 2], [0, 1, 2])),
