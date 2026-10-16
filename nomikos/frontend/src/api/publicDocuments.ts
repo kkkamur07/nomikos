@@ -32,6 +32,33 @@ async function fetchPublicLayoutPage(
   );
 }
 
+type LayoutLine = NonNullable<PublicLayoutResponse["lines"]>[number];
+
+async function drainLayoutPages(
+  fetchPage: (cursor: string) => Promise<PublicLayoutResponse>,
+  firstCursor: string | null,
+  signal: AbortSignal | undefined,
+  lines: LayoutLine[],
+): Promise<string | null> {
+  const seenCursors = new Set<string>();
+  let cursor = firstCursor;
+  let pagesFetched = 1;
+  while (cursor && pagesFetched < PUBLIC_LAYOUT_MAX_PAGES) {
+    if (signal?.aborted) {
+      throw new DOMException("The request was cancelled.", "AbortError");
+    }
+    if (seenCursors.has(cursor)) {
+      throw new Error("Public layout pagination repeated a cursor.");
+    }
+    seenCursors.add(cursor);
+    const page = await fetchPage(cursor);
+    lines.push(...(page.lines ?? []));
+    cursor = page.next_cursor ?? null;
+    pagesFetched += 1;
+  }
+  return cursor;
+}
+
 function publicPartPath(
   projectId: string,
   documentId: string,
@@ -76,28 +103,19 @@ export const publicDocumentsApi = {
       options.signal,
     );
     const lines = [...(first.lines ?? [])];
-    const seenCursors = new Set<string>();
-    let cursor = first.next_cursor ?? null;
-    let pagesFetched = 1;
-    while (cursor && pagesFetched < PUBLIC_LAYOUT_MAX_PAGES) {
-      if (options.signal?.aborted) {
-        throw new DOMException("The request was cancelled.", "AbortError");
-      }
-      if (seenCursors.has(cursor)) {
-        throw new Error("Public layout pagination repeated a cursor.");
-      }
-      seenCursors.add(cursor);
-      const page = await fetchPublicLayoutPage(
-        projectId,
-        documentId,
-        token,
-        cursor,
-        options.signal,
-      );
-      lines.push(...(page.lines ?? []));
-      cursor = page.next_cursor ?? null;
-      pagesFetched += 1;
-    }
+    const cursor = await drainLayoutPages(
+      (cursor) =>
+        fetchPublicLayoutPage(
+          projectId,
+          documentId,
+          token,
+          cursor,
+          options.signal,
+        ),
+      first.next_cursor ?? null,
+      options.signal,
+      lines,
+    );
     return { ...first, lines, next_cursor: cursor };
   },
 

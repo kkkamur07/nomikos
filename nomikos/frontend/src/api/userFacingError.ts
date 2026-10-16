@@ -20,32 +20,32 @@ function looksLikeStackOrNoise(message: string): boolean {
   );
 }
 
+function cleanMessageText(text: string | undefined): string | null {
+  const raw = text?.trim();
+  if (raw && !looksLikeStackOrNoise(raw)) {
+    return raw;
+  }
+  return null;
+}
+
 /** Map thrown values to short researcher-facing copy (no stacks). */
 export function userFacingMessage(
   error: unknown,
   fallback = "Something went wrong. Try again.",
 ): string {
   if (error instanceof ApiError) {
-    const raw = error.message?.trim();
-    if (raw && !looksLikeStackOrNoise(raw)) {
-      return raw;
-    }
-    return STATUS_FALLBACKS[error.status] ?? fallback;
+    return (
+      cleanMessageText(error.message) ??
+      STATUS_FALLBACKS[error.status] ??
+      fallback
+    );
   }
   if (error instanceof Error) {
-    const raw = error.message?.trim();
-    if (raw && !looksLikeStackOrNoise(raw)) {
-      return raw;
-    }
+    return cleanMessageText(error.message) ?? fallback;
   }
-  if (
-    typeof error === "string" &&
-    error.trim() &&
-    !looksLikeStackOrNoise(error)
-  ) {
-    return error.trim();
-  }
-  return fallback;
+  return (
+    cleanMessageText(typeof error === "string" ? error : undefined) ?? fallback
+  );
 }
 
 export function errorRef(error: unknown): string | null {

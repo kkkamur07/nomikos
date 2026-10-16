@@ -52,25 +52,25 @@ export const resourceTags = {
  * value from before the write.
  */
 export const invalidateAfter = {
-  projectCreated: (): void => invalidateTags([resourceTags.projects]),
+  projectCreated: () => invalidateTags([resourceTags.projects]),
 
-  projectUpdated: (projectId: string): void =>
+  projectUpdated: (projectId: string) =>
     invalidateTags([resourceTags.projects, resourceTags.project(projectId)]),
 
-  projectDeleted: (projectId: string): void =>
+  projectDeleted: (projectId: string) =>
     invalidateTags([resourceTags.projects, resourceTags.project(projectId)]),
 
-  documentCreated: (projectId: string): void =>
+  documentCreated: (projectId: string) =>
     invalidateTags([resourceTags.projects, resourceTags.documents(projectId)]),
 
-  documentUpdated: (projectId: string, documentId: string): void =>
+  documentUpdated: (projectId: string, documentId: string) =>
     invalidateTags([
       resourceTags.documents(projectId),
       resourceTags.document(projectId, documentId),
       resourceTags.publicDocument(projectId, documentId),
     ]),
 
-  documentDeleted: (projectId: string, documentId: string): void =>
+  documentDeleted: (projectId: string, documentId: string) =>
     invalidateTags([
       resourceTags.projects,
       resourceTags.documents(projectId),
@@ -79,7 +79,7 @@ export const invalidateAfter = {
     ]),
 
   /** Upload, delete, reorder, review status: the document's parts changed. */
-  documentPartsChanged: (projectId: string, documentId: string): void =>
+  documentPartsChanged: (projectId: string, documentId: string) =>
     invalidateTags([
       resourceTags.documents(projectId),
       resourceTags.document(projectId, documentId),
@@ -98,7 +98,7 @@ export const invalidateAfter = {
    * The project's document list is not touched: nothing in it changes when a
    * line is redrawn.
    */
-  partContentChanged: (projectId: string, documentId: string): void =>
+  partContentChanged: (projectId: string, documentId: string) =>
     invalidateTags([
       resourceTags.document(projectId, documentId),
       resourceTags.publicDocument(projectId, documentId),
@@ -111,7 +111,7 @@ export const invalidateAfter = {
    * separate cache entries under the same tag, so the toggle cannot come back
    * showing a device the researcher has already revoked in the other view.
    */
-  deviceListChanged: (): void => invalidateTags([resourceTags.devices]),
+  deviceListChanged: () => invalidateTags([resourceTags.devices]),
 } as const;
 
 export { devicesApi };
