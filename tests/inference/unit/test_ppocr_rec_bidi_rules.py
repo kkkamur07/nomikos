@@ -304,8 +304,10 @@ def test_isolate_overflow_and_unwind() -> None:
         (["R", "EN", "ES", "EN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
         (["R", "EN", "ES", "AN"], 0, ([1, 2, 1, 2], [3, 2, 1, 0])),
         (["EN", "ES", "EN", "L"], 0, ([0, 0, 0, 0], [0, 1, 2, 3])),
+        (["EN", "ES", "EN", "L"], 1, ([2, 2, 2, 2], [0, 1, 2, 3])),
         (["R", "EN", "CS", "EN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
         (["R", "AN", "CS", "AN"], 0, ([1, 2, 2, 2], [1, 2, 3, 0])),
+        (["R", "CS", "R"], 0, ([1, 1, 1], [2, 1, 0])),
         # W5: terminator runs read the true neighbor, not sos, at index 1.
         (["ET", "L", "EN"], 1, ([1, 2, 2], [1, 2, 0])),
         (["EN", "ET", "L"], 1, ([2, 2, 2], [0, 1, 2])),
@@ -355,6 +357,19 @@ def test_valid_pop_resets_embedding_overflow() -> None:
     levels, _wtypes = _explicit(["RLI"] + ["RLE"] * 63 + ["PDI", "M"] + ["RLE"] * 63 + ["N"])
     assert levels[64:66] == [0, 0]
     assert levels[-1] == 125
+
+
+def test_overflow_after_valid_pop_overflows_again() -> None:
+    levels, _wtypes = _explicit(["RLI"] + ["RLE"] * 63 + ["PDI", "M"] + ["RLE"] * 64 + ["N"])
+    assert levels[64:66] == [0, 0]
+    assert levels[-1] == 125
+
+
+def test_two_overflows_need_two_unwinds() -> None:
+    levels, _wtypes = _explicit(
+        ["RLE"] * 64 + ["FSI", "L", "PDI", "RLE", "M"] + ["PDF"] * 3 + ["N"]
+    )
+    assert levels[-5:] == [125, None, None, None, 123]
 
 
 def test_pdf_unwind_arithmetic() -> None:
