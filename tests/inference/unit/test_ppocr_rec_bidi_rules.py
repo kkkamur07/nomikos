@@ -404,7 +404,7 @@ def test_strong_inside_table(typ: str) -> None:
         # N0c: opposite strong inside resolves from the preceding context.
         (["ON", "L", "ON"], "L", "R", "L"),
         (["ON", "L", "ON"], "R", "R", "R"),
-        (["ON", "R", "ON"], "L", "L", "L"),
+        (["ON", "R", "ON"], "R", "L", "R"),
     ],
 )
 def test_pair_type_table(wtypes: list[str], sos: str, embedding: str, expected: str | None) -> None:
