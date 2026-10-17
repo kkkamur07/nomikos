@@ -37,13 +37,10 @@ def open_onnx_session(
     try:
         import onnxruntime as ort
 
-        if session_options is None:
-            return ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-        return ort.InferenceSession(
-            model_path,
-            sess_options=session_options,
-            providers=["CPUExecutionProvider"],
-        )
+        options: dict[str, object] = {"providers": ["CPUExecutionProvider"]}
+        if session_options is not None:
+            options["sess_options"] = session_options
+        return ort.InferenceSession(model_path, **options)
     except ImportError as error:
         raise error_cls(missing_message) from error
     except Exception as error:
