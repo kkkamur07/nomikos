@@ -7,7 +7,7 @@ import binascii
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import JsonValue, PlainSerializer, PlainValidator
+from pydantic import PlainSerializer, PlainValidator
 
 from nomikos_inference.admission import CLIENT_INPUT_ERROR, validate_encoded_image
 from nomikos_inference.settings import get_inference_settings
@@ -132,7 +132,6 @@ __all__ = [
     "ImageBytes",
     "InferenceJobStatus",
     "InferenceTask",
-    "JsonValue",
     "LineCrop",
     "MAX_GEOMETRY_POINTS",
     "MAX_KRAKEN_CEILING_POINTS",

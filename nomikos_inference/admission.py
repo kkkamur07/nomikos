@@ -7,17 +7,12 @@ import math
 import warnings
 from collections.abc import Mapping
 from io import BytesIO
-from typing import TypeAlias
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
 CLIENT_INPUT_ERROR = "Invalid inference request"
-
-#: JSON-shaped values the params seam admits. Recursive: a mapping or list
-#: nests further JSON values.
-JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 
 # Upper bounds for the BLLA segmentation knobs. They cannot live in the platform
 # API alone: ``run_model`` is reached from both sides of a **claim** - the
@@ -197,7 +192,7 @@ def _validate_param_structure(value: object, settings: AdmissionSettings) -> int
     return item_count
 
 
-def serialized_params_size(params: dict[str, JsonValue], settings: AdmissionSettings) -> int:
+def serialized_params_size(params: Mapping[str, object], settings: AdmissionSettings) -> int:
     _validate_param_structure(params, settings)
     try:
         size = len(
@@ -215,7 +210,7 @@ def serialized_params_size(params: dict[str, JsonValue], settings: AdmissionSett
     return size
 
 
-def validate_transcribe_params(params: dict[str, JsonValue], settings: AdmissionSettings) -> None:
+def validate_transcribe_params(params: Mapping[str, object], settings: AdmissionSettings) -> None:
     """Bound line-region input before the runner crops and fans out work."""
     lines = params.get("lines")
     if lines is None:
@@ -233,7 +228,7 @@ def validate_transcribe_params(params: dict[str, JsonValue], settings: Admission
 
 
 def _validate_bounded_param(
-    params: dict[str, JsonValue],
+    params: Mapping[str, object],
     key: str,
     *,
     maximum: float,
@@ -242,7 +237,7 @@ def _validate_bounded_param(
     if key not in params:
         return
     raw = params[key]
-    if raw is None or isinstance(raw, (list, dict)):
+    if not isinstance(raw, (str, int, float)):
         return
     try:
         parsed = float(raw)
@@ -255,13 +250,13 @@ def _validate_bounded_param(
         raise ValueError(CLIENT_INPUT_ERROR)
 
 
-def validate_segment_params(params: dict[str, JsonValue]) -> None:
+def validate_segment_params(params: Mapping[str, object]) -> None:
     """Bound the BLLA segmentation knobs before they reach the decoder."""
     for key, (minimum, maximum) in SEGMENT_PARAM_BOUNDS.items():
         _validate_bounded_param(params, key, minimum=minimum, maximum=maximum)
 
 
-def validate_request_params(params: dict[str, JsonValue], settings: AdmissionSettings) -> int:
+def validate_request_params(params: Mapping[str, object], settings: AdmissionSettings) -> int:
     size = serialized_params_size(params, settings)
     validate_transcribe_params(params, settings)
     validate_segment_params(params)
@@ -269,7 +264,7 @@ def validate_request_params(params: dict[str, JsonValue], settings: AdmissionSet
 
 
 def validate_job_payload(
-    image_bytes: bytes, params: dict[str, JsonValue], settings: AdmissionSettings
+    image_bytes: bytes, params: Mapping[str, object], settings: AdmissionSettings
 ) -> None:
     params_size = validate_request_params(params, settings)
     if len(image_bytes) + params_size > settings.inference_max_job_payload_bytes:
