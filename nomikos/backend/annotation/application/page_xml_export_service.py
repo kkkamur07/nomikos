@@ -20,6 +20,10 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.annotation.application.line_geometry import (
+    default_baseline_from_polygon,
+    geometry_points,
+)
 from backend.core.exceptions import NotFoundError
 from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
@@ -301,31 +305,16 @@ def _format_coord(value: float) -> str:
 
 
 def _baseline_export_points(line: Line) -> list[list[float]]:
-    """Prefer mask polygon for PAGE Baseline; fall back to stored baseline or coords."""
-    mask_points = _geometry_points(line.mask)
-    if mask_points:
-        return mask_points
-    baseline_points = _geometry_points(line.baseline)
-    if baseline_points:
+    """The stored baseline; the outline's lower edge only when it is missing."""
+    baseline_points = geometry_points(line.baseline)
+    if len(baseline_points) >= 2:
         return baseline_points
-    return [[float(point[0]), float(point[1])] for point in line.points]
-
-
-def _geometry_points(geometry: dict | None) -> list[list[float]]:
-    if not geometry:
-        return []
-    points = geometry.get("points")
-    if not isinstance(points, list):
-        return []
-    return [
-        point
-        for point in points
-        if isinstance(point, list) and len(point) == 2 and _is_number_pair(point)
+    outline = geometry_points(line.mask) or [
+        [float(point[0]), float(point[1])] for point in line.points
     ]
-
-
-def _is_number_pair(point: list[object]) -> bool:
-    return all(isinstance(value, (int, float)) for value in point)
+    if len(outline) < 3:
+        return outline
+    return default_baseline_from_polygon(outline)
 
 
 def _ground_truth_text(line: Line) -> str:

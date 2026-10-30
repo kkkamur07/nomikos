@@ -305,9 +305,7 @@
             "type": "string"
           },
           "state": {
-            "additionalProperties": true,
-            "title": "State",
-            "type": "object"
+            "$ref": "#/components/schemas/SnapshotState"
           }
         },
         "required": [
@@ -4297,6 +4295,92 @@
           }
         },
         "title": "ShareUserRequest",
+        "type": "object"
+      },
+      "SnapshotLineState": {
+        "description": "One line as stored in a history snapshot's ``lines`` list.",
+        "properties": {
+          "approved_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Text"
+          },
+          "baseline": {
+            "title": "Baseline"
+          },
+          "block_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "kraken_ceiling": {
+            "title": "Kraken Ceiling"
+          },
+          "mask": {
+            "title": "Mask"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          },
+          "points": {
+            "title": "Points"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_metadata": {
+            "title": "Source Metadata"
+          }
+        },
+        "required": [
+          "id",
+          "block_id",
+          "order",
+          "kind",
+          "points",
+          "source",
+          "source_metadata",
+          "kraken_ceiling",
+          "approved_text"
+        ],
+        "title": "SnapshotLineState",
+        "type": "object"
+      },
+      "SnapshotState": {
+        "description": "The restorable page state stored on a history snapshot row.",
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotLineState"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": ["lines"],
+        "title": "SnapshotState",
         "type": "object"
       },
       "TableStats": {

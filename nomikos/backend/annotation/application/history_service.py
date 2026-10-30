@@ -6,7 +6,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from backend.annotation.infrastructure.orm_models import AnnotationHistorySnapshot
+from backend.annotation.infrastructure.orm_models import (
+    AnnotationHistorySnapshot,
+    SnapshotLineState,
+)
 from backend.core.exceptions import NotFoundError
 from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
@@ -39,6 +42,7 @@ class AnnotationHistoryService:
         part_id: UUID,
     ) -> AnnotationHistorySnapshot:
         await self._require_part(session, user, project_id, document_id, part_id)
+        await self._documents.lock_part(session, part_id)
         lines = await self._documents.list_part_lines(session, part_id)
         state = {"lines": [self._line_state(line) for line in lines]}
         snapshot = AnnotationHistorySnapshot(
@@ -105,6 +109,8 @@ class AnnotationHistoryService:
                 "block_id": UUID(line["block_id"]) if line.get("block_id") is not None else None,
                 "source": LineSource(line["source"]),
                 "source_metadata": line["source_metadata"],
+                "baseline": line.get("baseline"),
+                "mask": line.get("mask"),
                 "kraken_ceiling": line["kraken_ceiling"],
                 "approved_text": line["approved_text"],
             }
@@ -158,7 +164,7 @@ class AnnotationHistoryService:
                 )
             )
 
-    def _line_state(self, line: Line) -> dict[str, object]:
+    def _line_state(self, line: Line) -> SnapshotLineState:
         ground_truth = next(
             (
                 transcription
@@ -173,6 +179,8 @@ class AnnotationHistoryService:
             "order": line.order,
             "kind": line.kind.value,
             "points": line.points,
+            "baseline": line.baseline,
+            "mask": line.mask,
             "source": line.source.value,
             "source_metadata": line.source_metadata,
             "kraken_ceiling": line.kraken_ceiling,
