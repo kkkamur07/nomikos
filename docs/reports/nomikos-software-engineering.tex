@@ -48,6 +48,9 @@
 
 {\LARGE\bfseries Nomikos: software architecture}\par
 \smallskip
+{\large Krrish Agarwalla and Astha Gupta}\par
+{\small Advanced Programming}\par
+\smallskip
 {\small Live at \href{https://nomikos.app}{\texttt{nomikos.app}}, code at \href{https://github.com/kkkamur07/nomikos}{\texttt{github.com/kkkamur07/nomikos}}.}
 
 Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. Researchers correct what the models get wrong, and those corrections flow back as training data for the next, better model.
@@ -421,7 +424,7 @@ The current load is small (Table~\ref{tab:usage}), and one host carries it easil
 
 CI on GitHub Actions runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The runner is released to PyPI through trusted publishing.
 
-The backend has 889 unit tests and 298 integration tests. Coverage is configured but not measured in CI, because a second run of the integration suite does not fit the CI budget. A local run of the unit tests alone covers 56\,\% of statements and branches in the backend and the runner; the integration tests add to that but need a running Postgres.
+The backend has 889 unit tests and 298 integration tests. A local run of the unit tests alone covers 56\,\% of statements and branches in the backend and the runner; the integration tests add to that but need a running Postgres.
 
 An admin dashboard covers monitoring. It shows users, jobs per model with success rate and median duration, Postgres statistics, request counts and timings per route, failure reports sent by browsers, and user feedback.
 
@@ -431,7 +434,6 @@ An admin dashboard covers monitoring. It shows users, jobs per model with succes
 \begin{itemize}
   \item \textbf{Schema changes by hand.} Production does not run Alembic. Before Coolify deploys, a release script applies dated SQL by hand; running migrations automatically would be safer.
   \item \textbf{One host.} Backups leave the host, but the API, database and media still share it, so it is a single point of failure.
-  \item \textbf{Short-lived metrics.} Request metrics live in the memory of one API process and reset on every restart, and no alerting is set up.
 \end{itemize}
 
 \appendix
