@@ -158,6 +158,15 @@ def diff_segmentation_run(
             )
         )
 
+    # A line linked to this run under an id the run does not list has nothing to be
+    # compared against. A back-filled run stores no geometry at all, so on such a
+    # page every live line is in this position; without this they would fall out of
+    # all four lists instead of being reported as the additions they are.
+    proposed_ids = {proposal.external_id for proposal in proposed}
+    for external_id, lines in by_external.items():
+        if external_id not in proposed_ids:
+            orphans.extend(lines)
+
     added = tuple(
         AddedLine(line_id=line.id, order=line.order, points=line.points)
         for line in sorted(orphans, key=lambda item: (item.order, str(item.id)))

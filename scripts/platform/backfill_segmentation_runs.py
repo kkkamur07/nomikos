@@ -108,7 +108,7 @@ def run(*, apply: bool) -> int:
                 skipped += 1
                 continue
             result: dict[str, Any] = job.result or {}
-            identity = identity_for_job(session, job)
+            identity = identity_for_job(job)
             run_row = SegmentationRun(
                 part_id=job.document_part_id,
                 created_by_job_id=job.id,

@@ -109,6 +109,17 @@ def test_a_line_the_model_missed_is_added():
     assert diff.added[0].points == _box(10, 40, 90, 60)
 
 
+def test_lines_linked_to_a_run_that_stores_no_geometry_are_added_not_lost():
+    """A back-filled run has ``lines = []`` but its page's lines still link to it."""
+    first = _live("l1", 0, _box(10, 10, 90, 30))
+    second = _live("l2", 1, _box(10, 40, 90, 60))
+
+    diff = diff_segmentation_run([], [second, first], run_id=RUN_ID)
+
+    assert [item.line_id for item in diff.added] == [first.id, second.id]
+    assert diff.unchanged == diff.corrected == diff.deleted == ()
+
+
 def test_a_split_is_one_correction_carrying_both_pieces():
     # Segment health cut a two-column segment in half. Both pieces inherit the
     # origin, so the pair reads as one line the model got wrong, not as one

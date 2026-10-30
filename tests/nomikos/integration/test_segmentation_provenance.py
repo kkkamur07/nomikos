@@ -934,3 +934,56 @@ def test_editing_a_line_stamps_when_and_who(
     assert edited.updated_by == user_id_for_email(owner_user["email"])
     # The line nobody touched is still unstamped.
     assert after[before[1].id].updated_at is None
+
+
+# --- 7. back-fill -----------------------------------------------------------
+
+
+def test_the_backfill_rebuilds_a_run_and_its_lines_read_as_added(
+    client: TestClient,
+    owner_headers: dict[str, str],
+    owner_project: dict,
+    monkeypatch,
+) -> None:
+    """A page segmented before runs were recorded: the job and the lines' breadcrumbs
+    survive, the run row does not. The back-fill must rebuild the run, relink the
+    lines, and the diff must then list every one of them as added."""
+    import os
+    import sys
+    from pathlib import Path
+
+    from sqlalchemy import delete, update
+
+    from backend.document.infrastructure.orm_models import Line, SegmentationRun
+    from infrastructure.db import sync_system_session
+
+    document_id, part_id = make_part(client, owner_headers, owner_project, name="Back-filled")
+    job_id, run_id = _segment_page(
+        part_id, [("l1", 0, _box(10, 10, 90, 30)), ("l2", 1, _box(10, 40, 90, 60))]
+    )
+    with sync_system_session() as session:
+        session.execute(
+            update(Line)
+            .where(Line.part_id == uuid.UUID(part_id))
+            .values(segmentation_run_id=None, run_external_id=None)
+        )
+        session.execute(delete(SegmentationRun).where(SegmentationRun.id == run_id))
+        session.commit()
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts" / "platform"))
+    import backfill_segmentation_runs
+
+    monkeypatch.setenv("BACKFILL_DATABASE_URL", os.environ["SYNC_DATABASE_URL"])
+    assert backfill_segmentation_runs.run(apply=True) == 0
+
+    with sync_system_session() as session:
+        rebuilt = session.execute(
+            select(SegmentationRun).where(SegmentationRun.created_by_job_id == job_id)
+        ).scalar_one()
+        assert rebuilt.lines == []
+        assert rebuilt.registry_model_id == "blla-segment"
+    assert _origins(part_id) == {"l1": rebuilt.id, "l2": rebuilt.id}
+
+    body = _diff(client, owner_headers, owner_project, document_id, part_id)
+    assert len(body["added"]) == 2
+    assert body["unchanged"] == body["corrected"] == body["deleted"] == []
