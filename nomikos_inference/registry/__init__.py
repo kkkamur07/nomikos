@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from functools import lru_cache
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from nomikos_inference import INFERENCE_ROOT
 from nomikos_inference.contracts.common import (
     ComputeDevice,
     HostEligibility,
@@ -16,11 +16,9 @@ from nomikos_inference.contracts.common import (
     LineCrop,
     RegistryArchitecture,
 )
+from nomikos_inference.hub.pins import COMMIT_SHA_PATTERN, SHA256_PATTERN
 
-INFERENCE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY_PATH = INFERENCE_ROOT / "registry.yaml"
-_COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
-_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class RegistryVersionEntry(BaseModel):
@@ -31,21 +29,21 @@ class RegistryVersionEntry(BaseModel):
     @field_validator("hub_revision")
     @classmethod
     def validate_hub_revision(cls, value: str | None) -> str | None:
-        if value is not None and not _COMMIT_SHA_PATTERN.fullmatch(value):
+        if value is not None and not COMMIT_SHA_PATTERN.fullmatch(value):
             raise ValueError("hub_revision must be a 40-character lowercase commit SHA")
         return value
 
     @field_validator("artifact_sha256")
     @classmethod
     def validate_artifact_sha256(cls, value: str | None) -> str | None:
-        if value is not None and not _SHA256_PATTERN.fullmatch(value):
+        if value is not None and not SHA256_PATTERN.fullmatch(value):
             raise ValueError("artifact_sha256 must be a 64-character lowercase SHA-256")
         return value
 
     @model_validator(mode="after")
     def validate_hf_provenance_pair(self) -> RegistryVersionEntry:
-        if self.weights_source.startswith("hf://") and (
-            bool(self.hub_revision) != bool(self.artifact_sha256)
+        if self.weights_source.startswith("hf://") and not (
+            self.hub_revision and self.artifact_sha256
         ):
             raise ValueError("hf weights_source must provide both hub_revision and artifact_sha256")
         if not self.weights_source.startswith("hf://") and self.hub_revision is not None:
@@ -68,6 +66,37 @@ class RegistryModelEntry(BaseModel):
     versions: dict[str, RegistryVersionEntry] = Field(min_length=1)
 
 
+def _require_transcribe_crop(model_id: str, entry: RegistryModelEntry) -> None:
+    """A transcribe entry must state the crop recipe its training used."""
+    if entry.line_crop is None:
+        raise ValueError(
+            f"registry model {model_id!r} has task 'transcribe' and must set "
+            "line_crop to one of: " + ", ".join(repr(option.value) for option in LineCrop)
+        )
+    if entry.line_crop_padding is None:
+        raise ValueError(
+            f"registry model {model_id!r} has task 'transcribe' and must set "
+            "line_crop_padding, the pixel padding its training crops were "
+            "exported with"
+        )
+    if entry.line_crop_padding < 0:
+        raise ValueError(
+            f"registry model {model_id!r} has a negative line_crop_padding "
+            f"({entry.line_crop_padding}); padding widens the crop and cannot "
+            "shrink it"
+        )
+
+
+def _reject_non_transcribe_crop(model_id: str, entry: RegistryModelEntry) -> None:
+    """Crop fields only apply to transcribe models."""
+    for field in ("line_crop", "line_crop_padding"):
+        if getattr(entry, field) is not None:
+            raise ValueError(
+                f"registry model {model_id!r} has task {entry.task.value!r} and "
+                f"must not set {field}, which only applies to transcribe models"
+            )
+
+
 class RegistryDocument(BaseModel):
     models: dict[str, RegistryModelEntry] = Field(min_length=1)
 
@@ -84,31 +113,9 @@ class RegistryDocument(BaseModel):
         """
         for model_id, entry in self.models.items():
             if entry.task == InferenceTask.transcribe:
-                if entry.line_crop is None:
-                    raise ValueError(
-                        f"registry model {model_id!r} has task 'transcribe' and must set "
-                        "line_crop to one of: "
-                        + ", ".join(repr(option.value) for option in LineCrop)
-                    )
-                if entry.line_crop_padding is None:
-                    raise ValueError(
-                        f"registry model {model_id!r} has task 'transcribe' and must set "
-                        "line_crop_padding, the pixel padding its training crops were "
-                        "exported with"
-                    )
-                if entry.line_crop_padding < 0:
-                    raise ValueError(
-                        f"registry model {model_id!r} has a negative line_crop_padding "
-                        f"({entry.line_crop_padding}); padding widens the crop and cannot "
-                        "shrink it"
-                    )
+                _require_transcribe_crop(model_id, entry)
             else:
-                for field in ("line_crop", "line_crop_padding"):
-                    if getattr(entry, field) is not None:
-                        raise ValueError(
-                            f"registry model {model_id!r} has task {entry.task.value!r} and "
-                            f"must not set {field}, which only applies to transcribe models"
-                        )
+                _reject_non_transcribe_crop(model_id, entry)
         return self
 
 

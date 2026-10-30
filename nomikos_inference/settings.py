@@ -17,9 +17,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
+from nomikos_inference import INFERENCE_ROOT
 from nomikos_inference.admission import AdmissionSettings
-
-INFERENCE_ROOT = Path(__file__).resolve().parent
 
 
 class InferenceSettings(AdmissionSettings):

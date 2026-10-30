@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -22,7 +22,7 @@ class JobSubmitRequest(BaseModel):
     registry_tag: str = Field(default="stable", min_length=1)
     product_job_id: UUID
     image_bytes: ImageBytes
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_supported_task(self) -> JobSubmitRequest:

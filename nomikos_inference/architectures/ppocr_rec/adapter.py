@@ -24,13 +24,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import onnxruntime as ort
 
 import numpy as np
 
 from nomikos_inference.architectures.artifact import ArtifactHandle, resolve_artifact
 from nomikos_inference.architectures.isolation import reraise_if_none_survived
 from nomikos_inference.architectures.ppocr_rec.bidi import get_display_map
+from nomikos_inference.architectures.ppocr_rec.onnx_session import open_onnx_session
 from nomikos_inference.architectures.ppocr_rec.preprocessing import (
     preprocess_line_image_bytes_to_ppocr_rec_tensor,
 )
@@ -93,106 +97,121 @@ def _metadata_int(metadata: Mapping[str, str], key: str, *, minimum: int) -> int
     return value
 
 
+def _temperature_from_metadata(metadata: Mapping[str, str]) -> float:
+    # Unlike Calamari, where the exporter bakes the temperature into the
+    # graph, the PP-OCR graph emits raw logits and serving applies
+    # ``softmax(logits / temperature)`` itself, exactly as kraken's
+    # ``_rec_predict`` divides before its softmax.
+    try:
+        temperature = float(metadata["temperature"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has invalid temperature metadata"
+        ) from error
+    if not math.isfinite(temperature) or temperature <= 0:
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has invalid temperature metadata"
+        )
+    return temperature
+
+
+def _charset_from_metadata(metadata: Mapping[str, str], classes: int) -> tuple[str, ...]:
+    charset_value = metadata.get("charset")
+    if charset_value is None:
+        raise PPOCRRecUnavailableError("PP-OCR recognition ONNX artifact has no codec metadata")
+    charset = json.loads(charset_value)
+    if (
+        not isinstance(charset, list)
+        or len(charset) != classes
+        or not all(isinstance(character, str) for character in charset)
+        or charset[0] != ""
+    ):
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has invalid codec metadata"
+        )
+    return tuple(charset)
+
+
+def _tensor_names_from_metadata(metadata: Mapping[str, str]) -> tuple[str, tuple[str, ...]]:
+    input_name = metadata.get("input_name")
+    if not input_name:
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has no input name metadata"
+        )
+    try:
+        output_names = json.loads(metadata.get("output_names", ""))
+    except ValueError as error:
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has invalid output names metadata"
+        ) from error
+    if (
+        not isinstance(output_names, list)
+        or not output_names
+        or not all(isinstance(name, str) for name in output_names)
+    ):
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has invalid output names metadata"
+        )
+    return input_name, tuple(output_names)
+
+
+def _config_from_metadata(metadata: Mapping[str, str]) -> PPOCRRecGraphConfig:
+    if metadata.get("format") != "ppocr-rec-onnx-v1":
+        raise PPOCRRecUnavailableError("unsupported PP-OCR recognition ONNX artifact format")
+    if metadata.get("blank_index") != "0":
+        raise PPOCRRecUnavailableError(
+            "PP-OCR recognition ONNX artifact has an unsupported blank index"
+        )
+    classes = _metadata_int(metadata, "classes", minimum=2)
+    line_height = _metadata_int(metadata, "line_height", minimum=1)
+    pad = _metadata_int(metadata, "pad", minimum=0)
+    pad_fill = _metadata_int(metadata, "pad_fill", minimum=0)
+    if pad_fill > 255:
+        raise PPOCRRecUnavailableError("PP-OCR recognition ONNX metadata has invalid pad_fill")
+    input_name, output_names = _tensor_names_from_metadata(metadata)
+    return PPOCRRecGraphConfig(
+        charset=_charset_from_metadata(metadata, classes),
+        line_height=line_height,
+        pad=pad,
+        pad_fill=pad_fill,
+        temperature=_temperature_from_metadata(metadata),
+        input_name=input_name,
+        output_names=output_names,
+    )
+
+
+def _check_session_io(session: ort.InferenceSession, config: PPOCRRecGraphConfig) -> None:
+    input_names = {input_.name for input_ in session.get_inputs()}
+    if config.input_name not in input_names:
+        raise PPOCRRecUnavailableError("PP-OCR recognition ONNX artifact has incompatible inputs")
+    output_name_set = {output.name for output in session.get_outputs()}
+    if not set(config.output_names).issubset(output_name_set):
+        raise PPOCRRecUnavailableError("PP-OCR recognition ONNX artifact has incompatible outputs")
+
+
 @lru_cache(maxsize=4)
 def _load_session(
     model_path: str,
     fingerprint: tuple[int, int] | None = None,
-) -> tuple[Any, PPOCRRecGraphConfig]:
+) -> tuple[ort.InferenceSession, PPOCRRecGraphConfig]:
     """Open a session and read the codec the graph carries with it.
 
     ``fingerprint`` is part of the cache key rather than an argument the loader
     reads: it is what makes a *replaced* artifact file miss the cache instead of
     serving the previous model for the life of the process.
     """
+    session = open_onnx_session(
+        model_path,
+        PPOCRRecUnavailableError,
+        "unable to load PP-OCR recognition ONNX artifact",
+        "onnxruntime is required for the PP-OCR recognition runtime",
+    )
     try:
-        import onnxruntime as ort
-
-        session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-        metadata = session.get_modelmeta().custom_metadata_map
-        if metadata.get("format") != "ppocr-rec-onnx-v1":
-            raise PPOCRRecUnavailableError("unsupported PP-OCR recognition ONNX artifact format")
-        if metadata.get("blank_index") != "0":
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has an unsupported blank index"
-            )
-        classes = _metadata_int(metadata, "classes", minimum=2)
-        line_height = _metadata_int(metadata, "line_height", minimum=1)
-        pad = _metadata_int(metadata, "pad", minimum=0)
-        pad_fill = _metadata_int(metadata, "pad_fill", minimum=0)
-        if pad_fill > 255:
-            raise PPOCRRecUnavailableError("PP-OCR recognition ONNX metadata has invalid pad_fill")
-        # Unlike Calamari, where the exporter bakes the temperature into the
-        # graph, the PP-OCR graph emits raw logits and serving applies
-        # ``softmax(logits / temperature)`` itself, exactly as kraken's
-        # ``_rec_predict`` divides before its softmax.
-        try:
-            temperature = float(metadata["temperature"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has invalid temperature metadata"
-            ) from error
-        if not math.isfinite(temperature) or temperature <= 0:
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has invalid temperature metadata"
-            )
-        charset_value = metadata.get("charset")
-        if charset_value is None:
-            raise PPOCRRecUnavailableError("PP-OCR recognition ONNX artifact has no codec metadata")
-        charset = json.loads(charset_value)
-        if (
-            not isinstance(charset, list)
-            or len(charset) != classes
-            or not all(isinstance(character, str) for character in charset)
-            or charset[0] != ""
-        ):
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has invalid codec metadata"
-            )
-        input_name = metadata.get("input_name")
-        if not input_name:
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has no input name metadata"
-            )
-        try:
-            output_names = json.loads(metadata.get("output_names", ""))
-        except ValueError as error:
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has invalid output names metadata"
-            ) from error
-        if (
-            not isinstance(output_names, list)
-            or not output_names
-            or not all(isinstance(name, str) for name in output_names)
-        ):
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has invalid output names metadata"
-            )
-        input_names = {input_.name for input_ in session.get_inputs()}
-        if input_name not in input_names:
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has incompatible inputs"
-            )
-        output_name_set = {output.name for output in session.get_outputs()}
-        if not set(output_names).issubset(output_name_set):
-            raise PPOCRRecUnavailableError(
-                "PP-OCR recognition ONNX artifact has incompatible outputs"
-            )
-        config = PPOCRRecGraphConfig(
-            charset=tuple(charset),
-            line_height=line_height,
-            pad=pad,
-            pad_fill=pad_fill,
-            temperature=temperature,
-            input_name=input_name,
-            output_names=tuple(output_names),
-        )
+        config = _config_from_metadata(session.get_modelmeta().custom_metadata_map)
+        _check_session_io(session, config)
         return session, config
     except PPOCRRecUnavailableError:
         raise
-    except ImportError as error:
-        raise PPOCRRecUnavailableError(
-            "onnxruntime is required for the PP-OCR recognition runtime"
-        ) from error
     except Exception as error:
         raise PPOCRRecUnavailableError("unable to load PP-OCR recognition ONNX artifact") from error
 

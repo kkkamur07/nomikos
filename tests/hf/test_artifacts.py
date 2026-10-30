@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 
 from nomikos_inference.hub import artifacts
-from nomikos_inference.hub.artifacts import ArtifactIntegrityError, verify_artifact_sha256
+from nomikos_inference.hub.artifacts import (
+    ArtifactIntegrityError,
+    find_hub_artifact,
+    verify_artifact_sha256,
+)
 
 CONTENT = b"checkpoint bytes" * 64
 DIGEST = hashlib.sha256(CONTENT).hexdigest()
@@ -105,3 +109,30 @@ def test_memo_stays_bounded(tmp_path: Path):
         verify_artifact_sha256(_write(tmp_path / f"model-{index}.pt"), DIGEST)
 
     assert len(artifacts._VERIFIED_DIGESTS) <= artifacts._VERIFIED_DIGESTS_MAX
+
+
+def test_known_architecture_missing_its_named_file_raises(tmp_path: Path):
+    """A wrong pick must read as a missing artifact, not an integrity failure."""
+    _write(tmp_path / "other.onnx")
+    with pytest.raises(FileNotFoundError, match="model.onnx"):
+        find_hub_artifact(tmp_path, architecture="ppocr_rec")
+
+
+def test_legacy_architecture_spellings_resolve(tmp_path: Path):
+    _write(tmp_path / "blla.onnx")
+    assert find_hub_artifact(tmp_path, architecture="blla_segment").name == "blla.onnx"
+    assert find_hub_artifact(tmp_path, architecture="kraken_segment").name == "blla.onnx"
+    _write(tmp_path / "ppocrv6-det.onnx")
+    assert find_hub_artifact(tmp_path, architecture="ppocr_det").name == "ppocrv6-det.onnx"
+
+
+def test_unknown_architecture_raises_instead_of_guessing(tmp_path: Path):
+    _write(tmp_path / "model.onnx")
+    with pytest.raises(FileNotFoundError, match="unknown architecture"):
+        find_hub_artifact(tmp_path, architecture="trocr")
+
+
+def test_no_architecture_still_picks_the_first_onnx(tmp_path: Path):
+    _write(tmp_path / "b.onnx")
+    first = _write(tmp_path / "a.onnx")
+    assert find_hub_artifact(tmp_path, architecture=None) == first

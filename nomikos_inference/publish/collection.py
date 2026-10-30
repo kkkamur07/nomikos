@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -31,7 +30,7 @@ class CollectionSpec:
         return f"{self.namespace}/{item_slug}"
 
 
-def _parse_items(raw_items: Any) -> tuple[CollectionItemRef, ...]:
+def _parse_items(raw_items: object) -> tuple[CollectionItemRef, ...]:
     if raw_items is None:
         return ()
     if not isinstance(raw_items, list):
