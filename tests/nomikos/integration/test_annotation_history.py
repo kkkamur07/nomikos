@@ -83,6 +83,9 @@ def test_member_can_create_and_list_compact_history_snapshots(
             "order": 0,
             "kind": "polygon",
             "points": [[0, 0], [10, 0], [10, 5], [0, 5]],
+            # Baseline and mask are snapshotted so a restore keeps the geometry.
+            "baseline": {"points": [[0, 5], [10, 5]]},
+            "mask": {"points": [[0, 0], [10, 0], [10, 5], [0, 5]]},
             "source": "manual",
             "source_metadata": None,
             "kraken_ceiling": None,
@@ -94,6 +97,8 @@ def test_member_can_create_and_list_compact_history_snapshots(
             "order": 1,
             "kind": "rectangle",
             "points": [[0, 10], [10, 10], [10, 15], [0, 15]],
+            "baseline": {"points": [[0, 15], [10, 15]]},
+            "mask": {"points": [[0, 10], [10, 10], [10, 15], [0, 15]]},
             "source": "kraken",
             "source_metadata": {"model": "blla"},
             "kraken_ceiling": [[-1, 9], [11, 9], [11, 16], [-1, 16]],
