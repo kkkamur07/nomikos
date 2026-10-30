@@ -405,6 +405,7 @@ class LayoutService:
         *,
         lines: list[dict],
         allow_new_ids: bool = False,
+        restore_origin: bool = False,
     ) -> list[Line]:
         if len(lines) > MAX_REPLACE_PART_LINES:
             raise ValidationError(
@@ -493,6 +494,12 @@ class LayoutService:
             # every save, so a client that sent its own metadata would otherwise
             # rewrite the provenance of every line on the page.
             line.updated_by = user.id
+            # A history restore is the one caller trusted to put an origin back: the
+            # values come from a snapshot the server took, never from a request body.
+            # A snapshot line with no origin leaves the row's own link alone.
+            if restore_origin and data.get("segmentation_run_id") is not None:
+                line.segmentation_run_id = data["segmentation_run_id"]
+                line.run_external_id = data.get("run_external_id")
 
             await self._ground_truth.write(session, line, ground_truth, data.get("approved_text"))
 

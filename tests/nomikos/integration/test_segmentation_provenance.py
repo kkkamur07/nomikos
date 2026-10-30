@@ -987,3 +987,29 @@ def test_the_backfill_rebuilds_a_run_and_its_lines_read_as_added(
     body = _diff(client, owner_headers, owner_project, document_id, part_id)
     assert len(body["added"]) == 2
     assert body["unchanged"] == body["corrected"] == body["deleted"] == []
+
+
+def test_restoring_a_snapshot_brings_a_deleted_proposal_back_unchanged(
+    client: TestClient, owner_headers: dict[str, str], owner_project: dict
+) -> None:
+    document_id, part_id, run_id = _segmented_page(
+        client, owner_headers, owner_project, name="Restored proposal"
+    )
+    part_url = f"{documents_url(owner_project['id'])}/{document_id}/parts/{part_id}"
+    snapshot = client.post(f"{part_url}/history", headers=owner_headers)
+    assert snapshot.status_code in (200, 201), snapshot.text
+
+    doomed = next(row for row in _stored_lines(part_id) if row.run_external_id == "l2")
+    deleted = client.delete(f"{part_url}/lines/{doomed.id}", headers=owner_headers)
+    assert deleted.status_code == 204, deleted.text
+    assert _origins(part_id) == {"l1": run_id}
+
+    restored = client.post(
+        f"{part_url}/history/{snapshot.json()['id']}/restore", headers=owner_headers
+    )
+    assert restored.status_code == 200, restored.text
+
+    assert _origins(part_id) == {"l1": run_id, "l2": run_id}
+    body = _diff(client, owner_headers, owner_project, document_id, part_id)
+    assert sorted(item["external_id"] for item in body["unchanged"]) == ["l1", "l2"]
+    assert body["added"] == body["deleted"] == []
