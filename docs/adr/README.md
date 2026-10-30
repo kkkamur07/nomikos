@@ -22,3 +22,4 @@ value of an ADR is that it says what was believed at the time, and why.
 | [0010](0010-admin-dashboard-and-request-metrics.md)                 | Admin dashboard and request metrics                            | Accepted                                                     |
 | [0011](0011-regions-above-lines.md)                                  | Regions are the unit of layout above lines                     | Accepted                                                     |
 | [0012](0012-user-feedback.md)                                        | User feedback                                                  | Accepted                                                     |
+| [0013](0013-model-output-is-an-immutable-layer-beside-the-human-correction.md) | Model output is an immutable layer beside the human correction | Accepted                                   |

@@ -149,6 +149,7 @@ class DocumentService:
         *,
         lines: list[dict],
         allow_new_ids: bool = False,
+        restore_origin: bool = False,
     ) -> list[Line]:
         return await self.layout.replace_part_lines(
             session,
@@ -158,6 +159,7 @@ class DocumentService:
             part_id,
             lines=lines,
             allow_new_ids=allow_new_ids,
+            restore_origin=restore_origin,
         )
 
     # --- Transcription text ---

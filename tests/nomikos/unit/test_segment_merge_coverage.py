@@ -139,7 +139,7 @@ def test_a_kept_manual_line_is_numbered_between_the_fresh_lines_around_it():
         session, part_id=part.id, canonical_segment=segment, job_id=uuid.uuid4()
     )
 
-    fresh = {line.source_metadata["external_id"]: line.order for line in session.added}
+    fresh = {line.source_metadata["external_id"]: line.order for line in _added_lines(session)}
     assert kept.order == 2
     assert fresh == {"l0": 0, "l1": 1, "l2": 3, "l3": 4}
 

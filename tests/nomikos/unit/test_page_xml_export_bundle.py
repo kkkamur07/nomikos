@@ -18,10 +18,10 @@ import pytest
 from backend.annotation.application.page_xml_export_service import (
     PageXmlBundle,
     PageXmlExportService,
-    _baseline_export_points,
     _ground_truth_text,
     export_file_stem,
 )
+from backend.annotation.application.page_xml_validation import validate_page_xml
 from backend.core.api.content_disposition import attachment_disposition
 from backend.document.infrastructure.orm_models import (
     LineGeometryKind,
@@ -32,16 +32,31 @@ from backend.document.infrastructure.orm_models import (
 PAGE_NS = {"p": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"}
 
 
-def _line(*, points, mask=None, baseline=None, transcriptions=()):
+def _line(
+    *,
+    points,
+    mask=None,
+    baseline=None,
+    transcriptions=(),
+    source=LineSource.manual,
+    block_id=None,
+    manual_geometry=False,
+):
     return SimpleNamespace(
         id=uuid4(),
         points=points,
         mask=mask,
         baseline=baseline,
-        source=LineSource.manual,
+        source=source,
         kind=LineGeometryKind.polygon,
+        block_id=block_id,
+        manual_geometry=manual_geometry,
         transcriptions=list(transcriptions),
     )
+
+
+def _block(*, order, block_id=None):
+    return SimpleNamespace(id=block_id or uuid4(), order=order, box={})
 
 
 def _transcription(text, kind):
@@ -102,33 +117,6 @@ def test_attachment_disposition_non_ascii_keeps_a_fallback_and_the_real_name() -
     assert header.isascii()
 
 
-# --- PAGE Baseline geometry priority: mask, then baseline, then coords ---
-
-
-def test_baseline_export_prefers_mask_over_baseline_over_coords() -> None:
-    coords = [[0.0, 0.0], [10.0, 0.0]]
-    mask = {"points": [[1.0, 1.0], [2.0, 2.0]]}
-    baseline = {"points": [[3.0, 3.0], [4.0, 4.0]]}
-
-    assert (
-        _baseline_export_points(_line(points=coords, mask=mask, baseline=baseline))
-        == mask["points"]
-    )
-    assert _baseline_export_points(_line(points=coords, baseline=baseline)) == baseline["points"]
-    assert _baseline_export_points(_line(points=coords)) == coords
-
-
-def test_baseline_export_falls_through_malformed_geometry_to_coords() -> None:
-    coords = [[5.0, 6.0], [7.0, 8.0]]
-    # points not a list, then a point of wrong arity: both rejected, so coords win.
-    line = _line(
-        points=coords,
-        mask={"points": "not-a-list"},
-        baseline={"points": [[1.0, 2.0, 3.0]]},
-    )
-    assert _baseline_export_points(line) == coords
-
-
 def test_ground_truth_text_selects_the_ground_truth_layer() -> None:
     line = _line(
         points=[[0.0, 0.0]],
@@ -148,21 +136,37 @@ def test_ground_truth_text_is_empty_without_a_ground_truth_layer() -> None:
     assert _ground_truth_text(line) == ""
 
 
-def test_export_part_lines_renders_coords_baseline_and_ground_truth() -> None:
+# --- Rendering: Coords is the polygon, Baseline is a baseline ---
+#
+# The renderer had no unit coverage before 2026-09-18, which is how it shipped for two
+# months writing the mask polygon into <Baseline>.
+
+
+def _render(part, blocks, lines, *, image_filename="Codex_page_1.webp", image_size=None):
     # __new__ skips __init__ so no media store or repositories are constructed;
     # _export_part_lines only needs the sibling _append_text_line method.
     service = PageXmlExportService.__new__(PageXmlExportService)
-    part = SimpleNamespace(id=uuid4(), width=640, height=480, image_key="parts/x.webp")
+    xml, counts = service._export_part_lines(
+        part, blocks, lines, image_filename=image_filename, image_size=image_size
+    )
+    root = fromstring(xml)  # noqa: S314 - XML produced by this test, not untrusted input
+    return root, counts, xml
+
+
+def _part(**overrides):
+    return SimpleNamespace(id=uuid4(), width=640, height=480, image_key="parts/x.webp", **overrides)
+
+
+def test_a_line_with_a_mask_and_a_baseline_exports_both_in_their_own_elements() -> None:
     line = _line(
-        points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
-        mask={"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]},
+        points=[[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]],
+        mask={"points": [[1.0, 1.0], [19.0, 1.0], [19.0, 9.0], [1.0, 9.0]]},
+        baseline={"points": [[2.0, 7.0], [18.0, 7.0]]},
+        source=LineSource.kraken,
         transcriptions=[_transcription("ἐν ἀρχῇ", TranscriptionKind.ground_truth)],
     )
 
-    xml = service._export_part_lines(
-        part, [line], image_filename="Codex_page_1.webp", image_size=None
-    )
-    root = fromstring(xml)  # noqa: S314 - XML produced by this test, not untrusted input
+    root, counts, xml = _render(_part(), [], [line])
 
     page = root.find("p:Page", PAGE_NS)
     assert page.get("imageFilename") == "Codex_page_1.webp"
@@ -170,18 +174,133 @@ def test_export_part_lines_renders_coords_baseline_and_ground_truth() -> None:
     assert page.get("imageHeight") == "480"
 
     text_line = root.find(".//p:TextLine", PAGE_NS)
-    assert text_line.find("p:Coords", PAGE_NS).get("points") == "0,0 10,0 10,5"
-    # Baseline comes from the mask polygon, not the coords.
-    assert text_line.find("p:Baseline", PAGE_NS).get("points") == "1,1 9,1 9,4"
+    # Coords is ``points``, the boundary the editor draws and a vertex edit writes;
+    # a mask left over from before a correction must not replace it.
+    assert text_line.find("p:Coords", PAGE_NS).get("points") == "0,0 20,0 20,10 0,10"
+    assert text_line.find("p:Baseline", PAGE_NS).get("points") == "2,7 18,7"
     assert text_line.find(".//p:Unicode", PAGE_NS).text == "ἐν ἀρχῇ"
+    assert "baseline:derived" not in text_line.get("custom")
+    assert counts == counts._replace(total=1, kraken=1, ground_truth=1)
+    assert validate_page_xml(xml).ok
+
+
+def test_a_line_with_only_points_falls_back_to_them_for_coords() -> None:
+    points = [[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]]
+    line = _line(
+        points=points,
+        baseline={"points": [[2.0, 7.0], [18.0, 7.0]]},
+        transcriptions=[_transcription("β", TranscriptionKind.ground_truth)],
+    )
+
+    root, counts, _ = _render(_part(), [], [line])
+
+    text_line = root.find(".//p:TextLine", PAGE_NS)
+    assert text_line.find("p:Coords", PAGE_NS).get("points") == "0,0 20,0 20,10 0,10"
+    assert counts.derived_baseline == 0
+
+
+def test_a_hand_drawn_box_gets_a_derived_baseline_marked_in_custom() -> None:
+    # What ``create_part_line`` writes when the client sends no baseline.
+    points = [[0.0, 100.0], [100.0, 100.0], [100.0, 120.0], [0.0, 120.0]]
+    line = _line(
+        points=points,
+        baseline={"points": points},
+        manual_geometry=True,
+        transcriptions=[_transcription("γ", TranscriptionKind.ground_truth)],
+    )
+
+    root, counts, xml = _render(_part(), [], [line])
+
+    text_line = root.find(".//p:TextLine", PAGE_NS)
+    assert "baseline:derived" in text_line.get("custom")
+    baseline = text_line.find("p:Baseline", PAGE_NS).get("points")
+    assert baseline == "1,114 99,114"
+    assert counts.derived_baseline == 1
+    assert counts.manual == 1
+    assert counts.manual_geometry == 1
+    # And the derived baseline is still a baseline a trainer accepts.
+    assert validate_page_xml(xml).ok
+
+
+def test_one_block_stays_one_region_with_no_reading_order() -> None:
+    # The BLLA adapter emits exactly one block covering the whole page; splitting
+    # there would invent a structure nobody drew.
+    part = _part()
+    block = _block(order=0)
+    lines = [
+        _line(
+            points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
+            baseline={"points": [[1.0, 4.0], [9.0, 4.0]]},
+            block_id=block.id,
+        )
+    ]
+
+    root, _, _ = _render(part, [block], lines)
+
+    regions = root.findall(".//p:TextRegion", PAGE_NS)
+    assert len(regions) == 1
+    assert regions[0].get("id") == f"region_{part.id}"
+    assert root.find(".//p:ReadingOrder", PAGE_NS) is None
+
+
+def test_two_blocks_become_two_regions_in_a_reading_order() -> None:
+    left, right = _block(order=1), _block(order=0)
+    baseline = {"points": [[1.0, 4.0], [9.0, 4.0]]}
+    polygon = [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]]
+    lines = [
+        _line(points=polygon, baseline=baseline, block_id=left.id),
+        _line(points=polygon, baseline=baseline, block_id=right.id),
+    ]
+
+    root, counts, _ = _render(_part(), [left, right], lines)
+
+    regions = root.findall(".//p:TextRegion", PAGE_NS)
+    assert [region.get("id") for region in regions] == [f"region_{right.id}", f"region_{left.id}"]
+    refs = root.findall(".//p:RegionRefIndexed", PAGE_NS)
+    assert [(ref.get("index"), ref.get("regionRef")) for ref in refs] == [
+        ("0", f"region_{right.id}"),
+        ("1", f"region_{left.id}"),
+    ]
+    # ReadingOrder precedes the regions it names, as PAGE 2019-07-15 requires.
+    page_children = [child.tag for child in root.find("p:Page", PAGE_NS)]
+    assert page_children[0].endswith("ReadingOrder")
+    assert counts.total == 2
+
+
+def test_a_line_belonging_to_no_block_gets_a_region_of_its_own() -> None:
+    part = _part()
+    first, second = _block(order=0), _block(order=1)
+    baseline = {"points": [[1.0, 4.0], [9.0, 4.0]]}
+    polygon = [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]]
+    lines = [
+        _line(points=polygon, baseline=baseline, block_id=first.id),
+        _line(points=polygon, baseline=baseline, block_id=second.id),
+        _line(points=polygon, baseline=baseline, block_id=None),
+    ]
+
+    root, _, _ = _render(part, [first, second], lines)
+
+    regions = [region.get("id") for region in root.findall(".//p:TextRegion", PAGE_NS)]
+    assert regions[-1] == f"region_{part.id}_unassigned"
+
+
+def test_an_empty_page_renders_one_empty_region_and_zero_counts() -> None:
+    part = _part()
+
+    root, counts, _ = _render(part, [], [])
+
+    regions = root.findall(".//p:TextRegion", PAGE_NS)
+    assert len(regions) == 1
+    # A boundary but no lines: kraken drops a region that has no Coords at all.
+    assert [child.tag.split("}")[-1] for child in regions[0]] == ["Coords"]
+    assert counts.total == 0
 
 
 def test_export_part_lines_omits_dimensions_when_the_part_has_none() -> None:
-    service = PageXmlExportService.__new__(PageXmlExportService)
     part = SimpleNamespace(id=uuid4(), width=None, height=None, image_key="parts/x.webp")
 
-    xml = service._export_part_lines(part, [], image_filename="Codex_page_2.img", image_size=None)
-    page = fromstring(xml).find("p:Page", PAGE_NS)  # noqa: S314 - XML produced by this test
+    root, _, _ = _render(part, [], [], image_filename="Codex_page_2.img")
+    page = root.find("p:Page", PAGE_NS)
 
     assert page.get("imageFilename") == "Codex_page_2.img"
     assert "imageWidth" not in page.attrib

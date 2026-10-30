@@ -45,6 +45,7 @@ vi.mock("../../api/client", async (importOriginal) => {
     createPartBlock: vi.fn(),
     patchPartBlock: vi.fn(),
     deletePartBlock: vi.fn(),
+    mergePartLines: vi.fn(),
     updateLineGeometry: vi.fn(),
     resetPartLayout: vi.fn(),
     generateTranscriptionPdf: vi.fn(),
@@ -109,6 +110,7 @@ export type MockedEditorApi = {
   createPartBlock: ReturnType<typeof vi.fn>;
   patchPartBlock: ReturnType<typeof vi.fn>;
   deletePartBlock: ReturnType<typeof vi.fn>;
+  mergePartLines: ReturnType<typeof vi.fn>;
   updateLineGeometry: ReturnType<typeof vi.fn>;
   resetPartLayout: ReturnType<typeof vi.fn>;
   generateTranscriptionPdf: ReturnType<typeof vi.fn>;
