@@ -57,10 +57,10 @@ def _tokens() -> BrowserSessionTokens:
 def _install_fakes(auth_routes, monkeypatch, *, login_user=None, register_user=None):
     class FakeAuth:
         async def register(self, db, **kwargs):
-            return register_user, "token"
+            return register_user
 
         async def login(self, db, **kwargs):
-            return login_user, "token"
+            return login_user
 
     class FakeSessions:
         def __init__(self, settings):

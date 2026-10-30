@@ -227,9 +227,10 @@ async def test_replace_diffs_the_page_deleting_updating_and_inserting() -> None:
     assert world.session.deleted == [dropped]
     assert world.session.commits == 1
     updated, inserted = lines
-    # The existing row is updated in place, not replaced.
+    # The existing row is updated in place, not replaced. The server makes the
+    # client's orders dense, so 5 and 6 become 0 and 1.
     assert updated is kept
-    assert (updated.order, updated.points) == (5, _OTHER_POINTS)
+    assert (updated.order, updated.points) == (0, _OTHER_POINTS)
     # Omitted optional fields keep what the row had.
     assert updated.source is LineSource.kraken
     assert updated.manual_geometry is False
@@ -237,7 +238,7 @@ async def test_replace_diffs_the_page_deleting_updating_and_inserting() -> None:
     assert updated.kraken_ceiling == [[1.0, 2.0]]
     # A new row takes the schema defaults and a fresh geometry from its points.
     assert inserted.part_id == world.part.id
-    assert inserted.order == 6
+    assert inserted.order == 1
     assert inserted.kind is LineGeometryKind.polygon
     assert inserted.source is LineSource.manual
     assert inserted.manual_geometry is True
@@ -295,17 +296,19 @@ async def test_replace_checks_every_block_with_one_query() -> None:
 
     lines = await world.replace([_payload(order, block_id=block.id) for order in range(25)])
 
-    assert world.repository.block_queries == 1
+    # One query checks every block, one more ranks the regions for reading order.
+    assert world.repository.block_queries == 2
     assert {line.block_id for line in lines} == {block.id}
 
 
 @pytest.mark.asyncio
-async def test_replace_skips_the_block_query_when_no_line_names_a_block() -> None:
+async def test_replace_skips_the_block_check_when_no_line_names_a_block() -> None:
     world = _World()
 
     await world.replace([_payload(0, block_id=None)])
 
-    assert world.repository.block_queries == 0
+    # Only the reading-order ranking reads the blocks; there is nothing to check.
+    assert world.repository.block_queries == 1
 
 
 @pytest.mark.asyncio
