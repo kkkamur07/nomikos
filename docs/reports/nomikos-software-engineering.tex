@@ -5,6 +5,7 @@
 \usepackage{microtype}
 \usepackage{booktabs}
 \usepackage{tabularx}
+\usepackage{float}
 \usepackage{xcolor}
 \usepackage{tikz}
 \usetikzlibrary{fit,arrows.meta,backgrounds,positioning}
@@ -50,6 +51,14 @@
 {\small Live at \href{https://nomikos.app}{\texttt{nomikos.app}}, code at \href{https://github.com/kkkamur07/nomikos}{\texttt{github.com/kkkamur07/nomikos}}.}
 
 Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. The corrections are the point: each one turns a model guess into ground truth for the next model.
+
+The design aims at four things, and every choice below serves at least one of them:
+\begin{itemize}
+  \item \textbf{Low running cost.} Models run on researchers' own machines where possible.
+  \item \textbf{No lost corrections.} Model output and human edits are stored separately and never overwrite each other.
+  \item \textbf{One codebase for inference.} A laptop and our server run the same agent.
+  \item \textbf{A small attack surface.} The browser and the agents reach the system through one API, and nothing else is exposed.
+\end{itemize}
 
 \section{Tech stack}
 
@@ -138,13 +147,15 @@ Figure~\ref{fig:containers} has two paths. On the request path, the browser load
 
 All stateful parts sit on one Coolify host: the API container built from \repo{nomikos/Dockerfile}, the Postgres container, the media directory and the worker (\repo{infrastructure/docker-compose.worker.yml}). Postgres is backed up off the host to Cloudflare. The hosted agent runs on a separate machine as systemd units.
 
+The frontend is a client-rendered single-page app. TanStack Query caches every API response for 30 seconds and refetches when the tab regains focus or the network comes back. In the editor, a line's text is saved when the line loses focus, edits can be undone, and saved states of a page go into a history the user can restore from. While a job runs, all components that care about it share one event stream for that job, and if no event arrives for 12 seconds the browser falls back to polling.
+
 \choice{A modular monolith.} The API is one process split into six bounded contexts (users, project, document, annotation, ml, jobs), each with \code{api}, \code{application}, \code{domain} and \code{infrastructure} layers (\repo{nomikos/backend/README.md}). Microservices would add network hops, several databases and distributed transactions. A monolith gives one deploy and one transaction per request, and Alembic migrations in \repo{nomikos/infrastructure/alembic} keep the single schema in step with the code. The price is that boundaries are only conventions: document, annotation, ml and jobs import each other in both directions.
 
 \choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Agents pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. Postgres \texttt{NOTIFY} tells the API when a job finishes, and the API forwards that to the browser as server-sent events. The queue matters more as the platform grows. Many users start jobs and many agents claim them at the same moment, and without a single queue that locks each row these transactions would collide: two agents could take the same page, or a result could land on a job that was already finished. With one table and row locks, every claim and every callback is one ordered transaction. The cost is that Postgres carries the queue load on top of every other request.
 
 \choice{Agents connect outward.} An inference agent is the same program on a researcher's laptop and on our inference host; only the token differs (Figure~\ref{fig:agents}). A device token claims its owner's local jobs, a service token claims cloud jobs. This lets researchers run models on their own machines instead of on rented cloud servers, which keeps our hosting costs low, and the hosted agent covers anyone without a capable laptop. Because the agent always opens the connection, it works behind a university firewall without port forwarding, and the server never needs to know where agents are. The alternative, a server that pushes work to a listening inference service, needs open ports, a registry of worker addresses and a second code path. The cost: if the API is down, agents stop.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \resizebox{0.8\linewidth}{!}{%
 \begin{tikzpicture}
@@ -172,10 +183,9 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
 \label{fig:agents}
 \end{figure}
 
-\choice{ONNX Runtime serves, PyTorch only exports.} The agent runs on researchers' laptops, some with only 8\,GB of memory, so we chose \href{https://onnxruntime.ai}{ONNX Runtime} for being light rather than fast. Figure~\ref{fig:onnxbars} shows the gap: the install is 54\% smaller and a page needs 3.0\,GB of memory instead of 7.0\,GB. One CPU build installs everywhere, with no flag to keep GPU libraries out. The price is a page that runs 12 to 14\% slower. PyTorch only exports each model to ONNX (Figure~\ref{fig:onnx}); parity tests in \repo{tests/export} check that the exported model gives the same output, and \repo{nomikos_inference/registry.yaml} stores each model's preprocessing settings.
+\choice{ONNX Runtime serves, PyTorch only exports.} The agent runs on researchers' laptops, some with only 8\,GB of memory, so we chose \href{https://onnxruntime.ai}{ONNX Runtime} because it is light. Figure~\ref{fig:onnxbars} compares it with PyTorch for serving.
 
-
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \resizebox{0.62\linewidth}{!}{%
 \begin{tikzpicture}[x=0.06cm, bl/.style={font=\footnotesize, anchor=west, inner sep=2pt}]
@@ -200,7 +210,9 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
 \label{fig:onnxbars}
 \end{figure}
 
-\begin{figure}[ht]
+The ONNX Runtime install is 54\% smaller, and a page needs 3.0\,GB of memory instead of 7.0\,GB. One CPU build installs on every platform, so nobody needs a special flag to keep GPU libraries off their laptop. PyTorch is still part of the project, but only to export each trained model to an ONNX file (Figure~\ref{fig:onnx}). Parity tests in \repo{tests/export} check that the exported model gives the same output as the original, and \repo{nomikos_inference/registry.yaml} stores each model's preprocessing settings.
+
+\begin{figure}[H]
 \centering
 \resizebox{0.88\linewidth}{!}{%
 \begin{tikzpicture}[node distance=0.55cm and 0.9cm]
@@ -241,6 +253,9 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
 \label{fig:onnx}
 \end{figure}
 
+Adding a model follows the same path (\repo{docs/inference/adding-inference-models.md}): export it and pass the parity test, publish it to the Hub, add an entry with its revision and file hash to \code{registry.yaml}, insert a row in the \code{inference_models} table so it appears in the editor's model picker, deploy the API, and release a new agent so agents carry the entry. Each agent downloads the weights on first use.
+
+
 \choice{Model output is never overwritten.} Each segmentation run is stored once in \code{segmentation_runs} as JSON with the model name and version, and never updated. Human edits go to the live lines and to a separate \code{ground_truth} transcription layer. Comparing the two shows exactly what a person fixed, including lines they deleted, and that difference is the training data. Overwriting the model output in place would save space but lose that record, so we keep every run and accept that storage only grows.
 
 \choice{A generated API contract.} \repo{scripts/platform/export_openapi.py} writes \repo{nomikos/frontend/openapi/openapi.json} (115 operations) from the FastAPI app, and \href{https://openapi-ts.dev}{\texttt{openapi-typescript}} turns it into TypeScript types for the frontend. A pre-commit hook regenerates both, and CI fails if they drift. Hand-written frontend types would drift from the backend without anyone noticing. Here, if the backend drops a field, the frontend stops compiling, and CI catches any change that skipped the generation step, so the two sides cannot go out of sync on \texttt{main}.
@@ -248,6 +263,12 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
 \choice{All access goes through the API.} The browser talks only to the API, never to Postgres or storage. Images come through short-lived signed URLs. We do not use Postgres row-level security or let the browser query the database directly; FastAPI checks access before every query. All authorisation lives in one layer, which is easy to audit but means every new route has to remember the check.
 
 \choice{Frontend on Vercel, backend on Coolify.} Vercel builds and serves Next.js natively, with caching and a global edge network, which gives the editor the best load times we can get. The backend needs what serverless platforms handle poorly: a long-running worker, a direct database connection, a disk for images and long-lived connections. The most important of these are the \textbf{server-sent event (SSE) streams}: a browser watching a job keeps one HTTP connection open to \texttt{/jobs/\{id\}/events}, and the API pushes job progress down it the moment Postgres reports a change. Inside the API a single \texttt{LISTEN} on the database feeds all of these streams, so the browser never polls in normal use. Coolify deploys our containers from Git on our own server, and we take care of that server, its releases and its backups.
+
+\section{Security}
+
+FastAPI owns authentication. It stores password hashes, issues JWT access tokens with rotating sessions, checks CSRF tokens and rate-limits login attempts. A laptop agent never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the agent opens the browser, the signed-in user approves the device, and the agent receives a device token that it sends in its own header (\repo{docs/adr}). That token can claim only its owner's local jobs.
+
+The completion callback is narrowed in the same way. The API records which agent holds each job in \code{jobs.claimed_by} and accepts a result only from that agent, so one paired laptop cannot complete or fail anyone else's work (\repo{nomikos/backend/jobs/api/internal_inference.py}). Agents get only inference and callback credentials, never database or JWT secrets. Page images reach agents and browsers through short-lived signed URLs, and agents check each model file against the SHA-256 hash pinned in the registry.
 
 \section{Job flow}
 
@@ -330,7 +351,33 @@ A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POS
 
 A project holds documents, a document holds pages, and a page holds regions and lines (Figure~\ref{fig:er}). Text does not live on the line. It lives in \code{line_transcription}, one row per line and per transcription layer, so the model's text and the human's text sit side by side. Every live line points back to the segmentation run that proposed it, and the run keeps the model identity as text, so the history survives even if the job or the catalog row is deleted.
 
-\begin{table}[ht]
+
+Appendix~\ref{app:columns} lists the main columns. A job row carries its own claim state (who holds it, how often it was claimed, when it last reported), which is all the queue needs.
+
+\section{Usage so far}
+
+The admin dashboard gives the numbers for the 90 days up to 30 October 2026. There are 18 accounts, four of them test or service accounts. They ran 1,070 jobs, 876 transcriptions and 194 segmentations, and none failed. From job creation to completion, a transcription takes a median of 2.5 to 3.3 seconds per page depending on the model, and a segmentation 14 to 36 seconds with the current segmenters. A claim request from an agent takes 35\,ms on average. The whole database is 44.8\,MB, of which the \code{lines} table is 26\,MB.
+
+\section{Quality, monitoring and open issues}
+
+CI (\repo{.github/workflows}) runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The agent is released to PyPI through trusted publishing.
+
+An admin dashboard covers monitoring. It shows users, jobs per model with success rate and median duration, Postgres statistics, request counts and timings per route, failure reports sent by browsers, and user feedback.
+
+Open issues:
+\begin{itemize}
+  \item Production does not run Alembic. A release script (\repo{scripts/platform/release_2026_10_11.sh}) applies dated SQL by hand before Coolify deploys; an automatic migration step would be safer.
+  \item mypy runs in CI but does not fail the build.
+  \item \repo{docs/deployment/production.md} does not yet describe the Coolify setup.
+  \item Request metrics live in the memory of one API process and reset on every restart, and no alerting is set up.
+  \item The Cloudflare backup schedule and the restore steps are not yet written down in the repository.
+  \item Backups leave the host, but API, database and media still share it, so it is a single point of failure.
+\end{itemize}
+
+\appendix
+\section{Main table columns}\label{app:columns}
+
+\begin{table}[H]
 \centering
 \small
 \begin{tabularx}{0.88\linewidth}{@{}l >{\raggedright\arraybackslash}X@{}}
@@ -347,19 +394,5 @@ Table & Main columns \\
 \caption{The tables a job touches. The full schema is in \protect\href{https://github.com/kkkamur07/nomikos/tree/main/docs/database-design.md}{\texttt{docs/database-design.md}}.}
 \label{tab:columns}
 \end{table}
-
-Table~\ref{tab:columns} lists the main columns. A job row carries its own claim state (who holds it, how often it was claimed, when it last reported), which is all the queue needs.
-
-\section{Quality and open issues}
-
-CI (\repo{.github/workflows}) runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The agent is released to PyPI through trusted publishing.
-
-Open issues:
-\begin{itemize}
-  \item Production does not run Alembic. A release script (\repo{scripts/platform/release_2026_10_11.sh}) applies dated SQL by hand before Coolify deploys; an automatic migration step would be safer.
-  \item mypy runs in CI but does not fail the build.
-  \item \repo{docs/deployment/production.md} does not yet describe the Coolify setup.
-  \item Backups leave the host, but API, database and media still share it, so it is a single point of failure.
-\end{itemize}
 
 \end{document}
