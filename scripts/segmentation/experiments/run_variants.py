@@ -353,7 +353,7 @@ def _task(job: tuple[str, str]) -> tuple[str, str, int, float]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variants", nargs="+", required=True)
+    parser.add_argument("--variants", nargs="+")
     parser.add_argument("--pages", nargs="*", default=None)
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--list", action="store_true")
@@ -362,6 +362,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         print("\n".join(sorted(build_variants())))
         return 0
+    if not args.variants:
+        parser.error("--variants is required unless --list is given")
 
     _init()
     slugs = args.pages or sorted(_PAGES)

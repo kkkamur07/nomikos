@@ -17,7 +17,7 @@ Two traps in the source files, both handled here
 1. The ``Baseline`` element is a verbatim copy of the ``Coords`` polygon (a known
    exporter bug), so it is IGNORED. A baseline is derived from the polygon by
    ``derive_baseline`` from
-   ``training-export/nomikos/backend/annotation/application/page_xml_geometry.py``
+   ``nomikos/backend/annotation/application/page_xml_geometry.py``
    (the fixed exporter's own function: it follows the polygon and sits at
    BASELINE_HEIGHT_FRACTION = 0.68 of the local height).
 2. ``custom`` is the OLD "source:x; kind:y" format, not Transkribus grammar, so
@@ -56,9 +56,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(
-    0, "/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/training-export/nomikos"
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "nomikos"))
 
 import gtlib  # noqa: E402
 from backend.annotation.application.page_xml_geometry import derive_baseline  # noqa: E402
