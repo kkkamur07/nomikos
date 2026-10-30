@@ -27,11 +27,16 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 #: legitimate client sends that; the schema bounds validate content, this
 #: constant caps transport.)
 JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024
-#: Ceiling for multipart bodies. Only the part-upload route speaks multipart,
-#: and it enforces its own 100 MB cap after decoding (``MAX_PART_UPLOAD_BYTES``
-#: in ``document/application/part_service.py``), so this matches that budget
-#: with room for the multipart envelope.
-MULTIPART_BODY_LIMIT_BYTES = 100 * 1024 * 1024
+#: The largest file a multipart body may carry. Only the part-upload route
+#: speaks multipart, and it enforces this same 100 MB cap on the decoded file
+#: (``MAX_PART_UPLOAD_BYTES`` in ``document/application/part_service.py``).
+MULTIPART_FILE_LIMIT_BYTES = 100 * 1024 * 1024
+#: Room for the multipart envelope around that file: the boundaries and the
+#: part headers, filename included. The middleware counts the whole request, so
+#: without this a file exactly at the cap was refused before the route saw it.
+MULTIPART_ENVELOPE_BYTES = 64 * 1024
+#: Ceiling for multipart bodies: the file budget plus its envelope.
+MULTIPART_BODY_LIMIT_BYTES = MULTIPART_FILE_LIMIT_BYTES + MULTIPART_ENVELOPE_BYTES
 
 
 class _BodyTooLarge(Exception):

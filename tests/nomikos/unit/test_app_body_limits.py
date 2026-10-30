@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from backend.core.api.body_limit import (
     JSON_BODY_LIMIT_BYTES,
+    MULTIPART_BODY_LIMIT_BYTES,
+    MULTIPART_FILE_LIMIT_BYTES,
     BodySizeLimitMiddleware,
     _content_length,
     _limit_for_scope,
@@ -85,10 +87,60 @@ def test_multipart_gets_the_upload_budget() -> None:
         "type": "http",
         "headers": [(b"content-type", b"multipart/form-data; boundary=abc")],
     }
-    assert _limit_for_scope(scope) == 100 * 1024 * 1024
+    assert _limit_for_scope(scope) == MULTIPART_BODY_LIMIT_BYTES
     assert _limit_for_scope({"type": "http", "headers": []}) == JSON_BODY_LIMIT_BYTES
     assert _content_length({"type": "http", "headers": [(b"content-length", b"12")]}) == 12
     assert _content_length({"type": "http", "headers": [(b"content-length", b"nope")]}) is None
+
+
+def _multipart_upload_length(file_bytes: int) -> int:
+    """The Content-Length of a real part upload carrying a file of ``file_bytes``."""
+    import httpx
+
+    filename = "Codex Vaticanus graecus 1209, folio 1r (full resolution).png"
+    request = httpx.Request(
+        "POST", "http://testserver/echo", files={"file": (filename, b"x", "image/png")}
+    )
+    return len(request.read()) - 1 + file_bytes
+
+
+async def _status_for_declared_multipart(length: int) -> int:
+    async def _never_reads(scope, receive, send) -> None:
+        await JSONResponse({"ok": True})(scope, receive, send)
+
+    sent: list = []
+
+    async def _send(message) -> None:
+        sent.append(message)
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/echo",
+        "headers": [
+            (b"content-type", b"multipart/form-data; boundary=abc"),
+            (b"content-length", str(length).encode()),
+        ],
+        "query_string": b"",
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "client": ("testclient", 50000),
+    }
+    await BodySizeLimitMiddleware(_never_reads)(scope, _receive, _send)
+    return sent[0]["status"]
+
+
+async def test_a_file_at_the_upload_cap_fits_with_its_envelope() -> None:
+    """A 100 MB page image, wrapped in its multipart envelope, reaches the route."""
+    at_cap = _multipart_upload_length(MULTIPART_FILE_LIMIT_BYTES)
+
+    assert at_cap > MULTIPART_FILE_LIMIT_BYTES
+    assert await _status_for_declared_multipart(at_cap) == 200
+    # The envelope allowance stays bounded: far past it is still refused.
+    assert await _status_for_declared_multipart(MULTIPART_BODY_LIMIT_BYTES + 1) == 413
 
 
 def test_small_multipart_passes() -> None:
