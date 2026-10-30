@@ -140,3 +140,50 @@ describe("DocumentDetailPage direct-upload fallback", () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Part uploaded");
   });
 });
+
+describe("DocumentDetailPage upload order", () => {
+  beforeEach(seedActionMocks);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("creates pages in filename order even when the first file prepares slowly", async () => {
+    seedDirectUpload();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.mocked(api.finalizePartUpload).mockResolvedValue({} as never);
+    // The first page needs decoding and resolves last; the others are instant.
+    vi.mocked(prepareDirectUpload).mockImplementation(async (file: File) => {
+      if (file.name === "page-01.tif") {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      return {
+        blob: new Blob(["bytes"], { type: "image/png" }),
+        contentType: "image/png",
+        filename: file.name,
+      };
+    });
+    const { container } = renderDocumentPage();
+    await screen.findByRole("heading", { name: "Chapter 4" });
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(["bytes"], "page-03.png", { type: "image/png" }),
+          new File(["bytes"], "page-01.tif", { type: "image/tiff" }),
+          new File(["bytes"], "page-02.jpg", { type: "image/jpeg" }),
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(api.beginPartUpload).toHaveBeenCalledTimes(3);
+    });
+    expect(
+      vi
+        .mocked(api.beginPartUpload)
+        .mock.calls.map(([, , body]) => body.filename),
+    ).toEqual(["page-01.tif", "page-02.jpg", "page-03.png"]);
+  });
+});

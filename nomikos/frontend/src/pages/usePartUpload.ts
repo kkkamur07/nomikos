@@ -9,9 +9,6 @@ import {
 import { renderPdfToPageFiles } from "../utils/pdfToPages";
 import { compareFilenames, isPdfFile } from "../utils/uploadBatch";
 
-/** Uploads run three at a time: serial was slow, unbounded hammers storage. */
-const UPLOAD_CONCURRENCY = 3;
-
 type PageUploadResult =
   { ok: true } | { ok: false; name: string; message: string };
 
@@ -152,24 +149,14 @@ async function uploadPages(
   pages: File[],
   onStart: (index: number, total: number) => void,
 ): Promise<PageUploadResult[]> {
-  const results: PageUploadResult[] = new Array(pages.length);
-  let next = 0;
-  const workers = Array.from(
-    { length: Math.min(UPLOAD_CONCURRENCY, pages.length) },
-    async () => {
-      while (next < pages.length) {
-        const index = next;
-        next += 1;
-        onStart(index, pages.length);
-        results[index] = await attemptPageUpload(
-          projectId,
-          documentId,
-          pages[index],
-        );
-      }
-    },
-  );
-  await Promise.all(workers);
+  // One page at a time: the server numbers a page when its upload creates the
+  // row (begin, or the multipart fallback), so only a serial loop keeps page
+  // order equal to filename order whatever each file takes to prepare.
+  const results: PageUploadResult[] = [];
+  for (const [index, file] of pages.entries()) {
+    onStart(index, pages.length);
+    results.push(await attemptPageUpload(projectId, documentId, file));
+  }
   return results;
 }
 
