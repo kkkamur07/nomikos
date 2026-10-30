@@ -11,7 +11,7 @@ anyio==4.14.2
     #   watchfiles
 asyncpg==0.31.0
 bcrypt==5.0.0
-certifi==2026.5.20
+certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
@@ -31,7 +31,7 @@ deprecation==2.1.0
     # via
     #   postgrest
     #   storage3
-dnspython==2.8.0
+dnspython==2.9.1
     # via email-validator
 email-validator==2.3.0
 fastapi==0.136.3
@@ -73,9 +73,9 @@ multidict==6.9.1
     # via yarl
 numpy==1.26.4
     # via shapely
-packaging==26.2
+packaging==26.3
     # via deprecation
-pillow==12.3.0
+pillow==13.0.0
     # via fpdf2
 postgrest==2.31.0
     # via supabase
