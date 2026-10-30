@@ -18,13 +18,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import gtlib  # noqa: E402
 import score as scorelib  # noqa: E402
 
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
 OUT = HERE / "out"
-GT_DIR = Path(
-    "/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/human-guide/v4/recon"
-)
 
 # The effective scale each variant puts the page at, relative to production.
 # Production resizes the whole page to 1800 px; a crop or a horizontal tile
@@ -66,9 +63,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pages", nargs="*", default=None)
     parser.add_argument("--variants", nargs="*", default=None)
     parser.add_argument("--out-csv", type=Path, default=None)
-    parser.add_argument("--gt-dir", type=Path, default=GT_DIR)
+    parser.add_argument("--gt-dir", type=Path, default=gtlib.env_path(gtlib.COPTIC_GT_ENV))
+    parser.add_argument("--data-root", type=Path, default=None, help="default $SEG_DATA_ROOT")
     parser.add_argument("--groups", nargs="*", default=["vatican", "napoli", "overall"])
     args = parser.parse_args(argv)
+    gt_dir = gtlib.require_gt_dir(args.gt_dir, gtlib.COPTIC_GT_ENV)
+    root = gtlib.data_root(args.data_root)
+    manifest = gtlib.coptic_manifest(root)
 
     variants = args.variants or sorted(
         d.name for d in OUT.iterdir() if d.is_dir() and d.name != "csv" and d.name != "overlays"
@@ -82,9 +83,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             summaries = scorelib.run(
                 pred_dir=directory,
-                gt_dir=args.gt_dir,
-                manifest=MAIN / "scripts/coptic/manifest.json",
-                repo_root=MAIN,
+                gt_dir=gt_dir,
+                manifest=manifest,
+                repo_root=root,
                 out=OUT / "csv" / f"{variant}.csv",
                 quiet=True,
                 only=only,

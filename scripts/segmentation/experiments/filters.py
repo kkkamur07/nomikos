@@ -40,11 +40,7 @@ from backend.annotation.application.segment_health import (  # noqa: E402
     polygon_area,
 )
 
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
 OUT = HERE / "out"
-GT_DIR = Path(
-    "/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/human-guide/v4/recon"
-)
 
 
 def _segments(lines: list[dict[str, Any]]) -> list[Segment]:
@@ -329,7 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-joined rule chains, e.g. F1 F2 F3 F1,F2,F3",
     )
     parser.add_argument("--out-csv", type=Path, default=None)
-    parser.add_argument("--gt-dir", type=Path, default=GT_DIR)
+    parser.add_argument("--gt-dir", type=Path, default=gtlib.env_path(gtlib.COPTIC_GT_ENV))
+    parser.add_argument("--data-root", type=Path, default=None, help="default $SEG_DATA_ROOT")
     parser.add_argument("--write-dirs", action="store_true")
     parser.add_argument("--param", nargs="*", default=[], help="k=v overrides")
     args = parser.parse_args(argv)
@@ -339,10 +336,11 @@ def main(argv: list[str] | None = None) -> int:
         key, _, value = item.partition("=")
         kwargs[key] = float(value)
 
+    root = gtlib.data_root(args.data_root)
     pages = gtlib.load_all(
-        gt_dir=args.gt_dir,
-        manifest_path=MAIN / "scripts/coptic/manifest.json",
-        repo_root=MAIN,
+        gt_dir=gtlib.require_gt_dir(args.gt_dir, gtlib.COPTIC_GT_ENV),
+        manifest_path=gtlib.coptic_manifest(root),
+        repo_root=root,
     )
     variant = args.pred_dir.name
     rows = []

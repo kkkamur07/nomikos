@@ -10,6 +10,10 @@ written, so every prediction file is directly comparable.
 
 Usage:
     run_variants.py --variants v0 v1-crop ... [--jobs 6] [--pages vat-1r c13]
+        [--gt-dir RECON_DIR] [--data-root CHECKOUT]
+
+--gt-dir defaults to $COPTIC_GT_DIR. --data-root (default $SEG_DATA_ROOT, else this
+checkout) must hold scripts/coptic/manifest.json and the images it names.
 """
 
 from __future__ import annotations
@@ -26,7 +30,6 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
 WORKTREE = HERE.parents[2]
 sys.path.insert(0, str(WORKTREE))
 sys.path.insert(0, str(WORKTREE / "nomikos"))
@@ -34,12 +37,6 @@ sys.path.insert(0, str(WORKTREE / "nomikos"))
 import gtlib  # noqa: E402
 import segrun  # noqa: E402
 
-GT_DIR = Path(
-    os.environ.get(
-        "COPTIC_GT_DIR",
-        "/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/human-guide/v4/recon",
-    )
-)
 OUT = HERE / "out"
 
 # Worker-process globals, filled by _init.
@@ -325,11 +322,14 @@ def build_variants() -> dict[str, VariantFn]:
 # driver
 # --------------------------------------------------------------------------
 def _init() -> None:
+    # Spawned workers re-import this module, so the paths travel through the env
+    # that main() sets before the pool starts.
     global _MODEL, _PAGES
+    gt_dir = gtlib.require_gt_dir(gtlib.env_path(gtlib.COPTIC_GT_ENV), gtlib.COPTIC_GT_ENV)
+    root = gtlib.data_root()
+    manifest = gtlib.coptic_manifest(root)
     _MODEL = segrun.blla_weights()
-    pages = gtlib.load_all(
-        gt_dir=GT_DIR, manifest_path=MAIN / "scripts/coptic/manifest.json", repo_root=MAIN
-    )
+    pages = gtlib.load_all(gt_dir=gt_dir, manifest_path=manifest, repo_root=root)
     _PAGES = {p.slug: p for p in pages}
 
 
@@ -352,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pages", nargs="*", default=None)
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--gt-dir", type=Path, default=None, help="default $COPTIC_GT_DIR")
+    parser.add_argument("--data-root", type=Path, default=None, help="default $SEG_DATA_ROOT")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -359,6 +361,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.variants:
         parser.error("--variants is required unless --list is given")
+    if args.gt_dir is not None:
+        os.environ[gtlib.COPTIC_GT_ENV] = str(args.gt_dir)
+    if args.data_root is not None:
+        os.environ[gtlib.DATA_ROOT_ENV] = str(args.data_root)
 
     _init()
     slugs = args.pages or sorted(_PAGES)

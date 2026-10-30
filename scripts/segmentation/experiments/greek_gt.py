@@ -59,12 +59,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "nomikos"))
 
 import gtlib  # noqa: E402
+
 from backend.annotation.application.page_xml_geometry import derive_baseline  # noqa: E402
 
 NS = {"p": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"}
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
-XML_DIR = MAIN / "data/dataset/grec1360/xml"
-IMAGE_DIR = MAIN / "data/dataset/grec1360/pages"
+# data/dataset/ is not tracked; set SEG_DATA_ROOT when running from a worktree.
+DATA_ROOT = gtlib.data_root()
+XML_DIR = DATA_ROOT / "data/dataset/grec1360/xml"
+IMAGE_DIR = DATA_ROOT / "data/dataset/grec1360/pages"
 # Two folios per image, split near this x. See the grec1360 spread note.
 FOLIO_SPLIT = 725
 FOLIO_NAMES = ("L", "R")
@@ -135,6 +137,7 @@ def convert_one(xml_path: Path) -> dict[str, Any]:
 
 
 def convert(out_dir: Path, xml_dir: Path = XML_DIR) -> list[Path]:
+    gtlib.require_file(xml_dir, "Grec 1360 PAGE XML directory")
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for xml_path in sorted(xml_dir.glob("page*.xml")):
@@ -293,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
         pred_dir=args.pred_dir,
         gt_dir=args.gt_dir,
         manifest=Path("unused-for-greek"),
-        repo_root=MAIN,
+        repo_root=DATA_ROOT,
         out=None,
         only=only,
     )
@@ -302,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
             pred_dir=args.pred_dir,
             gt_dir=args.gt_dir,
             manifest=Path("unused-for-greek"),
-            repo_root=MAIN,
+            repo_root=DATA_ROOT,
             out=None,
             only=only,
         )

@@ -18,7 +18,8 @@ from typing import Any
 
 from PIL import Image
 
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
+# The checkout this file lives in; the registry is code, so it comes from here.
+REPO_ROOT = Path(__file__).resolve().parents[3]
 BLLA_INPUT_HEIGHT = 1800
 
 
@@ -35,7 +36,7 @@ def blla_weights() -> tuple[Path, str]:
         registry_model_id="blla-segment",
         registry_tag="stable",
         task=InferenceTask.segment,
-        registry_path=MAIN / "nomikos_inference" / "registry.yaml",
+        registry_path=REPO_ROOT / "nomikos_inference" / "registry.yaml",
     )
     version = entry.versions["stable"]
     path = resolve_weights_source(

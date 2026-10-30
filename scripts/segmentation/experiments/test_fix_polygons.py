@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fix_polygons as fp  # noqa: E402
+import ink_loss  # noqa: E402
 from shapely.geometry import Polygon  # noqa: E402
 
 
@@ -157,3 +158,24 @@ def test_split_above_moves_boundary():
     top_large = min(p[1] for p in large[1]["polygon"])
     # smaller split gives the lower line more room, so its top is higher up
     assert top_small < top_large
+
+
+def test_ink_added_elsewhere_does_not_hide_lost_ink(tmp_path):
+    from PIL import Image, ImageDraw
+
+    # two 100x20 ink strokes; the "repair" drops the first and covers the second
+    im = Image.new("L", (400, 200), 255)
+    draw = ImageDraw.Draw(im)
+    draw.rectangle([50, 40, 149, 59], fill=0)
+    draw.rectangle([250, 140, 349, 159], fill=0)
+    # ink_loss counts gray < otsu; with only 0 and 255 Otsu lands on 0 and nothing is
+    # dark, so one speck at 1 (outside both unions) lifts the threshold above the ink
+    im.putpixel((5, 5), 1)
+    path = tmp_path / "page.png"
+    im.save(path)
+    orig = [box(40, 160, 30, 70)]
+    fixed = [box(240, 360, 130, 170)]
+    r = ink_loss.page_retention(path, orig, fixed, [400, 200])
+    assert r["dark_kept"] == 0
+    assert r["dark_added"] == r["dark_in_orig"] > 0
+    assert r["retention"] == 0.0

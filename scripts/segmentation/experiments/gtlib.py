@@ -12,11 +12,20 @@ of recon JSON files and the RTF transcriptions, and that is all.
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# Code-owned files (registry.yaml, nomikos/) resolve from this checkout.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+# Data the repo does not track (data/dataset/, scripts/coptic/manifest.json) lives
+# under a data root: --data-root, else $SEG_DATA_ROOT, else this checkout.
+DATA_ROOT_ENV = "SEG_DATA_ROOT"
+COPTIC_GT_ENV = "COPTIC_GT_DIR"
+GREEK_GT_ENV = "GREEK_GT_DIR"
 
 COLS4 = ("LA", "LB", "RA", "RB")
 COLS2 = ("L", "R")
@@ -26,6 +35,40 @@ COLS2 = ("L", "R")
 RTF_RANGE_OVERRIDES = {
     ("vatican", "8v"): "merge-trailing-singleton-into-last-column",
 }
+
+
+def data_root(override: Path | None = None) -> Path:
+    if override is not None:
+        return override
+    env = os.environ.get(DATA_ROOT_ENV)
+    return Path(env) if env else REPO_ROOT
+
+
+def require_file(path: Path, what: str) -> Path:
+    if not path.exists():
+        raise SystemExit(
+            f"{what} not found at {path}. It is not tracked by git: pass --data-root or set "
+            f"{DATA_ROOT_ENV} to the checkout that holds it."
+        )
+    return path
+
+
+def coptic_manifest(root: Path) -> Path:
+    return require_file(root / "scripts/coptic/manifest.json", "Coptic manifest")
+
+
+def env_path(name: str) -> Path | None:
+    """Default for a --gt-dir style flag: the env var if set, else None."""
+    env = os.environ.get(name)
+    return Path(env) if env else None
+
+
+def require_gt_dir(gt_dir: Path | None, env: str) -> Path:
+    if gt_dir is None:
+        raise SystemExit(f"ground truth directory missing: pass --gt-dir or set {env}")
+    if not gt_dir.is_dir():
+        raise SystemExit(f"ground truth directory {gt_dir} does not exist")
+    return gt_dir
 
 
 def out_slug(label: str) -> str:

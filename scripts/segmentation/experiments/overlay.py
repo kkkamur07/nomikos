@@ -21,7 +21,6 @@ sys.path.insert(0, str(HERE))
 
 import gtlib  # noqa: E402
 
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
 OUT = HERE / "out"
 
 
@@ -55,23 +54,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--scale", type=float, default=0.75)
     parser.add_argument("--max-kb", type=int, default=290)
-    parser.add_argument(
-        "--gt-dir",
-        type=Path,
-        default=Path(
-            "/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/human-guide/v4/recon"
-        ),
-    )
+    parser.add_argument("--gt-dir", type=Path, default=gtlib.env_path(gtlib.COPTIC_GT_ENV))
+    parser.add_argument("--data-root", type=Path, default=None, help="default $SEG_DATA_ROOT")
     args = parser.parse_args(argv)
 
     from PIL import Image, ImageDraw
 
+    root = gtlib.data_root(args.data_root)
     pages = {
         p.slug: p
         for p in gtlib.load_all(
-            gt_dir=args.gt_dir,
-            manifest_path=MAIN / "scripts/coptic/manifest.json",
-            repo_root=MAIN,
+            gt_dir=gtlib.require_gt_dir(args.gt_dir, gtlib.COPTIC_GT_ENV),
+            manifest_path=gtlib.coptic_manifest(root),
+            repo_root=root,
         )
     }
     gt = pages[args.page]

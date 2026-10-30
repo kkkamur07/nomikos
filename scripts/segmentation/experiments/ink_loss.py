@@ -3,7 +3,10 @@
 
 For each page: binarise the scan with Otsu, build the union mask of the
 ORIGINAL polygons and of the FIXED polygons, and report the share of dark
-pixels inside the original union that is still inside the fixed union.
+pixels inside the original union that is still inside the fixed union. Ink the
+fixed union newly covers (outside the original union) is reported separately as
+``dark_added`` and never counts towards retention, so retention is at most 1.0
+and ink gained in one place cannot hide ink lost in another.
 
 Usage:
   ink_loss.py --orig-dir OUT_ORIG --fixed-dir OUT_FIXED --pages JSON [--scale-check]
@@ -79,14 +82,16 @@ def page_retention(image_path: Path, orig_polys: list, fixed_polys: list, size: 
     mo = union_mask(orig_polys, w, h, label=f"{image_path.name} orig")
     mf = union_mask(fixed_polys, w, h, label=f"{image_path.name} fixed")
     dark_orig = int((dark & mo).sum())
-    dark_fixed = int((dark & mf).sum())
+    dark_kept = int((dark & mo & mf).sum())
+    dark_added = int((dark & mf & ~mo).sum())
     dark_total = int(dark.sum())
-    ret = dark_fixed / dark_orig if dark_orig else 1.0
+    ret = dark_kept / dark_orig if dark_orig else 1.0
     return {
         "threshold": thresh,
         "dark_total": dark_total,
         "dark_in_orig": dark_orig,
-        "dark_in_fixed": dark_fixed,
+        "dark_kept": dark_kept,
+        "dark_added": dark_added,
         "retention": round(ret, 4),
     }
 
@@ -98,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pages", required=True, type=Path)
     args = parser.parse_args(argv)
     pages = json.loads(args.pages.read_text())
-    tot_o = tot_f = 0
+    tot_o = tot_k = tot_a = 0
     for entry in pages:
         slug = entry["slug"]
         orig = json.loads((args.orig_dir / f"{slug}.json").read_text())
@@ -116,13 +121,15 @@ def main(argv: list[str] | None = None) -> int:
             orig.get("image_size", [0, 0]),
         )
         tot_o += r["dark_in_orig"]
-        tot_f += r["dark_in_fixed"]
+        tot_k += r["dark_kept"]
+        tot_a += r["dark_added"]
         print(
             f"{slug}: retention {r['retention']} "
-            f"(dark_in_orig {r['dark_in_orig']}, dark_in_fixed {r['dark_in_fixed']}, "
-            f"otsu {r['threshold']})"
+            f"(dark_in_orig {r['dark_in_orig']}, dark_kept {r['dark_kept']}, "
+            f"dark_added {r['dark_added']}, otsu {r['threshold']})"
         )
-    print(f"corpus retention: {round(tot_f / tot_o, 4) if tot_o else 1.0}")
+    print(f"corpus retention: {round(tot_k / tot_o, 4) if tot_o else 1.0}")
+    print(f"corpus added ink: {tot_a} dark px ({round(tot_a / tot_o, 4) if tot_o else 0.0})")
     return 0
 
 

@@ -425,8 +425,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--repo-root",
         type=Path,
-        default=Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR"),
-        help="checkout the manifest's image_path/rtf_path are relative to",
+        default=gtlib.data_root(),
+        help="checkout the manifest's image_path/rtf_path are relative to "
+        "(default $SEG_DATA_ROOT, else this checkout)",
     )
     args = parser.parse_args(argv)
     run(

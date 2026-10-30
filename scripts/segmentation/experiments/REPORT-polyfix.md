@@ -34,6 +34,10 @@ loss do not use the ground truth shape and are unbiased.
 
 Retention above 1.0 on vat-2v (1.077), c10 (1.033), c12 (1.003), c13 (1.001) at
 split 0.35 is the repair step: rebuilt bands cover ink that broken polygons missed.
+These numbers came from the earlier metric, which divided all ink in the fixed union
+by the ink in the original union, so added ink could mask lost ink. ink_loss.py now
+counts only ink inside both unions as retained (at most 1.0) and reports added ink
+separately; the table has not been rerun with it.
 Per page detail is in the ink_loss.py output quoted in the log, worst pages at
 0.35 are c14 (0.977) and vat-1r (0.981), both fine.
 
@@ -122,12 +126,12 @@ of leaving the kraken shape convention (tighter, non-overlapping segments).
 
 ## Exact commands to reproduce
 
-PY=/Users/krishuagarwal/Desktop/Programming/python/greekOCR/.venv/bin/python
-GT=/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/human-guide/v4/recon
-GGT=/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/greek/recon
-MAN=/Users/krishuagarwal/Desktop/Programming/python/greekOCR/scripts/coptic/manifest.json
-ROOT=/Users/krishuagarwal/Desktop/Programming/python/greekOCR
-ENV=/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_orli-env
+PY=<checkout>/.venv/bin/python
+GT=<Coptic recon dir>           # also read from $COPTIC_GT_DIR
+GGT=<Greek recon dir>           # also read from $GREEK_GT_DIR
+ROOT=<checkout holding data/>   # also read from $SEG_DATA_ROOT (default: this checkout)
+MAN=$ROOT/scripts/coptic/manifest.json
+ENV=<orli env dir>
 
 $PY test_fix_polygons.py  # via: $PY -m pytest test_fix_polygons.py -q
 $PY fix_polygons.py --pred-dir out/orli-fixed-poly --out-dir out/orli-fixed-polyfix --split-above 0.5

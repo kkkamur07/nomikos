@@ -22,35 +22,30 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-MAIN = Path("/Users/krishuagarwal/Desktop/Programming/python/greekOCR")
 WORKTREE = HERE.parents[2]
 sys.path.insert(0, str(WORKTREE))
 sys.path.insert(0, str(WORKTREE / "nomikos"))
 
 import greek_gt  # noqa: E402
+import gtlib  # noqa: E402
 import segrun  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", required=True, type=Path)
-    parser.add_argument(
-        "--gt-dir",
-        type=Path,
-        default=Path(
-            "/Users/krishuagarwal/Desktop/Programming/python/greekOCR-wt/_gt-recon/greek/recon"
-        ),
-    )
+    parser.add_argument("--gt-dir", type=Path, default=gtlib.env_path(gtlib.GREEK_GT_ENV))
     parser.add_argument("--converted-dir", type=Path, default=None)
     args = parser.parse_args(argv)
+    gt_dir = gtlib.require_gt_dir(args.gt_dir, gtlib.GREEK_GT_ENV)
 
     from PIL import Image
 
     Image.MAX_IMAGE_PIXELS = None
     model_path, sha = segrun.blla_weights()
-    pages = greek_gt.loader(
-        gt_dir=args.gt_dir, manual_only=False, converted_dir=args.converted_dir
-    )(gt_dir=args.gt_dir)
+    pages = greek_gt.loader(gt_dir=gt_dir, manual_only=False, converted_dir=args.converted_dir)(
+        gt_dir=gt_dir
+    )
     for gt in pages:
         out = args.out_dir / f"{gt.slug}.json"
         if out.exists():
