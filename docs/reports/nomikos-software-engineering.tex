@@ -52,12 +52,12 @@
 
 Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. The corrections are the point: each one turns a model guess into ground truth for the next model.
 
-The design aims at four things, and every choice below serves at least one of them:
+Four goals shape the design, and each choice in Section~\ref{sec:arch} serves at least one of them:
 \begin{itemize}
-  \item \textbf{Low running cost.} Models run on researchers' own machines where possible.
-  \item \textbf{No lost corrections.} Model output and human edits are stored separately and never overwrite each other.
-  \item \textbf{One codebase for inference.} A laptop and our server run the same agent.
-  \item \textbf{A small attack surface.} The browser and the agents reach the system through one API, and nothing else is exposed.
+  \item keep running costs low by using researchers' own machines for inference where we can;
+  \item never lose a correction, so model output and human edits are stored apart;
+  \item run the same inference code on a laptop and on our server;
+  \item expose as little as possible: the browser and the agents reach the system only through one API.
 \end{itemize}
 
 \section{Tech stack}
@@ -85,7 +85,7 @@ CI & GitHub Actions & Lint, type checks, tests, security scans and PyPI releases
 \label{tab:stack}
 \end{table}
 
-\section{Architecture and tradeoffs}
+\section{Architecture and tradeoffs}\label{sec:arch}
 
 \begin{figure}[ht]
 \centering
@@ -147,11 +147,11 @@ Figure~\ref{fig:containers} has two paths. On the request path, the browser load
 
 All stateful parts sit on one Coolify host: the API container built from \repo{nomikos/Dockerfile}, the Postgres container, the media directory and the worker (\repo{infrastructure/docker-compose.worker.yml}). Postgres is backed up off the host to Cloudflare. The hosted agent runs on a separate machine as systemd units.
 
-The frontend is a client-rendered single-page app. TanStack Query caches every API response for 30 seconds and refetches when the tab regains focus or the network comes back. In the editor, a line's text is saved when the line loses focus, edits can be undone, and saved states of a page go into a history the user can restore from. While a job runs, all components that care about it share one event stream for that job, and if no event arrives for 12 seconds the browser falls back to polling.
+The frontend runs entirely in the browser. TanStack Query caches every API response for 30 seconds and refetches when the tab regains focus or the network comes back. In the editor, a line's text is saved when the line loses focus, edits can be undone, and saved states of a page go into a history the user can restore from. While a job runs, all components that care about it share one event stream for that job, and if no event arrives for 12 seconds the browser falls back to polling.
 
 \choice{A modular monolith.} The API is one process split into six bounded contexts (users, project, document, annotation, ml, jobs), each with \code{api}, \code{application}, \code{domain} and \code{infrastructure} layers (\repo{nomikos/backend/README.md}). Microservices would add network hops, several databases and distributed transactions. A monolith gives one deploy and one transaction per request, and Alembic migrations in \repo{nomikos/infrastructure/alembic} keep the single schema in step with the code. The price is that boundaries are only conventions: document, annotation, ml and jobs import each other in both directions.
 
-\choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Agents pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. Postgres \texttt{NOTIFY} tells the API when a job finishes, and the API forwards that to the browser as server-sent events. The queue matters more as the platform grows. Many users start jobs and many agents claim them at the same moment, and without a single queue that locks each row these transactions would collide: two agents could take the same page, or a result could land on a job that was already finished. With one table and row locks, every claim and every callback is one ordered transaction. The cost is that Postgres carries the queue load on top of every other request.
+\choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Agents pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. The queue matters more as the platform grows. Many users start jobs and many agents claim them at the same moment, and without a single queue that locks each row these transactions would collide: two agents could take the same page, or a result could land on a job that was already finished. With one table and row locks, every claim and every callback is one ordered transaction. The cost is that Postgres carries the queue load on top of every other request.
 
 \choice{Agents connect outward.} An inference agent is the same program on a researcher's laptop and on our inference host; only the token differs (Figure~\ref{fig:agents}). A device token claims its owner's local jobs, a service token claims cloud jobs. This lets researchers run models on their own machines instead of on rented cloud servers, which keeps our hosting costs low, and the hosted agent covers anyone without a capable laptop. Because the agent always opens the connection, it works behind a university firewall without port forwarding, and the server never needs to know where agents are. The alternative, a server that pushes work to a listening inference service, needs open ports, a registry of worker addresses and a second code path. The cost: if the API is down, agents stop.
 
@@ -264,12 +264,6 @@ Adding a model follows the same path (\repo{docs/inference/adding-inference-mode
 
 \choice{Frontend on Vercel, backend on Coolify.} Vercel builds and serves Next.js natively, with caching and a global edge network, which gives the editor the best load times we can get. The backend needs what serverless platforms handle poorly: a long-running worker, a direct database connection, a disk for images and long-lived connections. The most important of these are the \textbf{server-sent event (SSE) streams}: a browser watching a job keeps one HTTP connection open to \texttt{/jobs/\{id\}/events}, and the API pushes job progress down it the moment Postgres reports a change. Inside the API a single \texttt{LISTEN} on the database feeds all of these streams, so the browser never polls in normal use. Coolify deploys our containers from Git on our own server, and we take care of that server, its releases and its backups.
 
-\section{Security}
-
-FastAPI owns authentication. It stores password hashes, issues JWT access tokens with rotating sessions, checks CSRF tokens and rate-limits login attempts. A laptop agent never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the agent opens the browser, the signed-in user approves the device, and the agent receives a device token that it sends in its own header (\repo{docs/adr}). That token can claim only its owner's local jobs.
-
-The completion callback is narrowed in the same way. The API records which agent holds each job in \code{jobs.claimed_by} and accepts a result only from that agent, so one paired laptop cannot complete or fail anyone else's work (\repo{nomikos/backend/jobs/api/internal_inference.py}). Agents get only inference and callback credentials, never database or JWT secrets. Page images reach agents and browsers through short-lived signed URLs, and agents check each model file against the SHA-256 hash pinned in the registry.
-
 \section{Job flow}
 
 \begin{figure}[ht]
@@ -313,7 +307,7 @@ The completion callback is narrowed in the same way. The API records which agent
 \label{fig:jobs}
 \end{figure}
 
-A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POST requests drive it, and each one is a single database transaction, so a crash leaves the job in a known state. The browser's POST inserts a \texttt{pending} row and returns at once. An agent's claim POST locks one pending row, skipping rows other agents hold, and marks it \texttt{waiting}. The agent fetches the image through a signed URL, runs the model locally and sends the result in the completion POST. That handler locks the job, sets \code{callback_claimed_at} so a retried callback cannot merge twice, writes the run and the lines, marks the job \texttt{done} and fires \texttt{NOTIFY}. The API listens on that channel and pushes the event to the browser. If server-sent events are blocked, the browser polls \texttt{GET /jobs/\{id\}}. An agent that dies loses its lease after a timeout and the page goes back to \texttt{pending}; after five failed claims the job is marked failed.
+A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POST requests drive it, and each one is a single database transaction, so a crash leaves the job in a known state. The browser's POST inserts a \texttt{pending} row and returns at once. An agent's claim POST locks one pending row, skipping rows other agents hold, and marks it \texttt{waiting}. The agent fetches the image through a signed URL, runs the model locally and sends the result in the completion POST. That handler locks the job, sets \code{callback_claimed_at} so a retried callback cannot merge twice, writes the run and the lines, marks the job \texttt{done} and fires \texttt{NOTIFY}. The API's \texttt{LISTEN} loop picks this up and pushes it to the browser over the job's SSE stream. If the stream is blocked, the browser polls \texttt{GET /jobs/\{id\}}. An agent that dies loses its lease after a timeout and the page goes back to \texttt{pending}; after five failed claims the job is marked failed.
 
 \section{Data model}
 
@@ -353,6 +347,12 @@ A project holds documents, a document holds pages, and a page holds regions and 
 
 
 Appendix~\ref{app:columns} lists the main columns. A job row carries its own claim state (who holds it, how often it was claimed, when it last reported), which is all the queue needs.
+
+\section{Security}
+
+FastAPI owns authentication. It stores password hashes, issues JWT access tokens with rotating sessions, checks CSRF tokens and rate-limits login attempts. A laptop agent never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the agent opens the browser, the signed-in user approves the device, and the agent receives a device token that it sends in its own header (\repo{docs/adr}). That token can claim only its owner's local jobs.
+
+The completion callback is narrowed in the same way. The API records which agent holds each job in \code{jobs.claimed_by} and accepts a result only from that agent, so one paired laptop cannot complete or fail anyone else's work (\repo{nomikos/backend/jobs/api/internal_inference.py}). Agents get only inference and callback credentials, never database or JWT secrets. Before loading a model, an agent checks the file against the SHA-256 hash pinned in the registry.
 
 \section{Usage so far}
 
