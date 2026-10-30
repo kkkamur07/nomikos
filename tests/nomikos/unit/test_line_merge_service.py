@@ -12,6 +12,7 @@ one where getting it wrong deletes somebody's ground truth.
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +30,10 @@ from backend.document.infrastructure.orm_models import (
 )
 
 # -- fakes ---------------------------------------------------------------
+
+# The merge stamps ``updated_by`` on the surviving line, so the caller needs an
+# id; nothing else about the user is read.
+_USER = SimpleNamespace(id=uuid.uuid4())
 
 
 class _Session:
@@ -135,7 +140,7 @@ def _service(lines: list[Line]):
 async def _merge(service, part, session, line_ids, keep_text_from=None):
     return await service.merge_lines(
         session,
-        object(),
+        _USER,
         uuid.uuid4(),
         uuid.uuid4(),
         part.id,
@@ -188,6 +193,23 @@ class TestGeometry:
         await _merge(service, part, session, [first.id, second.id])
 
         assert first.manual_geometry is True
+
+    @pytest.mark.asyncio
+    async def test_the_merged_line_records_the_editor_and_keeps_its_origin(self) -> None:
+        """ADR 0013: a merge is a human edit, so it names the editor, and the
+        survivor is still the line the model proposed."""
+        first = _line(300.0, 600.0, 500.0, order=0)
+        second = _line(700.0, 900.0, 500.0, order=1)
+        run_id = uuid.uuid4()
+        first.segmentation_run_id = run_id
+        first.run_external_id = "l0"
+        service, _repo, part, session = _service([first, second])
+
+        await _merge(service, part, session, [first.id, second.id])
+
+        assert first.updated_by == _USER.id
+        assert first.segmentation_run_id == run_id
+        assert first.run_external_id == "l0"
 
     @pytest.mark.asyncio
     async def test_the_baselines_are_joined_left_to_right(self) -> None:

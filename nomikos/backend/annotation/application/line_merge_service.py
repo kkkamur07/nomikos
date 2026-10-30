@@ -126,6 +126,11 @@ class LineMergeService:
         # next auto-segment silently undoes the merge (and takes the survivor's
         # transcriptions with it).
         survivor.manual_geometry = True
+        # ``updated_at`` looks after itself (``onupdate`` on the column), as it does on
+        # every other geometry path; the editor is the half that needs the caller. The
+        # survivor's origin columns are left alone: it is still the line the model
+        # proposed, now redrawn by a human.
+        survivor.updated_by = user.id
 
         self._renumber(lines, survivor, selected[0], removed)
         for line in removed:
