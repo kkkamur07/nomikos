@@ -52,13 +52,13 @@
 
 Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. The corrections are the point: each one turns a model guess into ground truth for the next model.
 
-Four goals shape the design, and each choice in Section~\ref{sec:arch} serves at least one of them:
-\begin{itemize}
-  \item keep running costs low by using researchers' own machines for inference where we can;
-  \item never lose a correction, so model output and human edits are stored apart;
-  \item run the same inference code on a laptop and on our server;
-  \item expose as little as possible: the browser and the agents reach the system only through one API.
-\end{itemize}
+We built Nomikos around four goals. Each choice in Section~\ref{sec:arch} serves at least one of them.
+\begin{enumerate}
+  \item \textbf{A fast, accurate editor in the browser.} Researchers correct model output without installing anything, and every correction flows back as training data for the next model.
+  \item \textbf{Low running cost.} Models run on researchers' own machines where possible, so we do not pay for cloud compute on every page.
+  \item \textbf{Easy to run anywhere.} The inference agent installs with one command, fits on an ordinary laptop and works behind a university firewall.
+  \item \textbf{Safe by default.} The browser and the agents reach the system through one API, and every credential can do only what its holder needs.
+\end{enumerate}
 
 \section{Tech stack}
 
@@ -350,28 +350,77 @@ Appendix~\ref{app:columns} lists the main columns. A job row carries its own cla
 
 \section{Security}
 
-FastAPI owns authentication. It stores password hashes, issues JWT access tokens with rotating sessions, checks CSRF tokens and rate-limits login attempts. A laptop agent never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the agent opens the browser, the signed-in user approves the device, and the agent receives a device token that it sends in its own header (\repo{docs/adr}). That token can claim only its owner's local jobs.
+\begin{figure}[H]
+\centering
+\resizebox{0.86\linewidth}{!}{%
+\begin{tikzpicture}
+  \node[box, text width=3.4cm, align=center] (br) at (-1,0) {Browser\\\scriptsize session + CSRF token};
+  \node[box, text width=3.4cm, align=center] (la) at (-1,-1.9) {Laptop agent\\\scriptsize device token};
+  \node[box, text width=3.4cm, align=center] (ha) at (-1,-3.8) {Hosted agent\\\scriptsize service token};
+  \node[box, draw=accent, very thick, minimum height=4.6cm, text width=2.4cm, align=center] (api) at (6.6,-1.9) {FastAPI\\[2pt]\scriptsize checks access\\\scriptsize on every call};
+  \node[store] (pg) at (10.4,-1.0) {Postgres};
+  \node[store] (md) at (10.4,-2.8) {Media};
+  \draw[run] (br.east) -- node[lab, above=2pt] {own and shared projects} (br.east -| api.west);
+  \draw[run] (la.east) -- node[lab, above=2pt] {own local jobs only} (la.east -| api.west);
+  \draw[run] (ha.east) -- node[lab, above=2pt] {cloud jobs only} (ha.east -| api.west);
+  \draw[run] (api.east |- pg) -- node[lab, above=2pt] {SQL} (pg);
+  \draw[run] (api.east |- md) -- node[lab, above=2pt] {files} (md);
+  \begin{scope}[on background layer]
+    \node[group, fit=(api)(pg)(md)] (gs) {};
+  \end{scope}
+  \node[glabel] at (gs.north west) {Coolify host, database credentials stay here};
+  \begin{scope}[shift={(-0.6,-5.3)}]
+    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {HTTPS request, labelled with what the credential reaches};
+  \end{scope}
+\end{tikzpicture}}
+\caption{Three credentials, one entry point. Each caller gets only the rights its token carries; nothing outside the host holds a database password.}
+\label{fig:security}
+\end{figure}
+
+Figure~\ref{fig:security} shows who can reach what. FastAPI owns authentication. It stores password hashes, issues JWT access tokens with rotating sessions, checks CSRF tokens and rate-limits login attempts. A laptop agent never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the agent opens the browser, the signed-in user approves the device, and the agent receives a device token that it sends in its own header (\repo{docs/adr}). That token can claim only its owner's local jobs.
 
 The completion callback is narrowed in the same way. The API records which agent holds each job in \code{jobs.claimed_by} and accepts a result only from that agent, so one paired laptop cannot complete or fail anyone else's work (\repo{nomikos/backend/jobs/api/internal_inference.py}). Agents get only inference and callback credentials, never database or JWT secrets. Before loading a model, an agent checks the file against the SHA-256 hash pinned in the registry.
 
 \section{Usage so far}
 
-The admin dashboard gives the numbers for the 90 days up to 30 October 2026. There are 18 accounts, four of them test or service accounts. They ran 1,070 jobs, 876 transcriptions and 194 segmentations, and none failed. From job creation to completion, a transcription takes a median of 2.5 to 3.3 seconds per page depending on the model, and a segmentation 14 to 36 seconds with the current segmenters. A claim request from an agent takes 35\,ms on average. The whole database is 44.8\,MB, of which the \code{lines} table is 26\,MB.
+Table~\ref{tab:usage} gives the numbers from the admin dashboard for the 90 days up to 30 October 2026.
 
-\section{Quality, monitoring and open issues}
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}l r@{}}
+\toprule
+Measure & Value \\
+\midrule
+Accounts (four of them test or service accounts) & 18 \\
+Jobs run & 1,070 \\
+\quad transcriptions & 876 \\
+\quad segmentations & 194 \\
+Failed jobs & 0 \\
+Median transcription time per page, by model & 2.5 to 3.3\,s \\
+Median segmentation time per page, current segmenters & 14 to 36\,s \\
+Average agent claim request & 35\,ms \\
+Database size (\code{lines} table) & 44.8\,MB (26\,MB) \\
+\bottomrule
+\end{tabular}
+\caption{Usage over 90 days. Times run from job creation to completion.}
+\label{tab:usage}
+\end{table}
+
+\section{Quality and monitoring}
 
 CI (\repo{.github/workflows}) runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The agent is released to PyPI through trusted publishing.
 
 An admin dashboard covers monitoring. It shows users, jobs per model with success rate and median duration, Postgres statistics, request counts and timings per route, failure reports sent by browsers, and user feedback.
 
-Open issues:
+
+\section{Open issues}
+
 \begin{itemize}
-  \item Production does not run Alembic. A release script (\repo{scripts/platform/release_2026_10_11.sh}) applies dated SQL by hand before Coolify deploys; an automatic migration step would be safer.
-  \item mypy runs in CI but does not fail the build.
-  \item \repo{docs/deployment/production.md} does not yet describe the Coolify setup.
-  \item Request metrics live in the memory of one API process and reset on every restart, and no alerting is set up.
-  \item The Cloudflare backup schedule and the restore steps are not yet written down in the repository.
-  \item Backups leave the host, but API, database and media still share it, so it is a single point of failure.
+  \item \textbf{Schema changes by hand.} Production does not run Alembic. A release script in \repo{scripts/platform} applies dated SQL before Coolify deploys; running migrations automatically would be safer.
+  \item \textbf{One host.} Backups leave the host, but the API, database and media still share it, so it is a single point of failure.
+  \item \textbf{Restore is undocumented.} The Cloudflare backup schedule and the steps to restore from it are not written down in the repository.
+  \item \textbf{Short-lived metrics.} Request metrics live in the memory of one API process and reset on every restart, and no alerting is set up.
 \end{itemize}
 
 \appendix
