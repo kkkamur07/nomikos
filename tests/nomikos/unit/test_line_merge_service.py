@@ -22,6 +22,7 @@ from backend.annotation.application.line_merge_service import (
     LineMergeTextConflict,
 )
 from backend.core.exceptions import NotFoundError, ValidationError
+from backend.document.application.reading_order import block_ranks, region_sequence
 from backend.document.infrastructure.orm_models import (
     Line,
     LineTranscription,
@@ -65,6 +66,7 @@ class _Repository:
         self.lines = lines
         self.paired: set[uuid.UUID] = set()
         self.locks = 0
+        self.blocks: list = []
 
     async def list_part_lines(self, _session, _part_id) -> list[Line]:
         return sorted(self.lines, key=lambda line: line.order)
@@ -77,6 +79,9 @@ class _Repository:
 
     async def lock_part(self, _session, _part_id) -> None:
         self.locks += 1
+
+    async def list_part_blocks(self, _session, _part_id) -> list:
+        return self.blocks
 
 
 class _DocumentService:
@@ -359,6 +364,28 @@ class TestOrderAndGuards:
             page[4].id,
             page[5].id,
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_merge_across_regions_keeps_the_page_numbered_region_first(self) -> None:
+        # Two regions. The survivor carries text, so it is the later region's line,
+        # yet the merged line starts where the earlier region's piece started.
+        left = SimpleNamespace(id=uuid.uuid4(), order=0)
+        right = SimpleNamespace(id=uuid.uuid4(), order=1)
+        a0 = _line(300.0, 600.0, 400.0, order=0)
+        a1 = _line(300.0, 600.0, 520.0, order=1)
+        b0 = _line(700.0, 900.0, 520.0, order=2, text="alpha")
+        b1 = _line(700.0, 900.0, 640.0, order=3)
+        for line, block in ((a0, left), (a1, left), (b0, right), (b1, right)):
+            line.block_id = block.id
+        service, repo, part, session = _service([a0, a1, b0, b1])
+        repo.blocks = [right, left]
+
+        lines = await _merge(service, part, session, [a1.id, b0.id])
+
+        assert b0.block_id == left.id
+        assert [line.id for line in lines] == [a0.id, b0.id, b1.id]
+        assert [line.order for line in lines] == [0, 1, 2]
+        assert region_sequence(lines, block_ranks([left, right])) == lines
 
     @pytest.mark.asyncio
     async def test_the_part_is_locked_before_the_rows_are_read(self) -> None:

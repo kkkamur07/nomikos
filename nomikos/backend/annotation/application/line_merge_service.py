@@ -43,6 +43,7 @@ from backend.annotation.application import line_work, segment_health
 from backend.annotation.application.line_geometry import geometry_points
 from backend.core.exceptions import ConflictError, NotFoundError, ValidationError
 from backend.document.application.document_service import DocumentService
+from backend.document.application.reading_order import block_ranks, renumber
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.orm_models import DocumentPart, Line
 from backend.users.infrastructure.orm_models import User
@@ -132,7 +133,10 @@ class LineMergeService:
         # proposed, now redrawn by a human.
         survivor.updated_by = user.id
 
-        self._renumber(lines, survivor, selected[0], removed)
+        blocks = sorted(
+            await self._documents.list_part_blocks(session, part_id), key=lambda block: block.order
+        )
+        self._renumber(lines, survivor, selected[0], removed, block_ranks(blocks))
         for line in removed:
             # Plain delete, exactly as ``LayoutService.delete_part_line`` does it:
             # ``page_transcription_lines.paired_line_id`` is ``ON DELETE SET NULL``,
@@ -176,13 +180,23 @@ class LineMergeService:
         return selected[0]
 
     @staticmethod
-    def _renumber(lines: list[Line], survivor: Line, first: Line, removed: list[Line]) -> None:
-        """Give what is left a contiguous run of positions again.
+    def _renumber(
+        lines: list[Line],
+        survivor: Line,
+        first: Line,
+        removed: list[Line],
+        block_orders: dict,
+    ) -> None:
+        """Give what is left a contiguous run of positions again, region first.
 
         The merged line takes the topmost position of the selection rather than
         the survivor's own: its outline now starts where that line started, and a
         polygon covering rows 3 to 7 sitting at position 7 reads as out of order
-        in every export.
+        in every export. It takes that line's region with it. A selection can
+        cross regions, and a survivor kept for its text may sit in a later one;
+        left in its own region at an earlier position it would be numbered ahead
+        of lines the region-first order (ADR 0011) puts before it, and the canvas
+        would disagree with PAGE XML, which groups lines by region.
 
         Subtracting one gap per deleted row above, the way ``_close_gap`` does,
         is right for a single delete and wrong here: the survivor also vacates
@@ -194,12 +208,13 @@ class LineMergeService:
         """
         removed_ids = {line.id for line in removed}
         survivor.order = first.order
+        survivor.block_id = first.block_id
         remaining = sorted(
             (line for line in lines if line.id not in removed_ids), key=lambda line: line.order
         )
-        base = min((line.order for line in remaining), default=0)
-        for offset, line in enumerate(remaining):
-            line.order = base + offset
+        orders = renumber(remaining, block_orders)  # type: ignore[type-var]
+        for line in remaining:
+            line.order = orders[line.id]
 
     async def _require_part(
         self,
