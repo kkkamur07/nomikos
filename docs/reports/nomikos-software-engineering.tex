@@ -47,7 +47,7 @@
 
 {\LARGE\bfseries Nomikos: software architecture}\par
 \smallskip
-{\small 30 October 2026. Live at \href{https://nomikos.app}{\texttt{nomikos.app}}, code at \href{https://github.com/kkkamur07/nomikos}{\texttt{github.com/kkkamur07/nomikos}}.}
+{\small Live at \href{https://nomikos.app}{\texttt{nomikos.app}}, code at \href{https://github.com/kkkamur07/nomikos}{\texttt{github.com/kkkamur07/nomikos}}.}
 
 Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. The corrections are the point: each one turns a model guess into ground truth for the next model.
 
@@ -142,9 +142,37 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
 
 \choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Agents pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. Postgres \texttt{NOTIFY} tells the API when a job finishes, and the API forwards that to the browser as server-sent events. The queue matters more as the platform grows. Many users start jobs and many agents claim them at the same moment, and without a single queue that locks each row these transactions would collide: two agents could take the same page, or a result could land on a job that was already finished. With one table and row locks, every claim and every callback is one ordered transaction. The cost is that Postgres carries the queue load on top of every other request.
 
-\choice{Agents connect outward.} An inference agent is the same program on a researcher's laptop or on our server; only the token differs. A device token claims its owner's local jobs, a service token claims cloud jobs. Because the agent always starts the connection, a laptop behind a university firewall works without port forwarding, and the server never stores where agents live. The alternative, a server that pushes work to a listening inference service, needs open ports, an address book of workers and a second code path. Here laptop and cloud run the same code, so a model that works on one works on the other. The cost: if the API is down, agents stop.
+\choice{Agents connect outward.} An inference agent is the same program on a researcher's laptop and on our inference host; only the token differs (Figure~\ref{fig:agents}). A device token claims its owner's local jobs, a service token claims cloud jobs. This lets researchers run models on their own machines instead of on rented cloud servers, which keeps our hosting costs low, and the hosted agent covers anyone without a capable laptop. Because the agent always opens the connection, it works behind a university firewall without port forwarding, and the server never needs to know where agents are. The alternative, a server that pushes work to a listening inference service, needs open ports, a registry of worker addresses and a second code path. The cost: if the API is down, agents stop.
 
-\choice{ONNX Runtime serves, PyTorch only exports.} We picked \href{https://onnxruntime.ai}{ONNX Runtime} for inference because it is light. The agent runs on researchers' own laptops, some with only 8\,GB of memory, so install size and memory matter more than raw speed. Figure~\ref{fig:onnxbars} compares the two runtimes for serving. With ONNX Runtime the installed package is 54\% smaller and peak memory on a page drops from 7.0\,GB to 3.0\,GB. The same CPU build installs on every platform without the special flag PyTorch needs to avoid pulling GPU libraries. PyTorch runs the model itself faster, but the decoder after it is the same NumPy code in both, so a whole page takes only 12 to 14\% longer on ONNX Runtime. For a researcher on a laptop, a page that is a little slower beats an install that does not fit. PyTorch still has one job, exporting each model to an ONNX graph in \repo{nomikos_inference/export} (Figure~\ref{fig:onnx}). Serving reproduces the training preprocessing step by step, crop padding is stored per model in \repo{nomikos_inference/registry.yaml}, and parity tests in \repo{tests/export} compare ONNX against PyTorch output.
+\begin{figure}[ht]
+\centering
+\resizebox{0.8\linewidth}{!}{%
+\begin{tikzpicture}
+  \node[box] (la) at (0,0) {Agent\\\scriptsize device token, own CPU};
+  \node[store] (lc) at (0,-1.5) {Model cache\\\scriptsize\texttt{\textasciitilde/.nomikos}};
+  \node[box] (ha) at (0,-3.6) {Agent\\\scriptsize service token};
+  \node[box, draw=accent, very thick] (api) at (7.2,-1.8) {FastAPI API};
+  \node[store] (q) at (12.4,-1.8) {\texttt{jobs} table\\\scriptsize local jobs | cloud jobs};
+  \begin{scope}[on background layer]
+    \node[group, fit=(la)(lc)] (gl) {};
+    \node[group, fit=(ha)] (gh) {};
+  \end{scope}
+  \node[glabel] at (gl.north west) {Researcher laptop};
+  \node[glabel] at (gh.north west) {Inference host};
+  \draw[groupline, very thick] (3.2,0.9) -- node[pos=0.03, right, font=\scriptsize\itshape, text=groupline] {firewall} (3.2,-4.5);
+  \draw[run] (la.east) -- node[lab, sloped] {claim own local jobs} (api.north west);
+  \draw[run] (ha.east) -- node[lab, sloped] {claim any cloud job} (api.south west);
+  \draw[run] (la) -- node[lab, right=2pt] {load} (lc);
+  \draw[run] (api) -- node[lab, above=2pt] {SKIP LOCKED} (q);
+  \begin{scope}[shift={(4.2,-5.2)}]
+    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {outbound HTTPS, opened by the agent};
+  \end{scope}
+\end{tikzpicture}}
+\caption{Two agents, one program. Both open the connection, so no inbound port is needed on either machine; the token decides which jobs an agent may claim.}
+\label{fig:agents}
+\end{figure}
+
+\choice{ONNX Runtime serves, PyTorch only exports.} The agent runs on researchers' laptops, some with only 8\,GB of memory, so we chose \href{https://onnxruntime.ai}{ONNX Runtime} for being light rather than fast. Figure~\ref{fig:onnxbars} shows the gap: the install is 54\% smaller and a page needs 3.0\,GB of memory instead of 7.0\,GB. One CPU build installs everywhere, with no flag to keep GPU libraries out. The price is a page that runs 12 to 14\% slower. PyTorch only exports each model to ONNX (Figure~\ref{fig:onnx}); parity tests in \repo{tests/export} check that the exported model gives the same output, and \repo{nomikos_inference/registry.yaml} stores each model's preprocessing settings.
 
 
 \begin{figure}[ht]
@@ -155,21 +183,20 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
   \foreach \y/\name/\pt/\ox/\tl/\ol in {
       0/Installed package/100/46/817\,MB/372\,MB,
       -1.3/Runtime library/100/15/475\,MB/70\,MB,
-      -2.6/Peak memory per page/100/43/7.0\,GB/3.0\,GB,
-      -3.9/Median time per page/100/113/1.00/1.12 to 1.14} {
+      -2.6/Peak memory per page/100/43/7.0\,GB/3.0\,GB} {
     \node[font=\footnotesize, anchor=east] at (-3,\y-0.22) {\name};
     \fill[torchc] (0,\y) rectangle (\pt,\y-0.38);
     \node[bl] at (\pt,\y-0.19) {\tl};
     \fill[accent] (0,\y-0.44) rectangle (\ox,\y-0.82);
     \node[bl] at (\ox,\y-0.63) {\ol};
   }
-  \draw[groupline] (0,0.2) -- (0,-4.85);
-  \begin{scope}[shift={(0,-5.4)}]
+  \draw[groupline] (0,0.2) -- (0,-3.55);
+  \begin{scope}[shift={(0,-4.1)}]
     \fill[torchc] (0,-0.15) rectangle (6,0.15); \node[key] at (7,0) {PyTorch};
     \fill[accent] (40,-0.15) rectangle (46,0.15); \node[key] at (47,0) {ONNX Runtime};
   \end{scope}
 \end{tikzpicture}}
-\caption{Serving with PyTorch against ONNX Runtime, bars scaled to PyTorch. Install sizes measured on macOS arm64; page time is relative to PyTorch. Source: \protect\href{https://github.com/kkkamur07/nomikos/tree/main/docs/adr}{\texttt{docs/adr}}.}
+\caption{Serving with PyTorch against ONNX Runtime, bars scaled to PyTorch. Measured on macOS arm64. Source: \protect\href{https://github.com/kkkamur07/nomikos/tree/main/docs/adr}{\texttt{docs/adr}}.}
 \label{fig:onnxbars}
 \end{figure}
 
@@ -220,7 +247,7 @@ All stateful parts sit on one Coolify host: the API container built from \repo{n
 
 \choice{All access goes through the API.} The browser talks only to the API, never to Postgres or storage. Images come through short-lived signed URLs. We do not use Postgres row-level security or let the browser query the database directly; FastAPI checks access before every query. All authorisation lives in one layer, which is easy to audit but means every new route has to remember the check.
 
-\choice{Frontend on Vercel, backend on Coolify.} Vercel builds and serves Next.js natively, with caching and a global edge network, which gives the editor the best load times we can get. The backend needs things serverless platforms handle poorly: a long-running worker, a direct database connection, a \texttt{LISTEN} loop for live updates and a disk for images. Coolify deploys our containers from Git on our own server, and we take care of that server, its releases and its backups.
+\choice{Frontend on Vercel, backend on Coolify.} Vercel builds and serves Next.js natively, with caching and a global edge network, which gives the editor the best load times we can get. The backend needs what serverless platforms handle poorly: a long-running worker, a direct database connection, a disk for images and long-lived connections. The most important of these are the \textbf{server-sent event (SSE) streams}: a browser watching a job keeps one HTTP connection open to \texttt{/jobs/\{id\}/events}, and the API pushes job progress down it the moment Postgres reports a change. Inside the API a single \texttt{LISTEN} on the database feeds all of these streams, so the browser never polls in normal use. Coolify deploys our containers from Git on our own server, and we take care of that server, its releases and its backups.
 
 \section{Job flow}
 
@@ -327,6 +354,12 @@ Table~\ref{tab:columns} lists the main columns. A job row carries its own claim 
 
 CI (\repo{.github/workflows}) runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The agent is released to PyPI through trusted publishing.
 
-Open issues: production does not run Alembic; a release script (\repo{scripts/platform/release_2026_10_11.sh}) applies dated SQL by hand before Coolify deploys, which an automatic migration step would make safer. mypy runs in CI but does not fail the build. \repo{docs/deployment/production.md} does not yet describe the Coolify setup. Backups leave the host, but API, database and media still share it, so it is a single point of failure.
+Open issues:
+\begin{itemize}
+  \item Production does not run Alembic. A release script (\repo{scripts/platform/release_2026_10_11.sh}) applies dated SQL by hand before Coolify deploys; an automatic migration step would be safer.
+  \item mypy runs in CI but does not fail the build.
+  \item \repo{docs/deployment/production.md} does not yet describe the Coolify setup.
+  \item Backups leave the host, but API, database and media still share it, so it is a single point of failure.
+\end{itemize}
 
 \end{document}
