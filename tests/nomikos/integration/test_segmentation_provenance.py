@@ -614,18 +614,24 @@ def test_a_re_segment_leaves_the_first_runs_record_and_its_pruned_lines_readable
 
 
 def test_clearing_job_history_leaves_the_run_and_its_model_identity(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
+    client: TestClient,
+    owner_user: dict[str, str],
+    owner_headers: dict[str, str],
+    owner_project: dict,
 ) -> None:
     from backend.jobs.infrastructure.orm_models import Job, JobStatus
     from infrastructure.db import sync_system_session
+    from tests.nomikos.integration.helpers import user_id_for_email
 
     document_id, part_id = make_part(client, owner_headers, owner_project, name="Cleared history")
     job_id, run_id = _segment_page(part_id, [("l1", 0, _box(10, 10, 90, 30))])
-    # The clear route is scoped to a project through the job's document; attach the
-    # job to this one so the real endpoint is what removes it.
+    # The clear route is scoped to a project through the job's document, and to
+    # the caller's own jobs; attach the job to this document and to the owner so
+    # the real endpoint is what removes it.
     with sync_system_session() as session:
         job = session.execute(select(Job).where(Job.id == job_id)).scalar_one()
         job.document_id = uuid.UUID(document_id)
+        job.user_id = user_id_for_email(owner_user["email"])
         job.status = JobStatus.done
         session.commit()
 
