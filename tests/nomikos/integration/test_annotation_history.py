@@ -84,6 +84,8 @@ def test_member_can_create_and_list_compact_history_snapshots(
             "source_metadata": None,
             "kraken_ceiling": None,
             "approved_text": "alpha",
+            "segmentation_run_id": None,
+            "run_external_id": None,
         },
         {
             "id": line_ids[1],
@@ -95,6 +97,8 @@ def test_member_can_create_and_list_compact_history_snapshots(
             "source_metadata": {"model": "blla"},
             "kraken_ceiling": [[-1, 9], [11, 9], [11, 16], [-1, 16]],
             "approved_text": None,
+            "segmentation_run_id": None,
+            "run_external_id": None,
         },
     ]
     assert "image_key" not in snapshot["state"]
