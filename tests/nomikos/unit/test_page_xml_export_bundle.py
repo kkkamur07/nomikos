@@ -174,8 +174,9 @@ def test_a_line_with_a_mask_and_a_baseline_exports_both_in_their_own_elements() 
     assert page.get("imageHeight") == "480"
 
     text_line = root.find(".//p:TextLine", PAGE_NS)
-    # Coords is the mask, which is the boundary the editor shows and a human corrects.
-    assert text_line.find("p:Coords", PAGE_NS).get("points") == "1,1 19,1 19,9 1,9"
+    # Coords is ``points``, the boundary the editor draws and a vertex edit writes;
+    # a mask left over from before a correction must not replace it.
+    assert text_line.find("p:Coords", PAGE_NS).get("points") == "0,0 20,0 20,10 0,10"
     assert text_line.find("p:Baseline", PAGE_NS).get("points") == "2,7 18,7"
     assert text_line.find(".//p:Unicode", PAGE_NS).text == "ἐν ἀρχῇ"
     assert "baseline:derived" not in text_line.get("custom")
