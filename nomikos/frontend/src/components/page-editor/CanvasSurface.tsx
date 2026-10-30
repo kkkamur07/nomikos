@@ -29,6 +29,7 @@ import {
   type SegmentLook,
 } from "./CanvasLayers";
 import type { PageEditorCanvasSettings } from "./pageEditorSettings";
+import { isAdditiveClick } from "./segmentSelection";
 import { segmentNumbersById, segmentsInNumberOrder } from "./segmentNumbering";
 import { useStableCallback } from "./useStableCallback";
 
@@ -40,6 +41,8 @@ export type CanvasSurfaceProps = {
   layout: PartLayoutResponse;
   lines: LineResponse[];
   selectedSegmentId: string | null;
+  /** Segments picked for a group action, empty unless there are two or more. */
+  selectedSegmentIds: string[];
   pairedSegmentIds: Set<string>;
   hoveredSegmentId?: string | null;
   onHoverSegment?: (lineId: string | null) => void;
@@ -58,7 +61,8 @@ export type CanvasSurfaceProps = {
   onPolygonPoint: (point: LinePoint) => void;
   onPolygonComplete: () => void;
   onSelectLine: (lineId: string) => void;
-  onSelectSegment: (lineId: string) => void;
+  /** ``additive`` is a shift-click or cmd/ctrl-click: toggle, do not replace. */
+  onSelectSegment: (lineId: string, additive: boolean) => void;
   /** The region (block) picked on the canvas, ADR 0011. */
   selectedRegionId?: string | null;
   onSelectRegion?: (regionId: string) => void;
@@ -302,6 +306,7 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
     imageHeight,
     lines,
     selectedSegmentId,
+    selectedSegmentIds,
     pairedSegmentIds,
     settings,
     zoomLevel,
@@ -331,6 +336,10 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
     props.pendingVertexIndex !== null || draggedVertexIndex !== null;
   const orderedLines = useMemo(() => segmentsInNumberOrder(lines), [lines]);
   const segmentNumbers = useMemo(() => segmentNumbersById(lines), [lines]);
+  const mergeGroup = useMemo(
+    () => new Set(selectedSegmentIds),
+    [selectedSegmentIds],
+  );
 
   const onSegmentClick = useStableCallback(
     (
@@ -339,6 +348,14 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
       event: MouseEvent<SVGPolygonElement>,
     ) => {
       event.stopPropagation();
+      // A modified click is always about the group. Without this an additive
+      // click on the segment already selected would insert a vertex instead of
+      // dropping it back out of the group.
+      if (isAdditiveClick(event)) {
+        props.onSelectVertex(null);
+        props.onSelectSegment(lineId, true);
+        return;
+      }
       const editable = lineId === selectedSegmentId && segmentVertexEditEnabled;
       if (editable && segmentPoints.length >= 3) {
         const nextPoints = insertPolygonVertexAtClick(
@@ -352,7 +369,7 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
         }
       }
       props.onSelectVertex(null);
-      props.onSelectSegment(lineId);
+      props.onSelectSegment(lineId, false);
     },
   );
   const handlers = useDrawingHandlers(props, toPoint, vertexInteracting);
@@ -411,6 +428,7 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
         )}
         {orderedLines.map((line) => {
           const selected = line.id === selectedSegmentId;
+          const grouped = mergeGroup.has(line.id);
           const paired = pairedSegmentIds.has(line.id);
           return (
             <SegmentShape
@@ -418,14 +436,22 @@ function CanvasSurfaceInner(props: CanvasSurfaceProps) {
               line={line}
               segmentNumber={segmentNumbers.get(line.id)}
               selected={selected}
+              grouped={grouped}
               paired={paired}
               segmentPoints={
                 selected && vertexEditPoints && vertexEditPoints.length >= 3
                   ? vertexEditPoints
                   : line.points
               }
+              // A group member reads as selected. Only the anchor is *the*
+              // selected segment, though: vertex editing and the transcription
+              // strip are about one segment and must not follow a group of six.
               look={
-                selected ? looks.selected : paired ? looks.paired : looks.plain
+                selected || grouped
+                  ? looks.selected
+                  : paired
+                    ? looks.paired
+                    : looks.plain
               }
               hovered={line.id === props.hoveredSegmentId}
               hoverStrokeWidth={hoverStrokeWidth}

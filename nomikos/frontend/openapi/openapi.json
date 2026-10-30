@@ -36,6 +36,32 @@
         "title": "ActivityOverview",
         "type": "object"
       },
+      "AddedLineResponse": {
+        "properties": {
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": ["line_id", "order", "points"],
+        "title": "AddedLineResponse",
+        "type": "object"
+      },
       "AdminOverview": {
         "properties": {
           "activity": {
@@ -834,6 +860,48 @@
         "title": "CopyToGroundTruthResponse",
         "type": "object"
       },
+      "CorrectedLineResponse": {
+        "properties": {
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "human_points": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "title": "Human Points",
+            "type": "array"
+          },
+          "line_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Line Ids",
+            "type": "array"
+          },
+          "model_points": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Model Points",
+            "type": "array"
+          }
+        },
+        "required": ["external_id", "model_points", "line_ids", "human_points"],
+        "title": "CorrectedLineResponse",
+        "type": "object"
+      },
       "DatabaseOverview": {
         "properties": {
           "active_queries": {
@@ -968,6 +1036,32 @@
         },
         "required": ["day", "count"],
         "title": "DayCount",
+        "type": "object"
+      },
+      "DeletedLineResponse": {
+        "description": "A proposed line with no live counterpart: removed, or absorbed by a merge.",
+        "properties": {
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "model_points": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Model Points",
+            "type": "array"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          }
+        },
+        "required": ["external_id", "order", "model_points"],
+        "title": "DeletedLineResponse",
         "type": "object"
       },
       "DeviceResponse": {
@@ -1236,6 +1330,30 @@
           "reviewed": {
             "title": "Reviewed",
             "type": "boolean"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
           },
           "width": {
             "anyOf": [
@@ -2260,6 +2378,87 @@
         "enum": ["polygon", "rectangle"],
         "title": "LineGeometryKind",
         "type": "string"
+      },
+      "LineMergeConflictDetail": {
+        "description": "The 409 body, which has to name the lines so the client can offer a choice.",
+        "properties": {
+          "code": {
+            "description": "Stable machine-readable error code",
+            "title": "Code",
+            "type": "string"
+          },
+          "line_ids": {
+            "description": "The selected lines that carry transcribed text or a pairing",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Line Ids",
+            "type": "array"
+          },
+          "message": {
+            "description": "Allowlisted user-safe error message",
+            "title": "Message",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Correlation id for support / log lookup",
+            "title": "Ref"
+          }
+        },
+        "required": ["code", "message"],
+        "title": "LineMergeConflictDetail",
+        "type": "object"
+      },
+      "LineMergeConflictResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/LineMergeConflictDetail"
+          }
+        },
+        "required": ["error"],
+        "title": "LineMergeConflictResponse",
+        "type": "object"
+      },
+      "LineMergeRequest": {
+        "description": "Merge the lines a human picked on the canvas, not a pair a detector offered.",
+        "properties": {
+          "keep_text_from": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which line's text and pairing to keep. Required only after a 409, and only ever one of the ids the 409 listed.",
+            "title": "Keep Text From"
+          },
+          "line_ids": {
+            "description": "Two or more lines of this part, in any order",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 2,
+            "title": "Line Ids",
+            "type": "array"
+          }
+        },
+        "required": ["line_ids"],
+        "title": "LineMergeRequest",
+        "type": "object"
       },
       "LinePatchRequest": {
         "additionalProperties": false,
@@ -4252,6 +4451,184 @@
         "title": "SegmentTrimRequest",
         "type": "object"
       },
+      "SegmentationDiffResponse": {
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/AddedLineResponse"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "corrected": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectedLineResponse"
+            },
+            "title": "Corrected",
+            "type": "array"
+          },
+          "deleted": {
+            "items": {
+              "$ref": "#/components/schemas/DeletedLineResponse"
+            },
+            "title": "Deleted",
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/SegmentationRunResponse"
+          },
+          "unchanged": {
+            "items": {
+              "$ref": "#/components/schemas/UnchangedLineResponse"
+            },
+            "title": "Unchanged",
+            "type": "array"
+          }
+        },
+        "required": ["run"],
+        "title": "SegmentationDiffResponse",
+        "type": "object"
+      },
+      "SegmentationRunResponse": {
+        "description": "One recorded run. The model fields are the copies taken when it happened.",
+        "properties": {
+          "block_count": {
+            "title": "Block Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Job Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "image_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Height"
+          },
+          "image_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Width"
+          },
+          "line_count": {
+            "title": "Line Count",
+            "type": "integer"
+          },
+          "model_artifact_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Artifact Ref"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "model_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Provider"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "part_id": {
+            "format": "uuid",
+            "title": "Part Id",
+            "type": "string"
+          },
+          "registry_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Model Id"
+          },
+          "registry_tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Tag"
+          }
+        },
+        "required": [
+          "id",
+          "part_id",
+          "created_by_job_id",
+          "model_name",
+          "model_provider",
+          "model_artifact_ref",
+          "registry_model_id",
+          "registry_tag",
+          "params",
+          "image_width",
+          "image_height",
+          "line_count",
+          "block_count",
+          "created_at"
+        ],
+        "title": "SegmentationRunResponse",
+        "type": "object"
+      },
       "ShareUserRequest": {
         "description": "Who to share with, named exactly one of three ways.\n\n``email`` and ``username`` say which kind of identifier this is, for a\ncaller that knows. ``identifier`` says \"one or the other, you work it out\",\nwhich is what a single UI box has to send: a username may legally contain\nan ``@`` (registration constrains only its length), so the client cannot\ntell the two apart by looking. Resolution order is documented on\n``ProjectService._find_collaborator``.\n\nMatching on email is case-insensitive, like login.",
         "properties": {
@@ -4672,6 +5049,22 @@
           "created_at"
         ],
         "title": "TranscriptionLayerResponse",
+        "type": "object"
+      },
+      "UnchangedLineResponse": {
+        "properties": {
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          }
+        },
+        "required": ["external_id", "line_id"],
+        "title": "UnchangedLineResponse",
         "type": "object"
       },
       "UserResponse": {
@@ -13354,6 +13747,147 @@
         "tags": ["documents"]
       }
     },
+    "/projects/{project_id}/documents/{document_id}/parts/{part_id}/lines/merge": {
+      "post": {
+        "description": "Fold two or more of this part's lines into one, and answer with the whole list.\n\nThe whole list, rather than the merged row, because the merge renumbers the\nrows below it: the editor already reloads this shape after a history restore\nand after every segment-health fix, so a client can replace its state rather\nthan reconcile a partial answer against orders it cannot recompute.",
+        "operationId": "merge_part_lines_projects__project_id__documents__document_id__parts__part_id__lines_merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Part Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LineMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LineResponse"
+                  },
+                  "title": "Response Merge Part Lines Projects  Project Id  Documents  Document Id  Parts  Part Id  Lines Merge Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineMergeConflictResponse"
+                }
+              }
+            },
+            "description": "Several selected lines carry text or a pairing"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Merge Part Lines",
+        "tags": ["documents"]
+      }
+    },
     "/projects/{project_id}/documents/{document_id}/parts/{part_id}/lines/{line_id}": {
       "delete": {
         "operationId": "delete_part_line_projects__project_id__documents__document_id__parts__part_id__lines__line_id__delete",
@@ -15505,6 +16039,281 @@
         ],
         "summary": "Trim Overlap",
         "tags": ["segment-health"]
+      }
+    },
+    "/projects/{project_id}/documents/{document_id}/parts/{part_id}/segmentation-runs": {
+      "get": {
+        "operationId": "list_segmentation_runs_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Part Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SegmentationRunResponse"
+                  },
+                  "title": "Response List Segmentation Runs Projects  Project Id  Documents  Document Id  Parts  Part Id  Segmentation Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Segmentation Runs",
+        "tags": ["segmentation-runs"]
+      }
+    },
+    "/projects/{project_id}/documents/{document_id}/parts/{part_id}/segmentation-runs/diff": {
+      "get": {
+        "operationId": "segmentation_run_diff_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Part Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which recorded run to compare against. Defaults to the latest.",
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which recorded run to compare against. Defaults to the latest.",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SegmentationDiffResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Segmentation Run Diff",
+        "tags": ["segmentation-runs"]
       }
     },
     "/projects/{project_id}/documents/{document_id}/parts/{part_id}/transcribe": {

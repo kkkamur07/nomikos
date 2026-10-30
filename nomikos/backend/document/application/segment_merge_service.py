@@ -39,9 +39,11 @@ from backend.document.infrastructure.orm_models import (
     LineSource,
     LineTranscription,
     PageTranscriptionLine,
+    SegmentationRun,
     Transcription,
     TranscriptionKind,
 )
+from backend.ml.application.model_identity import EMPTY_MODEL_IDENTITY, ModelIdentity
 from backend.ml.domain.segment import CanonicalBlock, CanonicalLine, CanonicalSegmentResult
 
 
@@ -59,6 +61,10 @@ class SegmentMergeSummary:
     # Fresh lines the segmenter drew over ink a kept line already covers, and which were
     # therefore not added. ``added_lines`` excludes them; ``lines_count`` does not.
     skipped_covered_lines: int = 0
+    # The immutable record of what this run proposed, written in the same transaction.
+    # Reported so the job result carries a pointer to it even after the job is deleted
+    # and the FK the other way is nulled.
+    segmentation_run_id: UUID | None = None
 
 
 # A fresh line at least this much inside the kept geometry is the same ink drawn again.
@@ -83,9 +89,17 @@ class SegmentMergeService:
         canonical_segment: CanonicalSegmentResult,
         job_id: UUID,
         commit: bool = True,
+        model_identity: ModelIdentity | None = None,
     ) -> SegmentMergeSummary:
         part = self._load_part(session, part_id)
         transcribed_ids = self._human_transcribed_line_ids(session, part)
+        run = self._record_run(
+            session,
+            part=part,
+            canonical_segment=canonical_segment,
+            job_id=job_id,
+            model_identity=model_identity or EMPTY_MODEL_IDENTITY,
+        )
         pruned = _prune_unprotected(session, part, transcribed_ids)
         blocks_by_external_id = _add_blocks(session, part, canonical_segment.blocks)
 
@@ -108,7 +122,7 @@ class SegmentMergeService:
                 skipped_covered_lines += 1
                 continue
             added_lines += 1
-            line = _kraken_line(part.id, line_data, blocks_by_external_id, job_id)
+            line = _kraken_line(part.id, line_data, blocks_by_external_id, job_id, run.id)
             session.add(line)
             model_lines.append(line)
 
@@ -138,7 +152,49 @@ class SegmentMergeService:
             preserved_manual_lines=pruned.preserved_manual_lines,
             preserved_transcribed_lines=pruned.preserved_transcribed_lines,
             skipped_covered_lines=skipped_covered_lines,
+            segmentation_run_id=run.id,
         )
+
+    def _record_run(
+        self,
+        session: Session,
+        *,
+        part: DocumentPart,
+        canonical_segment: CanonicalSegmentResult,
+        job_id: UUID,
+        model_identity: ModelIdentity,
+    ) -> SegmentationRun:
+        """Store what the segmenter said, before anything on the page is changed.
+
+        Written first and flushed, so the live lines below can carry its id, and in
+        the caller's transaction so that the proposal and the page it produced commit
+        or roll back together. There is never a run row describing lines that were
+        not written, and never lines whose origin points at nothing.
+
+        The whole canonical result goes in verbatim, including lines the merge is
+        about to skip as covered. What the model proposed is the thing being
+        recorded; what the merge chose to do with it is a separate fact, already in
+        the job result.
+        """
+        run = SegmentationRun(
+            part_id=part.id,
+            created_by_job_id=job_id,
+            model_name=model_identity.name,
+            model_provider=model_identity.provider,
+            model_artifact_ref=model_identity.artifact_ref,
+            registry_model_id=model_identity.registry_model_id,
+            registry_tag=model_identity.registry_tag,
+            params=dict(model_identity.params or {}),
+            image_width=part.width,
+            image_height=part.height,
+            line_count=len(canonical_segment.lines),
+            block_count=len(canonical_segment.blocks),
+            lines=[line.model_dump(mode="json") for line in canonical_segment.lines],
+            blocks=[block.model_dump(mode="json") for block in canonical_segment.blocks],
+        )
+        session.add(run)
+        session.flush()
+        return run
 
     def _human_transcribed_line_ids(self, session: Session, part: DocumentPart) -> set[UUID]:
         """Lines on ``part`` that carry approved text or a pairing.
@@ -266,6 +322,7 @@ def _kraken_line(
     line_data: CanonicalLine,
     blocks_by_external_id: dict[str, Block],
     job_id: UUID,
+    run_id: UUID,
 ) -> Line:
     block = (
         blocks_by_external_id.get(line_data.block_external_id)
@@ -286,6 +343,14 @@ def _kraken_line(
             "external_id": line_data.external_id,
             "job_id": str(job_id),
         },
+        # The origin link, as columns rather than as two more keys in the
+        # metadata blob beside them. ``source_metadata`` keeps carrying
+        # ``external_id`` and ``job_id`` for the clients that already read
+        # them; these two are what the provenance diff joins on, and unlike
+        # the blob they are in no request schema, so no bulk save can
+        # rewrite them.
+        segmentation_run_id=run_id,
+        run_external_id=line_data.external_id,
         kraken_ceiling=line_data.kraken_ceiling,
         manual_geometry=False,
         order=line_data.order,

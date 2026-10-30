@@ -211,6 +211,30 @@ export const partsApi = {
       { method: "POST", body: body ?? {} },
     ),
 
+  /**
+   * Fold the segments a human picked into one. Not a segment-health fix: the
+   * server is told which lines, never which polygon, and it offers nothing of
+   * its own. A 409 here means several of them carry text or a pairing, and its
+   * `error.line_ids` is what the caller shows before asking again with
+   * `keepTextFrom`.
+   */
+  mergePartLines: (
+    projectId: string,
+    documentId: string,
+    partId: string,
+    lineIds: string[],
+    keepTextFrom?: string,
+  ) =>
+    apiRequest<LineResponse[]>(
+      `${partPath(projectId, documentId, partId)}/lines/merge`,
+      {
+        method: "POST",
+        body: keepTextFrom
+          ? { line_ids: lineIds, keep_text_from: keepTextFrom }
+          : { line_ids: lineIds },
+      },
+    ),
+
   getSegmentHealth: (projectId: string, documentId: string, partId: string) =>
     apiRequest<SegmentHealthResponse>(
       `${partPath(projectId, documentId, partId)}/segment-health`,

@@ -15,10 +15,13 @@ from backend.annotation.application.segment_health import (
     clip_baseline,
     clip_polygon,
     column_bands,
+    convex_hull,
     find_fragments,
     find_overlaps,
     find_spanning,
     find_suspects,
+    merge_baseline_group,
+    merge_polygon_group,
     merge_polygons,
     overlap_area,
     page_stats,
@@ -285,6 +288,72 @@ class TestMergePolygons:
         merged = merge_polygons(primary, fragment)
         assert bbox(merged) == (300.0, 1000.0, 450.0, 550.0)
         assert len(merged) >= 4
+
+
+class TestMergeGroups:
+    """The same join over any number of pieces, which is what a free merge needs."""
+
+    def test_three_pieces_come_back_as_one_outline_that_encloses_both_gaps(self) -> None:
+        merged = merge_polygon_group(
+            [
+                tapered(300.0, 600.0, 500.0),
+                tapered(700.0, 900.0, 502.0),
+                tapered(1000.0, 1100.0, 498.0),
+            ]
+        )
+        assert _is_simple(merged), f"outline crosses or touches itself: {merged}"
+        assert _contains(merged, (650.0, 500.0)), "the first gap is not enclosed"
+        assert _contains(merged, (950.0, 500.0)), "the second gap is not enclosed"
+        assert bbox(merged)[1] == 1100.0
+
+    def test_two_lines_stacked_one_above_the_other_merge_into_one_simple_outline(self) -> None:
+        """Not every free selection sits side by side; a reviewer merges rows too."""
+        merged = merge_polygon_group([tapered(300.0, 900.0, 500.0), tapered(300.0, 900.0, 640.0)])
+        assert _is_simple(merged), f"outline crosses or touches itself: {merged}"
+        box = bbox(merged)
+        assert box[2] <= 450.0 and box[3] >= 690.0
+        assert _contains(merged, (600.0, 570.0)), "the space between the rows is not enclosed"
+
+    def test_a_single_piece_comes_back_as_itself(self) -> None:
+        only = [[300.0, 450.0], [900.0, 450.0], [900.0, 550.0], [300.0, 550.0]]
+        assert merge_polygon_group([only]) == only
+
+    def test_pieces_too_thin_to_have_an_envelope_fall_back_to_the_hull(self) -> None:
+        """Everything on one x: there is no chain to walk, and concatenating
+        two verticals gives a ring that crosses itself."""
+        merged = merge_polygon_group([[[10.0, 0.0], [10.0, 5.0]], [[10.0, 8.0], [10.0, 12.0]]])
+        assert bbox(merged) == (10.0, 10.0, 0.0, 12.0)
+
+    def test_the_hull_of_a_point_cloud_is_simple_and_keeps_the_extremes(self) -> None:
+        hull = convex_hull(
+            [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [5.0, 5.0], [5.0, 5.0]]
+        )
+        assert _is_simple(hull)
+        assert sorted(tuple(point) for point in hull) == [
+            (0.0, 0.0),
+            (0.0, 10.0),
+            (10.0, 0.0),
+            (10.0, 10.0),
+        ]
+
+    def test_baselines_join_left_to_right_whatever_order_they_arrive_in(self) -> None:
+        joined = merge_baseline_group(
+            [
+                [[1000.0, 500.0], [1100.0, 500.0]],
+                [[300.0, 500.0], [600.0, 500.0]],
+                [[700.0, 500.0], [900.0, 500.0]],
+            ]
+        )
+        xs = [point[0] for point in joined]
+        assert xs == sorted(xs)
+        assert xs[0] == 300.0 and xs[-1] == 1100.0
+
+    def test_a_piece_without_a_baseline_contributes_nothing(self) -> None:
+        joined = merge_baseline_group([[[300.0, 500.0], [600.0, 500.0]], []])
+        assert joined == [[300.0, 500.0], [600.0, 500.0]]
+
+    def test_nothing_with_a_baseline_gives_nothing_rather_than_a_placeholder(self) -> None:
+        assert merge_baseline_group([[], []]) == []
 
 
 class TestOverlaps:

@@ -33,8 +33,12 @@ export function useEditorSelection({
   setSelectedRegionId,
   resetTools,
 }: EditorSelectionInput) {
-  const { selectedSegmentId, setSelectedSegmentId, setApprovedTextDraft } =
-    pairing;
+  const {
+    selectedSegmentId,
+    setSelectedSegmentId,
+    setSelectedSegmentIds,
+    setApprovedTextDraft,
+  } = pairing;
   const { selectedLineId, setSelectedLineId } = mutations;
   const [vertexCommitSignal, setVertexCommitSignal] = useState(0);
 
@@ -43,13 +47,14 @@ export function useEditorSelection({
   const selectedSegmentIdRef = useRef(selectedSegmentId);
   selectedSegmentIdRef.current = selectedSegmentId;
 
-  function selectSegment(lineId: string) {
+  /** ``additive`` is a shift-click or cmd/ctrl-click: toggle, do not replace. */
+  function selectSegment(lineId: string, additive = false) {
     setSelectedRegionId(null);
     setSelectedLineId(null);
     mutations.setSaveMessage(null);
     setStripDismissed(false);
     setSelectedVertexIndex(null);
-    pairing.selectSegment(lineId);
+    pairing.selectSegment(lineId, additive);
   }
 
   function selectRegion(regionId: string) {
@@ -76,6 +81,7 @@ export function useEditorSelection({
     setVertexCommitSignal((value) => value + 1);
     setSelectedVertexIndex(null);
     setSelectedSegmentId(null);
+    setSelectedSegmentIds([]);
     setSelectedLineId(null);
     setSelectedRegionId(null);
     setApprovedTextDraft("");
@@ -84,6 +90,7 @@ export function useEditorSelection({
     resetTools,
     setSelectedVertexIndex,
     setSelectedSegmentId,
+    setSelectedSegmentIds,
     setSelectedLineId,
     setSelectedRegionId,
     setApprovedTextDraft,

@@ -316,6 +316,7 @@ class LayoutService:
             mask=mask or {"points": points},
             source=LineSource.manual,
             manual_geometry=True,
+            updated_by=user.id,
         )
         # The server owns reading order (ADR 0008). Without an ``order`` the line goes
         # where it sits on the page; with one (undo restoring a deleted line) it goes
@@ -383,6 +384,12 @@ class LayoutService:
             )
             others.insert(insertion_index(others, line, block_orders), line)
             _apply_reading_order(others, block_orders)
+        # ``updated_at`` looks after itself (``onupdate`` on the column); this is the
+        # half that needs a caller, and every path that sets it already holds the
+        # user. The origin columns are untouched on purpose: a line a human redrew is
+        # still the line the model proposed, and losing that link is exactly what
+        # made a correction indistinguishable from a fresh drawing.
+        line.updated_by = user.id
         await session.commit()
         return await self._line_or_404(session, part.id, line.id)
 
@@ -454,6 +461,7 @@ class LayoutService:
         *,
         lines: list[dict],
         allow_new_ids: bool = False,
+        restore_origin: bool = False,
     ) -> list[Line]:
         if len(lines) > MAX_REPLACE_PART_LINES:
             raise ValidationError(
@@ -485,6 +493,18 @@ class LayoutService:
         for data in lines:
             line = _upsert_line(session, part.id, data, existing_by_id)
             written.append(line)
+            # A row that existed keeps its origin columns untouched, because they are
+            # not in ``LineUpsertRequest`` at all. ``source_metadata`` is, which is
+            # why the link does not live there: the editor posts the whole page on
+            # every save, so a client that sent its own metadata would otherwise
+            # rewrite the provenance of every line on the page.
+            line.updated_by = user.id
+            # A history restore is the one caller trusted to put an origin back: the
+            # values come from a snapshot the server took, never from a request body.
+            # A snapshot line with no origin leaves the row's own link alone.
+            if restore_origin and data.get("segmentation_run_id") is not None:
+                line.segmentation_run_id = data["segmentation_run_id"]
+                line.run_external_id = data.get("run_external_id")
             await self._ground_truth.write(session, line, ground_truth, data.get("approved_text"))
 
         # The client's orders say the sequence; the server makes it dense. The sort is

@@ -7,6 +7,7 @@ import {
 import { invalidateAfter } from "../../../api/resources";
 import { useUnsavedTranscriptGuard } from "../PageEditorTranscriptEditor";
 import { segmentNumberFor, segmentsInNumberOrder } from "../segmentNumbering";
+import { selectionAfterClick } from "../segmentSelection";
 import type { StatusMessage } from "../statusMessage";
 import type {
   PairingProgressSetter,
@@ -63,6 +64,11 @@ export function usePairingState({
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(
     null,
   );
+  // The segments picked for a group action, empty unless there are two or more
+  // of them. Held beside the single selection rather than replacing it: the
+  // strip, pairing, per-segment OCR and vertex editing are all about one
+  // segment and stay that way.
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
   const [approvedTextDraft, setApprovedTextDraft] = useState("");
   const [transcriptionSaveMessage, setTranscriptionSaveMessage] =
     useState<StatusMessage | null>(null);
@@ -140,6 +146,7 @@ export function usePairingState({
 
   useEffect(() => {
     setSelectedSegmentId(null);
+    setSelectedSegmentIds([]);
     setApprovedTextDraft("");
     setTranscriptionSaveMessage(null);
     setOcrMessage(null);
@@ -204,13 +211,48 @@ export function usePairingState({
       document.removeEventListener("visibilitychange", onVisibilityChange);
   }, []);
 
-  function selectSegment(lineId: string) {
-    const selected = lines.find((line) => line.id === lineId) ?? null;
-    setSelectedSegmentId(lineId);
+  /**
+   * ``additive`` is a shift-click or a cmd/ctrl-click: it toggles the segment in
+   * the group instead of replacing the selection. A plain click drops the group,
+   * which is what makes clicking away from a half-built merge do the obvious
+   * thing.
+   */
+  function selectSegment(lineId: string, additive = false) {
+    const next = selectionAfterClick(
+      { anchorId: selectedSegmentId, groupIds: selectedSegmentIds },
+      lineId,
+      additive,
+    );
+    setSelectedSegmentIds(next.groupIds);
+    setSelectedSegmentId(next.anchorId);
+    const selected =
+      next.anchorId === null
+        ? null
+        : (lines.find((line) => line.id === next.anchorId) ?? null);
     setTranscriptionSaveMessage(null);
     setApprovedTextDraft(
       selected ? lineTextForLayer(selected, selectedTranscriptionLayerId) : "",
     );
+  }
+
+  /**
+   * Select the line a merge kept, from the merge's own response. The server
+   * chooses the survivor, so the draft has to be read from it rather than left
+   * holding the last clicked segment's text, which Save would then write over
+   * the text the merge preserved. ``lines`` is not read: it is still the list
+   * from before the merge when this runs.
+   */
+  function selectMergedSurvivor(survivor: LineResponse | null) {
+    setSelectedSegmentIds([]);
+    setSelectedSegmentId(survivor?.id ?? null);
+    setTranscriptionSaveMessage(null);
+    setApprovedTextDraft(
+      survivor ? lineTextForLayer(survivor, selectedTranscriptionLayerId) : "",
+    );
+  }
+
+  function clearSegmentGroup() {
+    setSelectedSegmentIds([]);
   }
 
   function navigateSegment(direction: -1 | 1) {
@@ -239,6 +281,10 @@ export function usePairingState({
   return {
     selectedSegmentId,
     setSelectedSegmentId,
+    selectedSegmentIds,
+    setSelectedSegmentIds,
+    selectMergedSurvivor,
+    clearSegmentGroup,
     approvedTextDraft,
     setApprovedTextDraft,
     transcriptionSaveMessage,

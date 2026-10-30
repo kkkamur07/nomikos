@@ -58,6 +58,8 @@ def part_response(part: DocumentPart, *, public: bool = False) -> DocumentPartRe
         width=part.width,
         height=part.height,
         reviewed=part.reviewed,
+        reviewed_at=part.reviewed_at,
+        reviewed_by=None if public else part.reviewed_by,
         published=part.published,
         created_at=part.created_at,
     )

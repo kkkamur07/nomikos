@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 interface ShortcutHandlers {
   onDrawBox?: () => void;
   onDrawPolygon?: () => void;
+  onMerge?: () => void;
   onDelete?: () => void;
   onEscape?: () => void;
   onEnter?: () => void;
@@ -34,6 +35,8 @@ const SHORTCUTS: readonly Shortcut[] = [
   },
   { handler: "onDrawBox", matches: (key, ctrl) => key === "b" && !ctrl },
   { handler: "onDrawPolygon", matches: (key, ctrl) => key === "p" && !ctrl },
+  // M merges the selected segments. Free: nothing else in the editor binds it.
+  { handler: "onMerge", matches: (key, ctrl) => key === "m" && !ctrl },
   {
     handler: "onDelete",
     matches: (key, ctrl) => (key === "delete" || key === "backspace") && !ctrl,

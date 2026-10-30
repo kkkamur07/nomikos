@@ -15,6 +15,7 @@ import {
   PageEditorCanvasIsland,
   type DrawTool,
 } from "./PageEditorCanvasIsland";
+import { PageEditorMergeBar } from "./PageEditorMergeBar";
 import { useSmoothWheelZoom } from "./useSmoothWheelZoom";
 import { useSpacePan } from "./useSpacePan";
 import { useStableCallback } from "./useStableCallback";
@@ -81,6 +82,11 @@ type PageEditorCanvasProps = Omit<
   drawingRegion?: boolean;
   canDelete: boolean;
   onDeleteSelected: () => void;
+  /** Merge bar, shown only while two or more segments are picked. */
+  mergeBusy: boolean;
+  mergeError: string | null;
+  onMergeSelected: () => void;
+  onClearMergeSelection: () => void;
   selectedVertexIndex: number | null;
   onSelectedVertexChange: (vertexIndex: number | null) => void;
   commitSignal: number;
@@ -387,6 +393,13 @@ export function PageEditorCanvas(props: PageEditorCanvasProps) {
               onResetZoom={() => resetTransform()}
               panOverride={spaceHeld}
             />
+            <PageEditorMergeBar
+              count={props.selectedSegmentIds.length}
+              busy={props.mergeBusy}
+              error={props.mergeError}
+              onMerge={props.onMergeSelected}
+              onClear={props.onClearMergeSelection}
+            />
             <TransformComponent
               wrapperStyle={{
                 width: "100%",
@@ -404,6 +417,7 @@ export function PageEditorCanvas(props: PageEditorCanvasProps) {
                 layout={props.layout}
                 lines={lines}
                 selectedSegmentId={selectedSegmentId}
+                selectedSegmentIds={props.selectedSegmentIds}
                 pairedSegmentIds={props.pairedSegmentIds}
                 hoveredSegmentId={props.hoveredSegmentId}
                 onHoverSegment={onHoverSegment}

@@ -398,6 +398,12 @@ class DocumentPartService:
         context = await self._access.require_part(session, user, project_id, document_id, part_id)
         part = context.part
         part.reviewed = reviewed
+        # Who and when, written and cleared with the flag itself so the three can
+        # never disagree. Unmarking clears them rather than leaving the last
+        # reviewer behind: a page that is not reviewed has no reviewer, and keeping
+        # a stale name there would read as one.
+        part.reviewed_at = datetime.now(UTC) if reviewed else None
+        part.reviewed_by = user.id if reviewed else None
         await session.commit()
         await session.refresh(part)
         return part

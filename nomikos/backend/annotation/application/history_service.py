@@ -113,6 +113,14 @@ class AnnotationHistoryService:
                 "mask": line.get("mask"),
                 "kraken_ceiling": line["kraken_ceiling"],
                 "approved_text": line["approved_text"],
+                # Absent from snapshots taken before runs were recorded; those lines
+                # simply come back without an origin, as they were saved.
+                "segmentation_run_id": (
+                    UUID(line["segmentation_run_id"])
+                    if line.get("segmentation_run_id") is not None
+                    else None
+                ),
+                "run_external_id": line.get("run_external_id"),
             }
             for line in snapshot.state["lines"]
         ]
@@ -124,6 +132,7 @@ class AnnotationHistoryService:
             part_id,
             lines=lines,
             allow_new_ids=True,
+            restore_origin=True,
         )
 
     async def _require_part(
@@ -185,4 +194,11 @@ class AnnotationHistoryService:
             "source_metadata": line.source_metadata,
             "kraken_ceiling": line.kraken_ceiling,
             "approved_text": ground_truth.text if ground_truth is not None else None,
+            # The model origin (ADR 0013). Without it a restored proposal comes back as
+            # a line nobody can trace to its run, and the diff reports it as deleted
+            # and added at once instead of unchanged.
+            "segmentation_run_id": (
+                str(line.segmentation_run_id) if line.segmentation_run_id is not None else None
+            ),
+            "run_external_id": line.run_external_id,
         }

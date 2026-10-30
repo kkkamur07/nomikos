@@ -33,6 +33,8 @@ type SegmentShapeProps = {
   line: LineResponse;
   segmentNumber: number | undefined;
   selected: boolean;
+  /** Picked for a group action. Reads as selected, but only the anchor edits. */
+  grouped: boolean;
   paired: boolean;
   /** The points drawn: the vertex edit in progress, or the stored outline. */
   segmentPoints: LinePoint[];
@@ -47,7 +49,8 @@ type SegmentShapeProps = {
     segmentPoints: LinePoint[],
     event: MouseEvent<SVGPolygonElement>,
   ) => void;
-  onActivate: (lineId: string) => void;
+  /** ``additive`` is Shift held: toggle the segment in the group. */
+  onActivate: (lineId: string, additive: boolean) => void;
   onHover: (lineId: string | null) => void;
 };
 
@@ -59,6 +62,7 @@ export const SegmentShape = memo(function SegmentShape({
   line,
   segmentNumber,
   selected,
+  grouped,
   paired,
   segmentPoints,
   look,
@@ -74,13 +78,13 @@ export const SegmentShape = memo(function SegmentShape({
       className={`pe-segment-shape${hovered ? " is-hovered" : ""}`}
       role="button"
       tabIndex={0}
-      aria-label={`Segment ${segmentNumber}${paired ? ", paired" : ""}`}
-      aria-current={selected ? "true" : undefined}
+      aria-label={`Segment ${segmentNumber}${paired ? ", paired" : ""}${grouped ? ", selected for merge" : ""}`}
+      aria-current={selected || grouped ? "true" : undefined}
       onMouseEnter={() => onHover(line.id)}
       onMouseLeave={() => onHover(null)}
       onClick={(event) => onClick(line.id, segmentPoints, event)}
       onKeyDown={(event) =>
-        activateWithKeyboard(event, () => onActivate(line.id))
+        activateWithKeyboard(event, () => onActivate(line.id, event.shiftKey))
       }
       points={points(segmentPoints)}
       fill={look.fill}

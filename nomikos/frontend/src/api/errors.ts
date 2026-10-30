@@ -12,13 +12,34 @@ function errorFields(
 export class ApiError extends Error {
   readonly status: number;
   readonly ref: string | null;
+  /**
+   * The parsed `error` object, for the handful of routes whose refusal carries
+   * data the caller has to act on rather than only a sentence to show. The
+   * merge route's 409 is the first: the client cannot ask "keep whose text?"
+   * without the ids it lists. Unknown to every other caller, and `null` when
+   * the body was not JSON.
+   */
+  readonly detail: Record<string, unknown> | null;
 
-  constructor(message: string, status: number, ref: string | null = null) {
+  constructor(
+    message: string,
+    status: number,
+    ref: string | null = null,
+    detail: Record<string, unknown> | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.ref = ref;
+    this.detail = detail;
   }
+}
+
+function errorDetail(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== "object") return null;
+  const error = (body as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return null;
+  return error as Record<string, unknown>;
 }
 
 function envelopeErrorMessage(value: unknown): string | null {
@@ -102,5 +123,10 @@ export async function parseApiError(response: Response): Promise<ApiError> {
   } catch {
     // non-JSON body
   }
-  return new ApiError(message, response.status, extractRef(body, response));
+  return new ApiError(
+    message,
+    response.status,
+    extractRef(body, response),
+    errorDetail(body),
+  );
 }

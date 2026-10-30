@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,10 @@ from backend.document.infrastructure.orm_models import (
     LineGeometryKind,
     LineSource,
 )
+
+# The layout service stamps ``updated_by`` on every line it writes, so the caller
+# needs an id; nothing else about the user is read.
+_USER = SimpleNamespace(id=uuid.uuid4())
 
 
 def _box(x0: float, y0: float, x1: float, y1: float) -> list[list[float]]:
@@ -248,7 +253,7 @@ async def _create(part, repository, points, order=None) -> Line:
     service = LayoutService(documents=repository, access=_Access(part))
     await service.create_part_line(
         session,
-        object(),
+        _USER,
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -289,7 +294,7 @@ async def test_delete_closes_the_gap():
     session = _Session(repository)
 
     await service.delete_part_line(
-        session, object(), uuid.uuid4(), part.document_id, part.id, lines[1].id
+        session, _USER, uuid.uuid4(), part.document_id, part.id, lines[1].id
     )
 
     assert session.deleted == [lines[1]]
@@ -384,7 +389,7 @@ async def _create_block(part, repository, box, *, order, assign=True, label=None
     service = LayoutService(documents=repository, access=_Access(part))
     return await service.create_part_block(
         session,
-        object(),
+        _USER,
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -442,7 +447,7 @@ async def test_deleting_a_region_unblocks_its_lines_and_renumbers():
     service = LayoutService(documents=repository, access=_Access(part))
     session = _Session(repository)
     await service.delete_part_block(
-        session, object(), uuid.uuid4(), part.document_id, part.id, verso.id
+        session, _USER, uuid.uuid4(), part.document_id, part.id, verso.id
     )
     repository.blocks.remove(verso)
 
@@ -463,7 +468,7 @@ async def test_moving_a_line_to_another_region_numbers_it_within_that_region():
     service = LayoutService(documents=repository, access=_Access(part))
     await service.patch_part_line(
         _Session(repository),
-        object(),
+        _USER,
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -489,7 +494,7 @@ async def test_a_line_drawn_inside_a_region_is_numbered_within_it():
     service = LayoutService(documents=repository, access=_Access(part))
     await service.create_part_line(
         session,
-        object(),
+        _USER,
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -584,7 +589,7 @@ async def _draw_region(part, repository, box, texts=()) -> Block:
     service = LayoutService(documents=repository, access=_Access(part))
     return await service.create_part_block(
         _ScriptSession(repository, list(texts)),
-        object(),
+        _USER,
         uuid.uuid4(),
         part.document_id,
         part.id,
@@ -640,7 +645,7 @@ async def test_an_explicit_region_order_is_kept():
 async def _patch(part, repository, line, **updates) -> None:
     service = LayoutService(documents=repository, access=_Access(part))
     await service.patch_part_line(
-        _Session(repository), object(), uuid.uuid4(), part.document_id, part.id, line.id, **updates
+        _Session(repository), _USER, uuid.uuid4(), part.document_id, part.id, line.id, **updates
     )
 
 

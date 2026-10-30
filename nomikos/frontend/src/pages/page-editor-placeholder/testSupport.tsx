@@ -47,6 +47,7 @@ vi.mock("../../api/client", async (importOriginal) => {
     createPartBlock: vi.fn(),
     patchPartBlock: vi.fn(),
     deletePartBlock: vi.fn(),
+    mergePartLines: vi.fn(),
     updateLineGeometry: vi.fn(),
     resetPartLayout: vi.fn(),
     generateTranscriptionPdf: vi.fn(),

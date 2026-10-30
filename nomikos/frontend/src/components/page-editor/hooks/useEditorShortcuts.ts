@@ -9,6 +9,8 @@ type EditorShortcutsInput = {
   onRemoveSelectedVertex: () => void;
   onDeleteSelection: () => void;
   onEscape: () => void;
+  /** Merge the selected segments; undefined while fewer than two are picked. */
+  onMerge: (() => void) | undefined;
   onUndo: () => void;
   onRedo: () => void;
   /** Whether a drawn polygon has enough corners for Enter to finish it. */
@@ -44,6 +46,7 @@ export function useEditorShortcuts(input: EditorShortcutsInput) {
     onDrawPolygon: () => input.onPickDrawMode("polygon"),
     onDelete: deleteHandler(input),
     onEscape: input.onEscape,
+    onMerge: input.onMerge,
     onUndo: input.onUndo,
     onRedo: input.onRedo,
     onEnter: input.canCompletePolygon ? input.onCompletePolygon : undefined,

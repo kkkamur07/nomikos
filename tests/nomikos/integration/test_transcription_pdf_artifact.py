@@ -179,7 +179,7 @@ def test_outsider_cannot_generate_transcription_pdf(
 # Tests XML layout export with baseline and transcription. Does not validate against an XSD.
 
 
-def test_member_exports_page_xml_with_transcription_polygon_and_baseline(
+def test_member_exports_page_xml_with_a_derived_baseline_not_the_polygon(
     client: TestClient, owner_headers: dict[str, str], owner_project: dict
 ) -> None:
     project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
@@ -223,8 +223,22 @@ def test_member_exports_page_xml_with_transcription_polygon_and_baseline(
     assert baseline is not None
     assert text is not None
     assert coords.attrib["points"] == "10,10 120,10 120,30 10,30"
-    assert baseline.attrib["points"] == "10,10 120,10 120,30 10,30"
     assert text.text == "alpha"
+
+    # The bulk PUT stores a placeholder baseline along the polygon's bottom edge,
+    # so the export derives one. It says so, in the grammar kraken parses.
+    assert text_line.attrib["custom"] == "nomikos {source:kraken; kind:polygon; baseline:derived;}"
+
+    # A Baseline is an open polyline under the letter bodies, never the closed
+    # polygon: a trainer handed the polygon here learns nothing about where the
+    # line sits. The value is deterministic for this rectangle, at 0.68 of its
+    # height measured down from the top: 10 + 0.68 * 20 = 23.6, rounded to 24.
+    assert baseline.attrib["points"] == "11,24 119,24"
+    points = [[int(part) for part in pair.split(",")] for pair in baseline.attrib["points"].split()]
+    assert points != [[10, 10], [120, 10], [120, 30], [10, 30]]
+    assert len(points) >= 2
+    assert all(later[0] > earlier[0] for earlier, later in zip(points, points[1:], strict=False))
+    assert all(10 <= x <= 120 and 10 <= y <= 30 for x, y in points)
 
 
 # --- PAGE XML bundle ---
