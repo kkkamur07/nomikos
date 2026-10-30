@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import SupportsFloat
 
 import numpy as np
 from PIL import Image
@@ -22,7 +22,7 @@ from nomikos_inference.preprocessing.segment_geometry import (
 logger = logging.getLogger(__name__)
 
 
-def _positive_float_param(params: Mapping[str, Any], key: str, default: float) -> float:
+def _positive_float_param(params: Mapping[str, object], key: str, default: float) -> float:
     """Parse a caller-supplied positive number, falling back to the default.
 
     Upper bounds are *not* checked here: they belong to
@@ -32,6 +32,8 @@ def _positive_float_param(params: Mapping[str, Any], key: str, default: float) -
     still return a 422 instead of a half-built response.
     """
     value = params.get(key, default)
+    if not isinstance(value, str | bytes | SupportsFloat):
+        return default
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -44,7 +46,7 @@ def build_blla_segment_response(
     logits: np.ndarray,
     prepared: BLLAInput,
     *,
-    params: Mapping[str, Any] | None = None,
+    params: Mapping[str, object] | None = None,
 ) -> SegmentRunResponse:
     """Decode logits and preserve the native BLLA response contract."""
 
@@ -89,7 +91,7 @@ def build_blla_segment_response(
         if len(ceiling) < 4 or len(baseline) < 2:
             continue
 
-        source_metadata: dict[str, Any] = {
+        source_metadata: dict[str, object] = {
             "adapter": "blla",
             "decoder": "native",
             "raw_order": order,

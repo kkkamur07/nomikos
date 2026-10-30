@@ -13,14 +13,10 @@ from nomikos_inference.architectures.calamari.adapter import (
     run_calamari_transcribe,
     run_calamari_transcribe_many,
 )
-from nomikos_inference.architectures.calamari.preprocessing import (
-    preprocess_line_image_to_calamari_tensor,
-)
 
 __all__ = [
     "CalamariUnavailableError",
     "TranscribeLineFailure",
-    "preprocess_line_image_to_calamari_tensor",
     "run_calamari_transcribe",
     "run_calamari_transcribe_many",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -73,6 +74,29 @@ OptionalGeometryPoints = Annotated[
     Field(max_length=MAX_LINE_GEOMETRY_POINTS),
     AfterValidator(_validate_point_pairs),
 ]
+# Free-form JSON objects a client writes onto a line or block (baseline, mask, box,
+# source_metadata). Their shape is not fixed, but their size is: a geometry object holds
+# at most ``MAX_LINE_GEOMETRY_POINTS`` points (about 8 KB of JSON), so 64 KB leaves room
+# for any real one while refusing the megabyte objects that would otherwise be stored
+# per line, times ``MAX_REPLACE_PART_LINES`` lines, and re-served to every reader.
+MAX_JSON_OBJECT_BYTES = 64 * 1024
+MAX_JSON_OBJECT_KEYS = 64
+
+
+def _validate_json_object_size(value: dict | None) -> dict | None:
+    if value is None:
+        return value
+    if len(value) > MAX_JSON_OBJECT_KEYS:
+        raise ValueError(f"must have at most {MAX_JSON_OBJECT_KEYS} keys")
+    encoded = json.dumps(value, separators=(",", ":"), default=str)
+    if len(encoded.encode("utf-8")) > MAX_JSON_OBJECT_BYTES:
+        raise ValueError(f"must be at most {MAX_JSON_OBJECT_BYTES} bytes of JSON")
+    return value
+
+
+#: A bounded JSON object for request bodies; the bound does not change the OpenAPI type.
+JsonObject = Annotated[dict, AfterValidator(_validate_json_object_size)]
+OptionalJsonObject = Annotated[dict | None, AfterValidator(_validate_json_object_size)]
 # Ordering column on a PATCH body: optional, never null (the column is NOT NULL).
 PatchOrder = Annotated[int, Field(ge=0)] | SkipJsonSchema[None]
 
@@ -260,10 +284,10 @@ class LineUpsertRequest(BaseModel):
     points: GeometryPoints
     block_id: UUID | None = None
     source: LineSource = LineSource.manual
-    source_metadata: dict[str, object] | None = None
+    source_metadata: OptionalJsonObject = None
     kraken_ceiling: OptionalGeometryPoints = None
-    baseline: dict | None = None
-    mask: dict | None = None
+    baseline: OptionalJsonObject = None
+    mask: OptionalJsonObject = None
     approved_text: str | None = Field(default=None, max_length=MAX_LINE_TEXT_CHARS)
 
 
@@ -287,7 +311,7 @@ BlockLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=
 class BlockCreateRequest(BaseModel):
     # Omit it and the server ranks the region by where it is on the page (ADR 0011).
     order: int | None = Field(default=None, ge=0)
-    box: dict
+    box: JsonObject
     label: BlockLabel | None = None
     # Assign every line of the page whose centre lies inside ``box`` and that is in no
     # region yet (ADR 0011). The page is renumbered region-first either way.
@@ -307,7 +331,7 @@ class BlockPatchRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     order: PatchOrder = None
-    box: dict | SkipJsonSchema[None] = None
+    box: JsonObject | SkipJsonSchema[None] = None
     # Nullable column: an explicit ``null`` (or an empty string) clears the label.
     label: BlockLabel | None = None
 
@@ -331,8 +355,8 @@ class LineCreateRequest(BaseModel):
     kind: LineGeometryKind = LineGeometryKind.polygon
     points: GeometryPoints
     block_id: UUID | None = None
-    baseline: dict | None = None
-    mask: dict | None = None
+    baseline: OptionalJsonObject = None
+    mask: OptionalJsonObject = None
 
 
 class LinePatchRequest(BaseModel):
@@ -348,8 +372,8 @@ class LinePatchRequest(BaseModel):
 
     order: PatchOrder = None
     block_id: UUID | None = None
-    baseline: dict | SkipJsonSchema[None] = None
-    mask: dict | None = None
+    baseline: JsonObject | SkipJsonSchema[None] = None
+    mask: OptionalJsonObject = None
     points: OptionalGeometryPoints = None
 
     @field_validator("order", "baseline", "points", mode="before")

@@ -354,7 +354,7 @@ class _LineLookupSession:
         return _ScalarResult([_FakeLine(self._part_id, line_id) for line_id in ids])
 
 
-def _batch(part_id: uuid.UUID, entries: list[tuple[int, str | None]]):
+def _batch(entries: list[tuple[int, str | None]]):
     from nomikos_inference.contracts.transcribe import (
         TRANSCRIBE_LINE_ERROR,
         TranscribeBatchLineResult,
@@ -411,7 +411,7 @@ def test_failed_lines_are_skipped_and_reported(monkeypatch: pytest.MonkeyPatch):
     summary = service._apply_transcribe_merge_sync(
         _LineLookupSession(part_id, context.document_id),
         context=context,
-        output=_batch(part_id, [(0, "alpha"), (1, None), (2, "gamma")]),
+        output=_batch([(0, "alpha"), (1, None), (2, "gamma")]),
     )
 
     # Only the two successful lines reach the merge, and the caller can still see
@@ -478,7 +478,7 @@ def test_the_part_is_locked_before_its_lines_are_read(monkeypatch: pytest.Monkey
     service._apply_transcribe_merge_sync(
         session,
         context=context,
-        output=_batch(part_id, [(0, "alpha")]),
+        output=_batch([(0, "alpha")]),
     )
 
     assert session.statements[0] == "lock"
@@ -498,5 +498,75 @@ def test_a_transcribe_callback_for_a_missing_part_is_refused(monkeypatch: pytest
 
     with pytest.raises(service.TranscribeJobHandlerError):
         service._apply_transcribe_merge_sync(
-            session, context=context, output=_batch(part_id, [(0, "alpha")])
+            session, context=context, output=_batch([(0, "alpha")])
         )
+
+
+# --- Line scope and identity --------------------------------------------------
+#
+# Tests every reported line names a line of this job's part before anything is
+# merged. Does not test the merge itself.
+
+
+def _with_line_id(output, line_id: str | None):
+    first = output.lines[0].model_copy(update={"line_id": line_id})
+    return output.model_copy(update={"lines": [first, *output.lines[1:]]})
+
+
+@pytest.mark.parametrize(
+    ("line_id", "message"),
+    [
+        (None, "missing line_id"),
+        ("not-a-uuid", "line_id is invalid"),
+    ],
+)
+def test_a_line_without_a_usable_id_is_refused(line_id: str | None, message: str):
+    part_id = uuid.uuid4()
+    output = _with_line_id(_batch([(0, "a")]), line_id)
+    context = _transcribe_context(part_id)
+
+    with pytest.raises(service.TranscribeJobHandlerError, match=message):
+        service._apply_transcribe_merge_sync(
+            _LineLookupSession(part_id, context.document_id), context=context, output=output
+        )
+
+
+def test_a_line_outside_a_line_scoped_job_is_refused():
+    part_id = uuid.uuid4()
+    output = _batch([(0, "a")])
+    context = _transcribe_context(part_id)
+    scoped = service._MergeContext(
+        **{**context.__dict__, "allowed_line_ids": frozenset({uuid.uuid4()})}
+    )
+    session = _LineLookupSession(part_id, context.document_id)
+
+    with pytest.raises(service.TranscribeJobHandlerError, match="outside the job's scope"):
+        service._apply_transcribe_merge_sync(session, context=scoped, output=output)
+    # Refused before any line is read.
+    assert session.statements == ["lock"]
+
+
+class _ForeignLineSession(_LineLookupSession):
+    """Locks the job's part but finds every requested line on another part."""
+
+    def execute(self, statement, *args, **kwargs) -> _ScalarResult:
+        result = super().execute(statement, *args, **kwargs)
+        if self.statements[-1] == "read":
+            for line in result.all():
+                line.part_id = uuid.uuid4()
+        return result
+
+
+def test_a_line_of_another_part_is_refused():
+    part_id = uuid.uuid4()
+    output = _batch([(0, "a")])
+    context = _transcribe_context(part_id)
+
+    with pytest.raises(service.TranscribeJobHandlerError, match="Document line not found"):
+        service._apply_transcribe_merge_sync(
+            _ForeignLineSession(part_id, context.document_id), context=context, output=output
+        )
+
+
+def test_an_empty_id_list_reads_no_lines():
+    assert service._load_lines(_LineLookupSession(uuid.uuid4()), []) == {}

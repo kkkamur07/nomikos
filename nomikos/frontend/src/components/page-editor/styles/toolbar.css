@@ -1,0 +1,328 @@
+/* ─── Toolbar ───────────────────────────────────────────────────── */
+.pe-toolbar {
+  flex-shrink: 0;
+  /* Always one 52px row. Nothing wraps: the title ellipsises, and the action
+     buttons fold to icons and then into "More" as the bar measures itself
+     running out of room (useToolbarCollapse). */
+  height: 52px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  gap: 8px;
+  z-index: 20;
+}
+
+.pe-toolbar__logo {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none !important;
+  flex-shrink: 0;
+  padding: 4px 0;
+  background: transparent;
+}
+.pe-toolbar__logo:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.pe-toolbar__logo img {
+  height: 40px;
+  width: auto;
+}
+.pe-toolbar__logo span {
+  display: none;
+}
+
+.pe-toolbar__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  /* Takes the slack and gives it back first. The floor keeps back link,
+     pager and a few characters of the name; below it the actions fold. */
+  flex: 1 1 0;
+  min-width: 13rem;
+}
+.pe-toolbar__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-2);
+  text-decoration: none !important;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+}
+.pe-toolbar__back:hover {
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.pe-toolbar__back:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+.pe-toolbar__back-icon {
+  font-size: 0.875rem;
+  line-height: 1;
+}
+.pe-toolbar__back-label {
+  line-height: 1;
+}
+.pe-toolbar--minimal {
+  gap: 10px;
+}
+.pe-shell__message {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.pe-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pe-canvas-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: var(--canvas-bg);
+}
+/* The pan/zoom library rewrites this layer's `transform` every frame; promoting
+   it keeps the full-resolution scan and its overlay on the compositor instead
+   of repainting them on each step. The hint is applied only while the view is
+   actually moving: held permanently it pins the layer's raster scale, so a
+   zoomed-in SVG overlay is stretched from the bitmap rastered at the old scale
+   and blurs like the scan under it instead of staying vector-crisp. */
+.pe-canvas-host--transforming .react-transform-component {
+  will-change: transform;
+}
+
+.pe-toolbar__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+}
+.pe-toolbar__doc {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.pe-toolbar__doc-page {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.pe-toolbar__center {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+/* Desktop-first: below a comfortable desktop width, shed the decorative
+   pieces before anything wraps - shortcut hints, the pairing track, and the
+   status pill's verbose half. Every control stays reachable; only ornament
+   goes. */
+@media (max-width: 1200px) {
+  .pe-kbd {
+    display: none;
+  }
+  .pe-infstat__sep,
+  .pe-infstat__state {
+    display: none;
+  }
+  .pe-toolbar__sep {
+    display: none;
+  }
+}
+.pe-toolbar__stat {
+  font-size: 0.8125rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.pe-toolbar__stat-sep {
+  color: var(--text-4);
+}
+.pe-toolbar__stat strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.pe-toolbar__progress {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pe-toolbar__progress-track {
+  width: 40px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.pe-toolbar__progress-fill {
+  height: 100%;
+  background: var(--green);
+}
+
+.pe-toolbar__processing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid rgba(180, 83, 9, 0.25);
+  white-space: nowrap;
+}
+.pe-toolbar__processing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: pe-processing-pulse 1.2s ease-in-out infinite;
+}
+
+.pe-infstat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.pe-infstat__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.pe-infstat__sep {
+  color: var(--border-2);
+}
+.pe-infstat__state {
+  font-weight: 600;
+}
+.pe-infstat--cloud {
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.pe-infstat--cloud .pe-infstat__dot {
+  background: var(--text-4);
+}
+.pe-infstat--connected {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: var(--green-banner-border);
+}
+.pe-infstat--connected .pe-infstat__dot {
+  background: var(--green);
+}
+.pe-infstat--checking {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-color: rgba(180, 83, 9, 0.25);
+}
+.pe-infstat--checking .pe-infstat__dot {
+  background: var(--amber);
+  animation: pe-processing-pulse 1.2s ease-in-out infinite;
+}
+.pe-infstat--unavailable .pe-infstat__dot {
+  background: var(--border-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pe-infstat--checking .pe-infstat__dot {
+    animation: none;
+  }
+}
+
+.pe-canvas-processing {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(250, 249, 247, 0.55);
+  pointer-events: none;
+}
+.pe-canvas-processing__label {
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(180, 83, 9, 0.25);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
+@keyframes pe-processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pe-processing-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.pe-toolbar__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.pe-toolbar__cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-left: 1px solid var(--border);
+}
+.pe-toolbar__cluster:first-of-type {
+  border-left: none;
+}

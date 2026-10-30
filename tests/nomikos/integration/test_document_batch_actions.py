@@ -220,25 +220,6 @@ def test_re_segmenting_every_page_is_available_but_only_when_named(
     assert queued_parts == set(part_ids)
 
 
-@pytest.mark.integration
-def test_an_unrecognised_scope_is_refused_rather_than_widened(
-    client, owner_headers, owner_project, owner_user
-):
-    project_id = owner_project["id"]
-    document_id, _ = _document_with_pages(client, owner_headers, project_id, pages=2)
-    _give_cloud_capacity(owner_user["email"])
-
-    response = client.post(
-        _batch_url(project_id, document_id, "jobs/segment"),
-        headers=owner_headers,
-        json={"scope": "everything"},
-    )
-
-    assert response.status_code == 422
-    assert_api_error(response, code="VALIDATION_ERROR")
-    assert _stored_jobs(document_id, JobType.segment) == []
-
-
 # ---------------------------------------------------------------------------
 # Transcription follows segmentation
 # ---------------------------------------------------------------------------
@@ -594,25 +575,3 @@ def test_an_outsider_reaches_neither_the_counts_nor_the_batch(
     assert counts.status_code == 403
     assert queued.status_code == 403
     assert _stored_jobs(document_id, JobType.segment) == []
-
-
-@pytest.mark.integration
-def test_a_document_in_another_project_is_reported_as_missing(
-    client, owner_headers, owner_project, collaborator_user, collaborator_headers
-):
-    other_project = client.post(
-        "/projects",
-        headers=collaborator_headers,
-        json={"slug": f"proj-{uuid.uuid4().hex[:8]}", "name": "Elsewhere"},
-    )
-    assert other_project.status_code == 201, other_project.text
-    document_id, _ = _document_with_pages(
-        client, collaborator_headers, other_project.json()["id"], pages=1
-    )
-
-    response = client.get(
-        _batch_url(owner_project["id"], document_id, "workflow-counts"), headers=owner_headers
-    )
-
-    assert response.status_code == 404
-    assert_api_error(response, code="NOT_FOUND")

@@ -1,6 +1,6 @@
 import type { LayoutPoint, LinePoint } from "../../api/client";
 
-export type GeometryInput =
+type GeometryInput =
   | LinePoint[]
   | LayoutPoint[]
   | number[][]
@@ -113,10 +113,34 @@ export function canvasHandleRadius(
 }
 
 /** Minimum spacing between consecutive polygon vertices (image px). */
-export const MIN_VERTEX_SPACING = 3;
+const MIN_VERTEX_SPACING = 3;
 
 function pointDistance(a: LinePoint, b: LinePoint): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+/** Drops the last point when it closes back onto the first. */
+function withoutClosingPoint(
+  points: LinePoint[],
+  minDistance: number,
+): LinePoint[] {
+  if (points.length < 2) return points;
+  const closes = pointDistance(points[0], points[points.length - 1]);
+  return closes <= minDistance ? points.slice(0, -1) : points;
+}
+
+/** Keeps each point only when it is clear of the last one kept. */
+function withoutNearRepeats(
+  points: LinePoint[],
+  minDistance: number,
+): LinePoint[] {
+  const kept: LinePoint[] = [points[0]];
+  for (const point of points.slice(1)) {
+    if (pointDistance(point, kept[kept.length - 1]) > minDistance) {
+      kept.push(point);
+    }
+  }
+  return kept;
 }
 
 export function cleanPolygonPoints(
@@ -125,31 +149,15 @@ export function cleanPolygonPoints(
   minVertices = 3,
 ): LinePoint[] {
   if (points.length < 2) return points;
-
-  const working = points.map(([x, y]) => [x, y] as LinePoint);
-  if (
-    working.length >= 2 &&
-    pointDistance(working[0], working[working.length - 1]) <= minDistance
-  ) {
-    working.pop();
-  }
-  if (working.length < 2) return points;
-
-  const cleaned: LinePoint[] = [working[0]];
-  for (let index = 1; index < working.length; index += 1) {
-    if (
-      pointDistance(working[index], cleaned[cleaned.length - 1]) > minDistance
-    ) {
-      cleaned.push(working[index]);
-    }
-  }
-  if (
-    cleaned.length >= 2 &&
-    pointDistance(cleaned[0], cleaned[cleaned.length - 1]) <= minDistance
-  ) {
-    cleaned.pop();
-  }
-
+  const open = withoutClosingPoint(
+    points.map(([x, y]) => [x, y] as LinePoint),
+    minDistance,
+  );
+  if (open.length < 2) return points;
+  const cleaned = withoutClosingPoint(
+    withoutNearRepeats(open, minDistance),
+    minDistance,
+  );
   return cleaned.length >= minVertices ? cleaned : points;
 }
 
@@ -161,28 +169,33 @@ export function removePolygonVertex(
   return polygon.filter((_, vertexIndex) => vertexIndex !== index);
 }
 
+/** The point on the segment from start to end nearest to `point`, unrounded. */
+function projectOntoSegment(
+  point: LinePoint,
+  start: LinePoint,
+  end: LinePoint,
+): LinePoint {
+  const [px, py] = point;
+  const [ax, ay] = start;
+  const dx = end[0] - ax;
+  const dy = end[1] - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return [ax, ay];
+  const t = Math.max(
+    0,
+    Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared),
+  );
+  return [ax + t * dx, ay + t * dy];
+}
+
 function distanceSquaredPointToSegment(
   point: LinePoint,
   start: LinePoint,
   end: LinePoint,
 ): number {
-  const [px, py] = point;
-  const [ax, ay] = start;
-  const [bx, by] = end;
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) {
-    const deltaX = px - ax;
-    const deltaY = py - ay;
-    return deltaX * deltaX + deltaY * deltaY;
-  }
-  let t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared;
-  t = Math.max(0, Math.min(1, t));
-  const closestX = ax + t * dx;
-  const closestY = ay + t * dy;
-  const deltaX = px - closestX;
-  const deltaY = py - closestY;
+  const [closestX, closestY] = projectOntoSegment(point, start, end);
+  const deltaX = point[0] - closestX;
+  const deltaY = point[1] - closestY;
   return deltaX * deltaX + deltaY * deltaY;
 }
 
@@ -191,18 +204,8 @@ function closestPointOnSegment(
   start: LinePoint,
   end: LinePoint,
 ): LinePoint {
-  const [px, py] = point;
-  const [ax, ay] = start;
-  const [bx, by] = end;
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) {
-    return [Math.round(ax), Math.round(ay)];
-  }
-  let t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared;
-  t = Math.max(0, Math.min(1, t));
-  return [Math.round(ax + t * dx), Math.round(ay + t * dy)];
+  const [x, y] = projectOntoSegment(point, start, end);
+  return [Math.round(x), Math.round(y)];
 }
 
 function isNearExistingVertex(

@@ -3041,7 +3041,9 @@
         "description": "Sent by an unpaired helper. Every field is attacker-controlled.",
         "properties": {
           "capabilities": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "type": "string"
+            },
             "title": "Capabilities",
             "type": "object"
           },
@@ -3357,6 +3359,7 @@
           "guidelines": {
             "anyOf": [
               {
+                "maxLength": 10000,
                 "type": "string"
               },
               {
@@ -3489,6 +3492,7 @@
           "guidelines": {
             "anyOf": [
               {
+                "maxLength": 10000,
                 "type": "string"
               },
               {

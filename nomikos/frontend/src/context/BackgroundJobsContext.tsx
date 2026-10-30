@@ -17,6 +17,7 @@ import {
 } from "../api/client";
 import { toast } from "../components/ui/toast";
 import { useJobPolling } from "../hooks/useJobPolling";
+import { JobWaitTimeoutError } from "../utils/jobSubscription";
 import {
   isTerminalJobStatus,
   jobStatusLabel,
@@ -267,6 +268,23 @@ export function BackgroundJobsProvider({ children }: { children: ReactNode }) {
         applyJobUpdate(jobId, job);
         return job;
       } catch (err) {
+        if (err instanceof JobWaitTimeoutError) {
+          // The client stopped waiting, not the server. The job stays
+          // active, so the poll loop keeps watching it, and the panel says
+          // contact was lost rather than reporting the job as failed.
+          setJobs((current) =>
+            current.map((job) =>
+              job.id === jobId
+                ? {
+                    ...job,
+                    error: "Lost contact with the server; still checking.",
+                    progressLabel: "Waiting for the server",
+                  }
+                : job,
+            ),
+          );
+          throw err;
+        }
         const message = err instanceof Error ? err.message : "Job failed";
         setJobs((current) =>
           current.map((job) =>

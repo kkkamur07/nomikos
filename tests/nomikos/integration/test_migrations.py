@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -62,6 +63,25 @@ def _maintenance_url(url: str) -> str:
     return _with_database(url, "postgres")
 
 
+@contextmanager
+def _migrator_url(url: str) -> Iterator[None]:
+    """Point alembic's env.py at ``url``, restoring the previous value after."""
+    # alembic's env.py resolves its URL from the cached settings object, so the
+    # override has to go through the environment and the cache has to be cleared
+    # on both sides of the run or the rest of the session keeps the scratch URL.
+    previous = os.environ.get("MIGRATOR_DATABASE_URL")
+    os.environ["MIGRATOR_DATABASE_URL"] = url
+    get_infrastructure_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("MIGRATOR_DATABASE_URL", None)
+        else:
+            os.environ["MIGRATOR_DATABASE_URL"] = previous
+        get_infrastructure_settings.cache_clear()
+
+
 def _run_ddl(url: str, statement: str) -> None:
     # CREATE/DROP DATABASE cannot run inside a transaction block.
     engine = create_engine(url, isolation_level="AUTOCOMMIT")
@@ -82,22 +102,10 @@ def migrated_scratch_database() -> Iterator[str]:
     _run_ddl(maintenance_url, f'DROP DATABASE IF EXISTS "{_SCRATCH_DATABASE}" WITH (FORCE)')
     _run_ddl(maintenance_url, f'CREATE DATABASE "{_SCRATCH_DATABASE}"')
 
-    # alembic's env.py resolves its URL from the cached settings object, so the
-    # override has to go through the environment and the cache has to be cleared
-    # on both sides of the run or the rest of the session keeps the scratch URL.
-    previous = os.environ.get("MIGRATOR_DATABASE_URL")
-    os.environ["MIGRATOR_DATABASE_URL"] = scratch_url
-    get_infrastructure_settings.cache_clear()
-    try:
+    with _migrator_url(scratch_url):
         command.upgrade(Config(_ALEMBIC_INI), "head")
         yield scratch_url
-    finally:
-        if previous is None:
-            os.environ.pop("MIGRATOR_DATABASE_URL", None)
-        else:
-            os.environ["MIGRATOR_DATABASE_URL"] = previous
-        get_infrastructure_settings.cache_clear()
-        _run_ddl(maintenance_url, f'DROP DATABASE IF EXISTS "{_SCRATCH_DATABASE}" WITH (FORCE)')
+    _run_ddl(maintenance_url, f'DROP DATABASE IF EXISTS "{_SCRATCH_DATABASE}" WITH (FORCE)')
 
 
 def test_migration_chain_matches_orm_metadata(migrated_scratch_database: str) -> None:
@@ -143,19 +151,10 @@ def scratch_database_before_public_sharing() -> Iterator[str]:
     _run_ddl(maintenance_url, f'DROP DATABASE IF EXISTS "{_SCRATCH_DATABASE}" WITH (FORCE)')
     _run_ddl(maintenance_url, f'CREATE DATABASE "{_SCRATCH_DATABASE}"')
 
-    previous = os.environ.get("MIGRATOR_DATABASE_URL")
-    os.environ["MIGRATOR_DATABASE_URL"] = scratch_url
-    get_infrastructure_settings.cache_clear()
-    try:
+    with _migrator_url(scratch_url):
         command.upgrade(Config(_ALEMBIC_INI), "005_case_insensitive_email")
         yield scratch_url
-    finally:
-        if previous is None:
-            os.environ.pop("MIGRATOR_DATABASE_URL", None)
-        else:
-            os.environ["MIGRATOR_DATABASE_URL"] = previous
-        get_infrastructure_settings.cache_clear()
-        _run_ddl(maintenance_url, f'DROP DATABASE IF EXISTS "{_SCRATCH_DATABASE}" WITH (FORCE)')
+    _run_ddl(maintenance_url, f'DROP DATABASE IF EXISTS "{_SCRATCH_DATABASE}" WITH (FORCE)')
 
 
 def test_006_gives_already_published_documents_a_share_token(
@@ -201,17 +200,8 @@ def test_006_gives_already_published_documents_a_share_token(
     finally:
         engine.dispose()
 
-    previous = os.environ.get("MIGRATOR_DATABASE_URL")
-    os.environ["MIGRATOR_DATABASE_URL"] = scratch_database_before_public_sharing
-    get_infrastructure_settings.cache_clear()
-    try:
+    with _migrator_url(scratch_database_before_public_sharing):
         command.upgrade(Config(_ALEMBIC_INI), "head")
-    finally:
-        if previous is None:
-            os.environ.pop("MIGRATOR_DATABASE_URL", None)
-        else:
-            os.environ["MIGRATOR_DATABASE_URL"] = previous
-        get_infrastructure_settings.cache_clear()
 
     engine = create_engine(scratch_database_before_public_sharing)
     try:

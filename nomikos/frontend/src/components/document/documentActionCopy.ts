@@ -1,4 +1,7 @@
-import type { DocumentBatchJobResponse } from "../../api/client";
+import type {
+  DocumentBatchJobResponse,
+  DocumentWorkflow,
+} from "../../api/client";
 import {
   batchExecutionAnnouncement,
   enqueuedExecution,
@@ -44,6 +47,32 @@ export function batchQueuedMessage(result: DocumentBatchJobResponse): string {
 export function publishConfirmSummary(total: number, reviewed: number): string {
   const unreviewed = Math.max(total - reviewed, 0);
   return `${pageCountLabel(total)}, ${reviewed} reviewed, ${unreviewed} not`;
+}
+
+/**
+ * What flipping a page's visibility actually did, in the workflow it happened in.
+ * Three states, not two. An archived document is not public and cannot be brought
+ * live from here - `DocumentPublishMenu` refuses the toggle outright, and
+ * nothing else in the app sets the workflow back - so "when the document goes live"
+ * would promise a moment that never arrives.
+ */
+export function partPublishedMessage(
+  workflow: DocumentWorkflow | undefined,
+  published: boolean,
+): string {
+  if (workflow === "published") {
+    return published
+      ? "Page shown on the public page"
+      : "Page hidden from the public page";
+  }
+  if (workflow === "archived") {
+    return published
+      ? "Page marked shown. Archived documents are not public"
+      : "Page marked hidden. Archived documents are not public";
+  }
+  return published
+    ? "Page will be shown when the document goes live"
+    : "Page will stay hidden when the document goes live";
 }
 
 /** "updated 2 hours ago", in the coarsest unit that is still true. */

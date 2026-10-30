@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearAccessToken, setAccessToken } from "../../../auth/storage";
 import { usePageEditorData } from "./usePageEditorData";
+import type { api } from "../../../api/client";
 
 const getDocument = vi.fn();
 const getPartLayout = vi.fn();
@@ -14,14 +15,22 @@ const resolvePartModelBinding = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    getDocument: (...args: unknown[]) => getDocument(...args),
-    getPartLayout: (...args: unknown[]) => getPartLayout(...args),
-    listPartLines: (...args: unknown[]) => listPartLines(...args),
-    listTranscriptions: (...args: unknown[]) => listTranscriptions(...args),
-    getPagePairing: (...args: unknown[]) => getPagePairing(...args),
-    listInferenceModels: (...args: unknown[]) => listInferenceModels(...args),
-    resolvePartModelBinding: (...args: unknown[]) =>
-      resolvePartModelBinding(...args),
+    getDocument: (...args: Parameters<typeof api.getDocument>) =>
+      getDocument(...args),
+    getPartLayout: (...args: Parameters<typeof api.getPartLayout>) =>
+      getPartLayout(...args),
+    listPartLines: (...args: Parameters<typeof api.listPartLines>) =>
+      listPartLines(...args),
+    listTranscriptions: (...args: Parameters<typeof api.listTranscriptions>) =>
+      listTranscriptions(...args),
+    getPagePairing: (...args: Parameters<typeof api.getPagePairing>) =>
+      getPagePairing(...args),
+    listInferenceModels: (
+      ...args: Parameters<typeof api.listInferenceModels>
+    ) => listInferenceModels(...args),
+    resolvePartModelBinding: (
+      ...args: Parameters<typeof api.resolvePartModelBinding>
+    ) => resolvePartModelBinding(...args),
   },
 }));
 
@@ -281,7 +290,7 @@ describe("usePageEditorData segment models", () => {
   });
 
   it("resets an explicit choice on a document-level load to the new binding", async () => {
-    getDocument.mockImplementation((projectId: unknown, documentId: unknown) =>
+    getDocument.mockImplementation((projectId: string, documentId: string) =>
       Promise.resolve(documentId === "document-2" ? DOCUMENT_TWO : DOCUMENT),
     );
     resolvePartModelBinding.mockImplementation(
@@ -318,7 +327,7 @@ describe("usePageEditorData segment models", () => {
   });
 
   it("resets an explicit choice on a document-level load to the canonical row when unbound", async () => {
-    getDocument.mockImplementation((projectId: unknown, documentId: unknown) =>
+    getDocument.mockImplementation((projectId: string, documentId: string) =>
       Promise.resolve(documentId === "document-2" ? DOCUMENT_TWO : DOCUMENT),
     );
     resolvePartModelBinding.mockImplementation(

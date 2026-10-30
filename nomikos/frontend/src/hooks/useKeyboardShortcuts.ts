@@ -3,18 +3,66 @@ import { useEffect, useRef } from "react";
 interface ShortcutHandlers {
   onDrawBox?: () => void;
   onDrawPolygon?: () => void;
-  onEditVertices?: () => void;
   onDelete?: () => void;
   onEscape?: () => void;
   onEnter?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
-  onMoveLeft?: () => void;
-  onMoveRight?: () => void;
   onPreviousPage?: () => void;
   onNextPage?: () => void;
+}
+
+type Shortcut = {
+  handler: keyof ShortcutHandlers;
+  matches: (key: string, ctrl: boolean, shift: boolean) => boolean;
+  /** Enter keeps its default so a focused button still activates. */
+  keepDefault?: boolean;
+};
+
+/**
+ * First match wins, in this order. PageUp/PageDown mean previous/next page of
+ * the document: nothing in the editor scrolls with these keys.
+ */
+const SHORTCUTS: readonly Shortcut[] = [
+  {
+    handler: "onPreviousPage",
+    matches: (key, ctrl) => key === "pageup" && !ctrl,
+  },
+  {
+    handler: "onNextPage",
+    matches: (key, ctrl) => key === "pagedown" && !ctrl,
+  },
+  { handler: "onDrawBox", matches: (key, ctrl) => key === "b" && !ctrl },
+  { handler: "onDrawPolygon", matches: (key, ctrl) => key === "p" && !ctrl },
+  {
+    handler: "onDelete",
+    matches: (key, ctrl) => (key === "delete" || key === "backspace") && !ctrl,
+  },
+  { handler: "onEscape", matches: (key) => key === "escape" },
+  { handler: "onEnter", matches: (key) => key === "enter", keepDefault: true },
+  {
+    handler: "onUndo",
+    matches: (key, ctrl, shift) => ctrl && key === "z" && !shift,
+  },
+  {
+    handler: "onRedo",
+    matches: (key, ctrl, shift) =>
+      (ctrl && shift && key === "z") || (ctrl && key === "y"),
+  },
+];
+
+/**
+ * A focused control that takes keyboard input keeps its keys: Backspace in a
+ * select, type-ahead letters in a listbox, Delete in a contenteditable.
+ */
+function ownsKeyboard(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.closest('[contenteditable]:not([contenteditable="false"])'))
+    return true;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  const role = target.getAttribute("role");
+  return role === "listbox" || role === "option" || role === "combobox";
 }
 
 export const useKeyboardShortcuts = (handlers: ShortcutHandlers) => {
@@ -23,80 +71,16 @@ export const useKeyboardShortcuts = (handlers: ShortcutHandlers) => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in input/textarea
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      const current = handlersRef.current;
+      if (ownsKeyboard(e.target)) return;
       const key = e.key.toLowerCase();
       const ctrl = e.ctrlKey || e.metaKey;
-
-      // PageUp/PageDown - previous/next page of the document. Nothing in the
-      // editor scrolls with these keys, so they are free to mean what they say.
-      if (key === "pageup" && !ctrl) {
-        e.preventDefault();
-        current.onPreviousPage?.();
-      } else if (key === "pagedown" && !ctrl) {
-        e.preventDefault();
-        current.onNextPage?.();
-      }
-      // B - Draw Box
-      else if (key === "b" && !ctrl) {
-        e.preventDefault();
-        current.onDrawBox?.();
-      }
-      // P - Draw Polygon
-      else if (key === "p" && !ctrl) {
-        e.preventDefault();
-        current.onDrawPolygon?.();
-      }
-      // V - Edit Vertices
-      else if (key === "v" && !ctrl) {
-        e.preventDefault();
-        current.onEditVertices?.();
-      }
-      // Delete/Backspace - Delete selected
-      else if ((key === "delete" || key === "backspace") && !ctrl) {
-        e.preventDefault();
-        current.onDelete?.();
-      }
-      // Escape - Cancel
-      else if (key === "escape") {
-        e.preventDefault();
-        current.onEscape?.();
-      }
-      // Enter - Complete (e.g. polygon)
-      else if (key === "enter") {
-        current.onEnter?.();
-      }
-      // Ctrl+Z - Undo
-      else if (ctrl && key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        current.onUndo?.();
-      }
-      // Ctrl+Shift+Z or Ctrl+Y - Redo
-      else if ((ctrl && e.shiftKey && key === "z") || (ctrl && key === "y")) {
-        e.preventDefault();
-        current.onRedo?.();
-      }
-      // Arrow keys - Move selected region
-      else if (key === "arrowup") {
-        e.preventDefault();
-        current.onMoveUp?.();
-      } else if (key === "arrowdown") {
-        e.preventDefault();
-        current.onMoveDown?.();
-      } else if (key === "arrowleft") {
-        e.preventDefault();
-        current.onMoveLeft?.();
-      } else if (key === "arrowright") {
-        e.preventDefault();
-        current.onMoveRight?.();
-      }
+      const shortcut = SHORTCUTS.find((entry) =>
+        entry.matches(key, ctrl, e.shiftKey),
+      );
+      const handler = shortcut && handlersRef.current[shortcut.handler];
+      if (!shortcut || !handler) return;
+      if (!shortcut.keepDefault) e.preventDefault();
+      handler();
     };
 
     window.addEventListener("keydown", handleKeyDown);

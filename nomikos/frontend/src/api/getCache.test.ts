@@ -7,16 +7,20 @@ import {
 
 describe("dedupedGet", () => {
   it("shares one in-flight request for the same key", async () => {
-    const fetcher = vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return "ok";
+    let release!: (value: string) => void;
+    const gate = new Promise<string>((resolve) => {
+      release = resolve;
     });
+    const fetcher = vi.fn(() => gate);
 
-    const [first, second] = await Promise.all([
+    const pending = Promise.all([
       dedupedGet("GET /example", fetcher),
       dedupedGet("GET /example", fetcher),
     ]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    release("ok");
 
+    const [first, second] = await pending;
     expect(first).toBe("ok");
     expect(second).toBe("ok");
     expect(fetcher).toHaveBeenCalledTimes(1);

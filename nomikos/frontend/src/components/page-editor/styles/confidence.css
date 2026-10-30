@@ -1,0 +1,213 @@
+/* Per-character OCR confidence (high >90%, mid 51-90%, low ≤50%) */
+/* `.pe-confidence-text` is the inline <span> wrapper around the per-character
+   markup. Its container `.pe-model-preview` is a block-level flex child and is
+   laid out further down; do not add it here. */
+.pe-confidence-text {
+  display: inline;
+}
+
+.pe-confidence-text [data-conf],
+.pe-model-preview [data-conf] {
+  cursor: help;
+  border-radius: 2px;
+  padding: 0 2px;
+  transition:
+    background 0.1s,
+    box-shadow 0.1s;
+}
+
+.pe-confidence-text .ch-high,
+.pe-model-preview .ch-high {
+  color: var(--green);
+  background: var(--green-bg);
+  font-weight: 500;
+}
+
+.pe-confidence-text .ch-mid,
+.pe-model-preview .ch-mid {
+  color: var(--amber);
+  background: var(--amber-bg);
+}
+
+.pe-confidence-text .ch-low,
+.pe-model-preview .ch-low {
+  color: var(--red);
+  background: var(--red-light);
+  text-decoration: underline dotted;
+  text-decoration-color: rgba(180, 0, 0, 0.45);
+  text-underline-offset: 3px;
+  font-weight: 500;
+}
+
+/* A cursive joining script (Syriac, Arabic) is shaped by the font across a
+   whole word, and a browser shapes only inside one inline box with unbroken
+   layout. The 2px of horizontal padding above opens a gap at every span
+   boundary, so each letter falls back to its isolated form and the word reads
+   as loose letters: exactly the reported "detached characters". Keep the tint,
+   drop the padding on those lines. Non-joining scripts keep the padding.
+
+   `font-weight` breaks the same shaping for the same reason: `.ch-high` and
+   `.ch-low` ask for 500 and `.ch-mid` does not, so a tier change mid-word is
+   also a font change and the letters on both sides of it fall back to their
+   isolated forms. One weight for the whole line, and the colour and the tint
+   carry the tier on their own. */
+.pe-confidence-text--joining [data-conf] {
+  padding: 0;
+  font-weight: inherit;
+}
+
+.pe-confidence-text [data-conf]:hover,
+.pe-model-preview [data-conf]:hover {
+  box-shadow: 0 0 0 1px var(--border-2);
+}
+
+.pe-model-inline__body [data-conf] {
+  cursor: help;
+}
+.pe-model-inline__empty {
+  font-size: 0.8125rem;
+  color: var(--text-4);
+  font-family: var(--font-ui);
+}
+.pe-model-inline__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.pe-tx-block--compact {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pe-strip__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pe-tx-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.pe-tx-block {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+}
+.pe-tx-block--model {
+  flex: 0 1 46%;
+}
+.pe-tx-block--edit {
+  flex: 1;
+}
+.pe-tx-divider {
+  flex-shrink: 0;
+  height: 1px;
+  background: var(--border);
+}
+.pe-tx-block__head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+.pe-tx-block__label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.pe-model-preview {
+  flex: 1;
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  font-family: var(--font-serif);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  min-height: 0;
+  word-break: break-word;
+}
+
+.pe-strip__edit {
+  flex: 1;
+  width: calc(100% - var(--space-6));
+  margin: 0 var(--space-3) var(--space-2);
+  min-height: 0;
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-serif);
+  resize: none;
+}
+.pe-strip__edit:focus-visible {
+  outline: none;
+  border-color: var(--navy);
+  box-shadow: 0 0 0 2px rgba(13, 31, 60, 0.08);
+}
+
+.pe-strip__footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.pe-strip__legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.pe-strip__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.pe-strip__legend .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pe-strip__legend .dot--high {
+  background: var(--green);
+}
+.pe-strip__legend .dot--mid {
+  background: var(--amber);
+}
+.pe-strip__legend .dot--low {
+  background: var(--red);
+}
+
+.pe-strip__footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}

@@ -16,15 +16,17 @@ tag, and the parameters. Everything here is small and derived from Postgres.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+from sqlalchemy.orm import Session
 
 from backend.document.application.transcribe_merge_service import (
     TranscribeJobHandlerError,
     TranscribeMergeService,
 )
-from backend.document.infrastructure.orm_models import DocumentPart
+from backend.document.infrastructure.orm_models import DocumentPart, Line
 from backend.jobs.infrastructure.orm_models import Job, JobType
 from backend.ml.infrastructure.orm_models import InferenceModel, InferenceTask
 from infrastructure.db import sync_system_session
@@ -56,7 +58,7 @@ class PageRunRequest:
     registry_model_id: str
     registry_tag: str
     product_job_id: uuid.UUID
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """The two checks ``JobSubmitRequest`` made that still have a subject.
@@ -71,6 +73,20 @@ class PageRunRequest:
         if self.task == WireInferenceTask.transcribe and not self.params.get("lines"):
             raise ValueError("transcribe jobs require non-empty params.lines")
         validate_request_params(self.params, get_inference_settings())
+
+
+@dataclass(frozen=True)
+class PageRun:
+    """A claimed page's run instruction and the single stored object it may reach.
+
+    ``image_key`` is resolved from the job's own ``document_part_id``, not a
+    prefix and not the document. Whoever signs it can therefore only ever sign a
+    link to this page, which is the property that makes a link safe to hand out
+    with no credential behind it.
+    """
+
+    request: PageRunRequest
+    image_key: str
 
 
 @dataclass(frozen=True)
@@ -92,7 +108,7 @@ def _registry_selection_from_artifact_ref(artifact_ref: str) -> RegistrySelectio
 
 
 def _job_registry_selection(
-    session,
+    session: Session,
     job: Job,
     *,
     task: InferenceTask,
@@ -111,92 +127,83 @@ def _job_registry_selection(
     return _registry_selection_from_artifact_ref(model.artifact_ref)
 
 
-def _build_segment_request(job: Job) -> PageRunRequest:
-    with sync_system_session() as session:
-        if job.document_part_id is None:
-            raise ValueError("Segment job is missing its target document part")
-        part = session.get(DocumentPart, job.document_part_id)
-        if part is None:
-            raise ValueError("Document part not found")
-        selection = _job_registry_selection(
-            session,
-            job,
-            task=InferenceTask.segment,
-            fallback_model_id=_DEFAULT_SEGMENT_REGISTRY_MODEL,
-            fallback_tag=_DEFAULT_SEGMENT_REGISTRY_TAG,
-        )
-        params = dict((job.payload or {}).get("ml_params") or {})
-        return PageRunRequest(
-            task=WireInferenceTask.segment,
-            registry_model_id=selection.model_id,
-            registry_tag=selection.tag,
-            product_job_id=job.id,
-            params=params,
-        )
+def _ml_params(job: Job) -> dict[str, object]:
+    return dict((job.payload or {}).get("ml_params") or {})
 
 
-def _build_transcribe_request(job: Job) -> PageRunRequest:
+def _segment_run(session: Session, job: Job) -> PageRun:
+    if job.document_part_id is None:
+        raise ValueError("Segment job is missing its target document part")
+    part = session.get(DocumentPart, job.document_part_id)
+    if part is None:
+        raise ValueError("Document part not found")
+    selection = _job_registry_selection(
+        session,
+        job,
+        task=InferenceTask.segment,
+        fallback_model_id=_DEFAULT_SEGMENT_REGISTRY_MODEL,
+        fallback_tag=_DEFAULT_SEGMENT_REGISTRY_TAG,
+    )
+    request = PageRunRequest(
+        task=WireInferenceTask.segment,
+        registry_model_id=selection.model_id,
+        registry_tag=selection.tag,
+        product_job_id=job.id,
+        params=_ml_params(job),
+    )
+    return PageRun(request=request, image_key=part.image_key)
+
+
+def _selected_lines(session: Session, job: Job, part_id: uuid.UUID) -> list[Line]:
+    """The part's lines in reading order, narrowed to ``payload.line_ids`` if set."""
+    lines = TranscribeMergeService.load_lines(session, part_id)
+    selected_line_ids = (job.payload or {}).get("line_ids")
+    if not selected_line_ids:
+        return lines
+    allowed = {uuid.UUID(str(line_id)) for line_id in selected_line_ids}
+    lines = [line for line in lines if line.id in allowed]
+    if not lines:
+        raise TranscribeJobHandlerError("No matching lines to transcribe")
+    return lines
+
+
+def _transcribe_run(session: Session, job: Job) -> PageRun:
     if job.document_id is None or job.document_part_id is None:
         raise TranscribeJobHandlerError("Transcribe job is missing its target document part")
+    part = session.get(DocumentPart, job.document_part_id)
+    if part is None or part.document_id != job.document_id:
+        raise TranscribeJobHandlerError("Document part not found")
+    selection = _job_registry_selection(
+        session,
+        job,
+        task=InferenceTask.transcribe,
+        fallback_model_id=_DEFAULT_TRANSCRIBE_REGISTRY_MODEL,
+        fallback_tag=_DEFAULT_TRANSCRIBE_REGISTRY_TAG,
+    )
+    line_regions = [
+        {"line_id": str(line.id), "line_index": index, "points": line.points}
+        for index, line in enumerate(_selected_lines(session, job, part.id))
+    ]
+    request = PageRunRequest(
+        task=WireInferenceTask.transcribe,
+        registry_model_id=selection.model_id,
+        registry_tag=selection.tag,
+        product_job_id=job.id,
+        params={**_ml_params(job), "lines": line_regions},
+    )
+    return PageRun(request=request, image_key=part.image_key)
 
+
+_RUN_BUILDERS: dict[JobType, Callable[[Session, Job], PageRun]] = {
+    JobType.segment: _segment_run,
+    JobType.transcribe: _transcribe_run,
+}
+
+
+def build_page_run(job: Job) -> PageRun:
+    """The run instruction for *job* and its page's image key, read in one session."""
+    builder = _RUN_BUILDERS.get(job.type)
+    if builder is None:
+        raise ValueError(f"No inference run instruction for job type {job.type.value}")
     with sync_system_session() as session:
-        part = session.get(DocumentPart, job.document_part_id)
-        if part is None or part.document_id != job.document_id:
-            raise TranscribeJobHandlerError("Document part not found")
-        selection = _job_registry_selection(
-            session,
-            job,
-            task=InferenceTask.transcribe,
-            fallback_model_id=_DEFAULT_TRANSCRIBE_REGISTRY_MODEL,
-            fallback_tag=_DEFAULT_TRANSCRIBE_REGISTRY_TAG,
-        )
-        lines = TranscribeMergeService.load_lines(session, part.id)
-        payload = job.payload or {}
-        selected_line_ids = payload.get("line_ids")
-        if selected_line_ids:
-            allowed = {uuid.UUID(str(line_id)) for line_id in selected_line_ids}
-            lines = [line for line in lines if line.id in allowed]
-            if not lines:
-                raise TranscribeJobHandlerError("No matching lines to transcribe")
-
-        base_params = dict((job.payload or {}).get("ml_params") or {})
-        line_regions = [
-            {
-                "line_id": str(line.id),
-                "line_index": index,
-                "points": line.points,
-            }
-            for index, line in enumerate(lines)
-        ]
-        return PageRunRequest(
-            task=WireInferenceTask.transcribe,
-            registry_model_id=selection.model_id,
-            registry_tag=selection.tag,
-            product_job_id=job.id,
-            params={**base_params, "lines": line_regions},
-        )
-
-
-def page_image_key_for_job(job: Job) -> str:
-    """The single stored object a claimed page's signed link may reach.
-
-    One key, resolved from the job's own ``document_part_id`` - not a prefix and
-    not the document. Whoever signs it can therefore only ever sign a link to
-    this page, which is the property that makes a link safe to hand out with no
-    credential behind it.
-    """
-    if job.document_part_id is None:
-        raise ValueError("Job is missing its target document part")
-    with sync_system_session() as session:
-        part = session.get(DocumentPart, job.document_part_id)
-        if part is None:
-            raise ValueError("Document part not found")
-        return part.image_key
-
-
-def build_page_run_request(job: Job) -> PageRunRequest:
-    if job.type == JobType.segment:
-        return _build_segment_request(job)
-    if job.type == JobType.transcribe:
-        return _build_transcribe_request(job)
-    raise ValueError(f"No inference run instruction for job type {job.type.value}")
+        return builder(session, job)

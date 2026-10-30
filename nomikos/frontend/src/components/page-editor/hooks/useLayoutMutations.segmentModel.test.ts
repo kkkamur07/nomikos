@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useLayoutMutations } from "./useLayoutMutations";
+import type { api } from "../../../api/client";
 
 const segmentPart = vi.fn();
 const listPartLines = vi.fn();
@@ -10,10 +11,14 @@ const getPagePairing = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    segmentPart: (...args: unknown[]) => segmentPart(...args),
-    listPartLines: (...args: unknown[]) => listPartLines(...args),
-    getPartLayout: (...args: unknown[]) => getPartLayout(...args),
-    getPagePairing: (...args: unknown[]) => getPagePairing(...args),
+    segmentPart: (...args: Parameters<typeof api.segmentPart>) =>
+      segmentPart(...args),
+    listPartLines: (...args: Parameters<typeof api.listPartLines>) =>
+      listPartLines(...args),
+    getPartLayout: (...args: Parameters<typeof api.getPartLayout>) =>
+      getPartLayout(...args),
+    getPagePairing: (...args: Parameters<typeof api.getPagePairing>) =>
+      getPagePairing(...args),
   },
 }));
 

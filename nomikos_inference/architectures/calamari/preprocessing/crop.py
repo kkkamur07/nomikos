@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 from PIL import Image
 
 from nomikos_inference.contracts.common import LineCrop
@@ -74,11 +75,21 @@ def _integer_points(points: list[list[float]]) -> np.ndarray:
     return polygon
 
 
-def _cut(
-    page: Image.Image, polygon: np.ndarray, padding: int
-) -> tuple[np.ndarray, tuple[int, ...]]:
+#: A page as ``crop_line`` accepts it: an open image, or the RGB ``uint8``
+#: array ``page_pixels`` made from one. A batch converts the page once and
+#: passes the array, so an N-line page pays one full-page conversion, not N.
+Page = Image.Image | np.ndarray
+
+
+def page_pixels(page: Page) -> np.ndarray:
+    """The page as an RGB ``uint8`` array; an array is taken to be one already."""
+    if isinstance(page, np.ndarray):
+        return page
+    return np.asarray(page.convert("RGB"))
+
+
+def _cut(rgb: np.ndarray, polygon: np.ndarray, padding: int) -> tuple[np.ndarray, tuple[int, ...]]:
     """Return the RGB crop of the padded, clamped box and the box itself."""
-    rgb = np.asarray(page.convert("RGB"))
     height, width = rgb.shape[:2]
     bounds = crop_bounds(polygon, width=width, height=height, padding=padding)
     x_min, y_min, x_max, y_max = bounds
@@ -94,34 +105,49 @@ def _to_grayscale(crop: np.ndarray) -> np.ndarray:
     return np.asarray(Image.fromarray(crop, mode="RGB").convert("L"), dtype=np.uint8)
 
 
-def crop_line_on_white(
-    page: Image.Image,
+def crop_line_on_white_rgb(
+    page: Page,
     points: list[list[float]],
     *,
     padding: int = TRAINING_CROP_PADDING,
 ) -> np.ndarray:
-    """Return the grayscale polygon-on-white crop of ``points`` from ``page``.
+    """Return the RGB polygon-on-white crop of ``points`` from ``page``.
 
     Fewer than three points cannot be filled as a polygon; the training exporter
     skipped such lines outright, so here they fall back to the padded box without
     a mask rather than failing the whole page.
     """
     polygon = _integer_points(points)
-    crop, (x_min, y_min, _x_max, _y_max) = _cut(page, polygon, padding)
+    crop, (x_min, y_min, _x_max, _y_max) = _cut(page_pixels(page), polygon, padding)
 
     if polygon.shape[0] >= 3:
-        shifted = polygon - np.array([[x_min, y_min]], dtype=np.int32)
+        shifted: npt.NDArray[np.int32] = polygon - np.array([[x_min, y_min]], dtype=np.int32)
         mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(mask, [shifted], 255)
+        cv2.fillPoly(mask, [shifted], (255,))
         masked = np.full_like(crop, 255)
         masked[mask == 255] = crop[mask == 255]
         crop = masked
 
-    return _to_grayscale(crop)
+    return crop
+
+
+def crop_line_on_white(
+    page: Page,
+    points: list[list[float]],
+    *,
+    padding: int = TRAINING_CROP_PADDING,
+) -> np.ndarray:
+    """Return the grayscale polygon-on-white crop of ``points`` from ``page``."""
+    return _to_grayscale(crop_line_on_white_rgb(page, points, padding=padding))
+
+
+def _require_known_crop(line_crop: LineCrop) -> None:
+    if line_crop != LineCrop.polygon_white:
+        raise ValueError(f"unsupported line crop: {line_crop!r}")
 
 
 def crop_line(
-    page: Image.Image,
+    page: Page,
     points: list[list[float]],
     line_crop: LineCrop,
     *,
@@ -133,6 +159,17 @@ def crop_line(
     disagree about, and a default here would silently reinstate the guess the
     registry field exists to remove.
     """
-    if line_crop == LineCrop.polygon_white:
-        return crop_line_on_white(page, points, padding=padding)
-    raise ValueError(f"unsupported line crop: {line_crop!r}")
+    _require_known_crop(line_crop)
+    return crop_line_on_white(page, points, padding=padding)
+
+
+def crop_line_rgb(
+    page: Page,
+    points: list[list[float]],
+    line_crop: LineCrop,
+    *,
+    padding: int,
+) -> np.ndarray:
+    """``crop_line`` without the grayscale step, for models trained on colour crops."""
+    _require_known_crop(line_crop)
+    return crop_line_on_white_rgb(page, points, padding=padding)

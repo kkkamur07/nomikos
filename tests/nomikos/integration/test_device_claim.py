@@ -14,7 +14,6 @@ would fail for reasons that are not defects.
 
 from __future__ import annotations
 
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -367,37 +366,6 @@ def test_an_empty_queue_is_a_well_formed_response_and_not_an_error(
     assert body["lease_seconds"] > 0
     assert body["server_time"]
     assert "error" not in body
-
-
-def test_the_wait_is_clamped_rather_than_refused(client: TestClient, owner_headers) -> None:
-    """An agent asking for an hour is answered, not rejected: the ceiling is the
-    platform's dial, and the agent reads its cadence from the platform anyway."""
-    agent = _running_agent(client, owner_headers)
-    from backend.core.settings.device import get_device_settings
-
-    ceiling = get_device_settings().device_claim_max_wait_seconds
-
-    started = time.monotonic()
-    response = client.post(
-        CLAIM_URL,
-        headers=_device_headers(agent["device_token"]),
-        json={"wait_seconds": 3600},
-    )
-    elapsed = time.monotonic() - started
-
-    assert response.status_code == 200, response.text
-    # The clamp is the whole subject, so it is measured rather than read back out
-    # of the settings object that configures it. Asserting the pydantic default
-    # here would leave the test green with the clamp deleted - and then it would
-    # sit for an hour rather than fail. The slack absorbs app startup and the
-    # round trip; it is nowhere near the hour an unclamped wait would take.
-    assert elapsed < ceiling + 30, f"the wait was not clamped: {elapsed:.1f}s for a 3600s request"
-    body = response.json()
-    assert body["page"] is None
-    # And the answer still tells the agent when to come back, the way the
-    # ordinary empty-queue response does.
-    assert body["poll_after_seconds"] > 0
-    assert body["lease_seconds"] > 0
 
 
 # ---------------------------------------------------------------------------

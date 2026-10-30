@@ -5,10 +5,13 @@ from __future__ import annotations
 import base64
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from tests.nomikos.integration.helpers import documents_url
+
+pytestmark = pytest.mark.integration
 
 
 def _png_bytes(width: int = 80, height: int = 40) -> bytes:

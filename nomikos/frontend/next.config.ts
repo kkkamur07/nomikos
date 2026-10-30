@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { fileURLToPath } from "node:url";
+import { securityHeadersFor } from "./securityHeaders";
 
 const platformApi = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
@@ -15,29 +16,6 @@ function originOf(url: string): string {
 }
 const platformApiOrigin = originOf(platformApi);
 const frontendRoot = fileURLToPath(new URL(".", import.meta.url));
-
-// Two copies of the same headers, each winning in one place. On Vercel,
-// vercel.json wins: `headers()` below returns nothing there, and its CSP names
-// https://api.nomikos.app by hand. Off Vercel (Docker, `node server.js`, which
-// never reads vercel.json) these win, with the API origin taken from
-// NEXT_PUBLIC_API_BASE_URL. A change to one belongs in the other too.
-const securityHeaders = [
-  {
-    key: "Strict-Transport-Security",
-    value: "max-age=31536000; includeSubDomains; preload",
-  },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "X-Frame-Options", value: "DENY" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  {
-    key: "Permissions-Policy",
-    value: "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
-  },
-  {
-    key: "Content-Security-Policy",
-    value: `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: ${platformApiOrigin}; frame-src 'self' blob:; connect-src 'self' ${platformApiOrigin}; worker-src 'self' blob:`,
-  },
-];
 
 const nextConfig: NextConfig = {
   // Standalone exists for `nomikos/frontend/Dockerfile`, which copies
@@ -57,7 +35,9 @@ const nextConfig: NextConfig = {
     // On Vercel these come from vercel.json; returning them here too would set
     // each header twice (two CSPs, both enforced). Apply only off-Vercel.
     if (process.env.VERCEL) return [];
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeadersFor(platformApiOrigin) },
+    ];
   },
   async rewrites() {
     return [

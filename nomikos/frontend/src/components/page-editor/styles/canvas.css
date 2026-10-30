@@ -1,0 +1,225 @@
+/* ─── Workspace: canvas fills everything ────────────────────────── */
+.pe-workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pe-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+/* Canvas - full bleed */
+.pe-canvas-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+  background: var(--surface);
+}
+.pe-canvas-pane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.pe-canvas-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.pe-canvas-img-wrap {
+  position: relative;
+  box-shadow: 0 2px 16px rgba(26, 26, 26, 0.12);
+  transform-origin: center center;
+}
+
+.pe-canvas-img {
+  width: min(520px, 85vw);
+  height: min(700px, 78vh);
+  background: var(--surface-2);
+  position: relative;
+}
+
+/* Segment states - paired vs unpaired only (review lives in toolbar badge) */
+.pe-seg {
+  position: absolute;
+  border: 1.5px solid rgba(180, 83, 9, 0.5);
+  background: rgba(180, 83, 9, 0.08);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+.pe-seg:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+.pe-seg--paired {
+  border-color: rgba(4, 120, 87, 0.6);
+  background: rgba(4, 120, 87, 0.1);
+}
+.pe-seg--selected {
+  border: 2px solid var(--red) !important;
+  background: rgba(180, 0, 0, 0.09) !important;
+}
+.pe-seg-num {
+  position: absolute;
+  left: -15px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 1px 3px;
+}
+.pe-seg--selected .pe-seg-num {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+
+/* ─── Canvas island - tools and zoom, floating over the page ─────
+   Bottom centre, because that is where a hand already rests after a
+   drag and it is the one edge the transcription strip does not fight
+   over (the strip is a flex sibling below the canvas host, not an
+   overlay). ─────────────────────────────────────────────────────── */
+.pe-island {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  z-index: 5;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px rgba(26, 26, 26, 0.06),
+    0 4px 16px rgba(26, 26, 26, 0.13);
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+}
+/* Space is held: every tool is the pan tool, so the armed tool stops
+   claiming to be in charge. */
+.pe-island--panning .pe-island__btn--active {
+  background: var(--surface-2);
+  border-color: transparent;
+  color: var(--text-3);
+}
+
+.pe-island__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-island__btn svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.pe-island__btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.pe-island__btn--active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.pe-island__btn--active:hover:not(:disabled) {
+  background: var(--navy);
+}
+.pe-island__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pe-island__btn--icon {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+.pe-island__btn:focus-visible,
+.pe-island__zoom:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+
+.pe-island__divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--border);
+  flex: none;
+}
+
+.pe-island__zoom {
+  min-width: 46px;
+  height: 30px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.pe-island__zoom:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+/* A held Space reads as pan everywhere, not only on the SVG surface. */
+.pe-canvas-host--panning {
+  cursor: grab;
+}
+
+@media (max-width: 720px) {
+  .pe-island__label {
+    display: none;
+  }
+  .pe-island__btn {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+}

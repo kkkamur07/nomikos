@@ -3,28 +3,29 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Protocol
 
+import numpy as np
 from PIL import Image
 
 from nomikos_inference.admission import validate_image_bytes, validate_request_params
 from nomikos_inference.architectures.blla import run_blla_segment
 from nomikos_inference.architectures.calamari import (
-    TranscribeLineFailure,
     run_calamari_transcribe,
     run_calamari_transcribe_many,
 )
 from nomikos_inference.architectures.calamari.preprocessing import (
     TRAINING_CROP_PADDING,
+    Page,
     crop_line,
+    crop_line_rgb,
+    page_pixels,
 )
 from nomikos_inference.architectures.ppocr_det import run_ppocr_det_segment
-from nomikos_inference.architectures.ppocr_rec.adapter import (
-    TranscribeLineFailure as PPOCRRecLineFailure,
-)
 from nomikos_inference.architectures.ppocr_rec.adapter import (
     run_ppocr_rec_transcribe,
     run_ppocr_rec_transcribe_many,
@@ -50,11 +51,45 @@ logger = logging.getLogger(__name__)
 #: trainer's loader read that file back. The lossy round trip is therefore part
 #: of the picture the model was fitted on, not an artifact of storage, so serving
 #: reproduces it rather than handing over a cleaner PNG.
-TRAINING_CROP_JPEG_OPTIONS = {"format": "JPEG", "quality": 82, "optimize": True}
+TRAINING_CROP_JPEG_QUALITY = 82
+
+
+class _LineFailure(Protocol):
+    """A batch line an adapter could not transcribe, with its cause."""
+
+    @property
+    def error(self) -> BaseException: ...
+
+
+class _LineCropper(Protocol):
+    def __call__(
+        self,
+        image: Page,
+        image_bytes: bytes,
+        points: list[list[float]] | None,
+        line_crop: LineCrop = ...,
+        line_crop_padding: int = ...,
+    ) -> bytes: ...
+
+
+class _RunOne(Protocol):
+    def __call__(
+        self, image_bytes: bytes, *, checkpoint_path: Path, artifact_sha256: str | None = None
+    ) -> TranscribeRunResponse: ...
+
+
+class _RunMany(Protocol):
+    def __call__(
+        self,
+        line_images: list[bytes],
+        *,
+        checkpoint_path: Path,
+        artifact_sha256: str | None = None,
+    ) -> Sequence[TranscribeRunResponse | _LineFailure]: ...
 
 
 def _crop_line_image(
-    image: Image.Image,
+    image: Page,
     image_bytes: bytes,
     points: list[list[float]] | None,
     line_crop: LineCrop = LineCrop.polygon_white,
@@ -70,7 +105,8 @@ def _crop_line_image(
     and reads 125 of its 204 corpus lines exactly there against 0 of 204 at 12.
     So the registry states both per model and they are threaded down to here.
 
-    Takes the open ``image`` so a page with N lines is decoded once, not N times:
+    Takes the open ``image`` (or its RGB array, see ``page_pixels``) so a page
+    with N lines is decoded and converted once, not N times:
     ``Image.crop`` forces a full decode of the source on every call, so re-opening
     the multi-megapixel scan per line was O(N) full decodes of the same bytes.
     ``image_bytes`` is still returned verbatim for the whole-page fallback so the
@@ -91,11 +127,74 @@ def _crop_line_image(
 
     cropped = crop_line(image, polygon, line_crop, padding=line_crop_padding)
     output = BytesIO()
-    Image.fromarray(cropped, mode="L").save(output, **TRAINING_CROP_JPEG_OPTIONS)
+    Image.fromarray(cropped, mode="L").save(
+        output, format="JPEG", quality=TRAINING_CROP_JPEG_QUALITY, optimize=True
+    )
     return output.getvalue()
 
 
-def _line_regions_from_params(params: dict[str, Any] | None) -> list[TranscribeLineRegion]:
+def _crop_ppocr_rec_line_image(
+    image: Page,
+    image_bytes: bytes,
+    points: list[list[float]] | None,
+    line_crop: LineCrop = LineCrop.polygon_white,
+    line_crop_padding: int = 0,
+) -> bytes:
+    """Cut one line for the PP-OCR recognizer: RGB, lossless.
+
+    The kraken model was trained on ``extract_polygons`` crops of the RGB page
+    with no JPEG round trip (docs/inference/ppocr-rec-onnx-parity-2026-09-20.md),
+    so the Calamari exporter's grayscale JPEG would hand it pixels it never saw.
+    The geometry is the registry's, as for Calamari; only the colour and the
+    encoding differ. The recognizer's own preprocessing pads and resizes.
+    """
+    if not points:
+        return image_bytes
+
+    polygon = [point for point in points if len(point) == 2]
+    if not polygon:
+        return image_bytes
+
+    cropped = crop_line_rgb(image, polygon, line_crop, padding=line_crop_padding)
+    output = BytesIO()
+    Image.fromarray(cropped, mode="RGB").save(output, format="PNG")
+    return output.getvalue()
+
+
+@dataclass(frozen=True)
+class _Transcriber:
+    """One transcribe architecture's entry points and line crop."""
+
+    run_one: _RunOne
+    run_many: _RunMany
+    crop: _LineCropper
+
+
+def _transcriber_for(architecture: RegistryArchitecture) -> _Transcriber | None:
+    # Built per call from the module globals, not as a module-level table, so
+    # tests can stub the entry points: a table would bind the originals at
+    # import time and ignore the stub.
+    if architecture == RegistryArchitecture.calamari:
+        return _Transcriber(run_calamari_transcribe, run_calamari_transcribe_many, _crop_line_image)
+    if architecture == RegistryArchitecture.ppocr_rec:
+        return _Transcriber(
+            run_ppocr_rec_transcribe, run_ppocr_rec_transcribe_many, _crop_ppocr_rec_line_image
+        )
+    return None
+
+
+_Segmenter = Callable[..., SegmentRunResponse]
+
+
+def _segmenter_for(architecture: RegistryArchitecture) -> _Segmenter | None:
+    if architecture in {RegistryArchitecture.blla, RegistryArchitecture.blla_segment}:
+        return run_blla_segment
+    if architecture == RegistryArchitecture.ppocr_det:
+        return run_ppocr_det_segment
+    return None
+
+
+def _line_regions_from_params(params: dict[str, object] | None) -> list[TranscribeLineRegion]:
     raw_lines = (params or {}).get("lines")
     if raw_lines is None:
         return []
@@ -110,10 +209,10 @@ def _transcribe_batch(
     *,
     checkpoint_path: Path,
     artifact_sha256: str | None,
-    line_crop: LineCrop = LineCrop.polygon_white,
-    line_crop_padding: int = TRAINING_CROP_PADDING,
-    run_many: Callable[..., list[Any]] | None = None,
-    line_failure: type | None = None,
+    line_crop: LineCrop,
+    line_crop_padding: int,
+    run_many: _RunMany,
+    crop: _LineCropper,
 ) -> TranscribeBatchRunResponse:
     """Transcribe every requested line, keeping per-line failures per-line.
 
@@ -127,14 +226,16 @@ def _transcribe_batch(
     cropped_positions: list[int] = []
     errors: dict[int, str] = {}
 
-    # Decode the page once and crop every line from it. Re-opening the scan per
-    # line re-decoded the whole multi-megapixel image N times for an N-line page.
+    # Decode and convert the page once and crop every line from it. Re-opening
+    # the scan per line re-decoded the whole multi-megapixel image N times for
+    # an N-line page, and converting it per line copied it N times.
     with Image.open(BytesIO(image_bytes)) as page_image:
         page_image.load()
+        pixels: np.ndarray = page_pixels(page_image)
         for position, region in enumerate(line_regions):
             try:
-                crop = _crop_line_image(
-                    page_image,
+                line_image = crop(
+                    pixels,
                     image_bytes,
                     region.points,
                     line_crop=line_crop,
@@ -149,21 +250,13 @@ def _transcribe_batch(
                 )
                 errors[position] = TRANSCRIBE_LINE_ERROR
                 continue
-            crops.append(crop)
+            crops.append(line_image)
             cropped_positions.append(position)
 
     if not crops:
         # No line even reached the model. Nothing here is worth returning as a
         # partial success, and the cause is the caller's geometry.
         raise ValueError("no transcribable line regions in request")
-
-    # Resolved here rather than as argument defaults so tests can stub the
-    # module-level entry points: a default would bind the original function
-    # at definition time and ignore the stub.
-    if run_many is None:
-        run_many = run_calamari_transcribe_many
-    if line_failure is None:
-        line_failure = TranscribeLineFailure
 
     outcomes = run_many(
         crops,
@@ -174,21 +267,20 @@ def _transcribe_batch(
     outputs: dict[int, TranscribeRunResponse] = {}
     for position, outcome in zip(cropped_positions, outcomes, strict=True):
         region = line_regions[position]
-        if isinstance(outcome, line_failure):
-            logger.warning(
-                "transcribe line failed (line_index=%s, line_id=%s)",
-                region.line_index,
-                region.line_id,
-                exc_info=outcome.error,
-            )
-            errors[position] = TRANSCRIBE_LINE_ERROR
+        if isinstance(outcome, TranscribeRunResponse):
+            outputs[position] = outcome
             continue
-        outputs[position] = outcome
+        logger.warning(
+            "transcribe line failed (line_index=%s, line_id=%s)",
+            region.line_index,
+            region.line_id,
+            exc_info=outcome.error,
+        )
+        errors[position] = TRANSCRIBE_LINE_ERROR
 
-    # ``run_calamari_transcribe_many`` re-raises when every line it was given
-    # failed, so at least one output survives here and the response can never be
-    # an all-error batch dressed up as a success. The same holds for the
-    # PP-OCR recognition entry point, which shares this batch loop.
+    # Both adapters' ``run_*_transcribe_many`` re-raise when every line they
+    # were given failed, so at least one output survives here and the response
+    # can never be an all-error batch dressed up as a success.
     return TranscribeBatchRunResponse(
         lines=[
             TranscribeBatchLineResult(
@@ -202,13 +294,53 @@ def _transcribe_batch(
     )
 
 
+def _crop_settings(entry_line_crop: LineCrop | None, padding: int | None) -> tuple[LineCrop, int]:
+    """The registry's crop settings, which every transcribe entry must carry.
+
+    The loader requires both; an entry built outside it with either missing
+    has no safe default, since the padding alone moves Greek from CER 0.050 to
+    0.304 (``registry/__init__.py``).
+    """
+    if entry_line_crop is None or padding is None:
+        raise ValueError("transcribe entry must set line_crop and line_crop_padding")
+    return entry_line_crop, padding
+
+
+def _run_transcribe(
+    transcriber: _Transcriber,
+    image_bytes: bytes,
+    params: dict[str, object] | None,
+    *,
+    checkpoint_path: Path,
+    artifact_sha256: str | None,
+    line_crop: LineCrop | None,
+    line_crop_padding: int | None,
+) -> TranscribeRunResponse | TranscribeBatchRunResponse:
+    line_regions = _line_regions_from_params(params)
+    if not line_regions:
+        return transcriber.run_one(
+            image_bytes, checkpoint_path=checkpoint_path, artifact_sha256=artifact_sha256
+        )
+    crop_kind, padding = _crop_settings(line_crop, line_crop_padding)
+    return _transcribe_batch(
+        image_bytes,
+        line_regions,
+        checkpoint_path=checkpoint_path,
+        artifact_sha256=artifact_sha256,
+        line_crop=crop_kind,
+        line_crop_padding=padding,
+        run_many=transcriber.run_many,
+        crop=transcriber.crop,
+    )
+
+
 def run_model(
     *,
     task: InferenceTask,
     registry_model_id: str,
     registry_tag: str,
     image_bytes: bytes,
-    params: dict[str, Any] | None = None,
+    params: dict[str, object] | None = None,
 ) -> SegmentRunResponse | TranscribeRunResponse | TranscribeBatchRunResponse:
     settings = get_inference_settings()
     validate_image_bytes(image_bytes, settings)
@@ -231,70 +363,28 @@ def run_model(
     )
 
     if task == InferenceTask.segment:
-        if entry.architecture in {
-            RegistryArchitecture.blla,
-            RegistryArchitecture.blla_segment,
-        }:
-            return run_blla_segment(
-                image_bytes,
-                model_path=weights_path,
-                artifact_sha256=version.artifact_sha256,
-                params=params,
-            )
-        if entry.architecture == RegistryArchitecture.ppocr_det:
-            return run_ppocr_det_segment(
-                image_bytes,
-                model_path=weights_path,
-                artifact_sha256=version.artifact_sha256,
-                params=params,
-            )
-        raise ValueError(f"unsupported segment architecture: {entry.architecture.value}")
+        segmenter = _segmenter_for(entry.architecture)
+        if segmenter is None:
+            raise ValueError(f"unsupported segment architecture: {entry.architecture.value}")
+        return segmenter(
+            image_bytes,
+            model_path=weights_path,
+            artifact_sha256=version.artifact_sha256,
+            params=params,
+        )
 
     if task == InferenceTask.transcribe:
-        if entry.architecture == RegistryArchitecture.calamari:
-            line_regions = _line_regions_from_params(params)
-            if line_regions:
-                return _transcribe_batch(
-                    image_bytes,
-                    line_regions,
-                    checkpoint_path=weights_path,
-                    artifact_sha256=version.artifact_sha256,
-                    # The registry requires both on every transcribe entry; the
-                    # fallbacks only cover an entry built outside the loader.
-                    line_crop=entry.line_crop or LineCrop.polygon_white,
-                    line_crop_padding=(
-                        TRAINING_CROP_PADDING
-                        if entry.line_crop_padding is None
-                        else entry.line_crop_padding
-                    ),
-                )
-            return run_calamari_transcribe(
-                image_bytes,
-                checkpoint_path=weights_path,
-                artifact_sha256=version.artifact_sha256,
-            )
-        if entry.architecture == RegistryArchitecture.ppocr_rec:
-            line_regions = _line_regions_from_params(params)
-            if line_regions:
-                return _transcribe_batch(
-                    image_bytes,
-                    line_regions,
-                    checkpoint_path=weights_path,
-                    artifact_sha256=version.artifact_sha256,
-                    line_crop=entry.line_crop or LineCrop.polygon_white,
-                    line_crop_padding=(
-                        TRAINING_CROP_PADDING
-                        if entry.line_crop_padding is None
-                        else entry.line_crop_padding
-                    ),
-                    run_many=run_ppocr_rec_transcribe_many,
-                    line_failure=PPOCRRecLineFailure,
-                )
-            return run_ppocr_rec_transcribe(
-                image_bytes,
-                checkpoint_path=weights_path,
-                artifact_sha256=version.artifact_sha256,
-            )
-        raise ValueError(f"unsupported transcribe architecture: {entry.architecture.value}")
+        transcriber = _transcriber_for(entry.architecture)
+        if transcriber is None:
+            raise ValueError(f"unsupported transcribe architecture: {entry.architecture.value}")
+        return _run_transcribe(
+            transcriber,
+            image_bytes,
+            params,
+            checkpoint_path=weights_path,
+            artifact_sha256=version.artifact_sha256,
+            line_crop=entry.line_crop,
+            line_crop_padding=entry.line_crop_padding,
+        )
 
     raise ValueError(f"unsupported ML task for runner: {task.value}")

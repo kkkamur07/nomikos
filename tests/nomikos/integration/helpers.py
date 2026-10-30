@@ -13,6 +13,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,7 +39,6 @@ __all__ = [
     "return_pooled_connections_before_leaving",
     "running_agent",
     "seed_transcription_model",
-    "service_headers",
     "stored_job",
     "stored_minimal_page_bytes",
     "submit_segment",
@@ -81,21 +81,6 @@ def device_headers(token: str, *, version: str | None = CURRENT_AGENT_VERSION) -
     headers = {DEVICE_TOKEN_HEADER: token}
     if version is not None:
         headers[AGENT_VERSION_HEADER] = version
-    return headers
-
-
-def service_headers(
-    *, version: str | None = CURRENT_AGENT_VERSION, worker_name: str | None = None
-) -> dict[str, str]:
-    """Credentials for the hosted worker - a service token, not a device one."""
-    from backend.ml.api.agent_version import AGENT_VERSION_HEADER
-    from backend.ml.application.agent_credentials import SERVICE_TOKEN_HEADER, WORKER_NAME_HEADER
-
-    headers = {SERVICE_TOKEN_HEADER: DEVICE_SERVICE_TOKEN}
-    if version is not None:
-        headers[AGENT_VERSION_HEADER] = version
-    if worker_name is not None:
-        headers[WORKER_NAME_HEADER] = worker_name
     return headers
 
 
@@ -191,7 +176,7 @@ def pair_device_over_http(
     headers: dict[str, str],
     *,
     name: str = "Researcher laptop",
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Run the whole pairing protocol against the real app and return the token.
 
     A real device credential, minted the way production mints one: helper starts
@@ -231,7 +216,12 @@ def pair_device_over_http(
     assert collected.status_code == 200, collected.text
     body = collected.json()
     assert body["status"] == "approved", body
-    return {"device_id": body["device_id"], "device_token": body["device_token"]}
+    return {
+        "device_id": body["device_id"],
+        "device_token": body["device_token"],
+        "pairing": pairing,
+        "verification_token": verification_token,
+    }
 
 
 def user_id_for_email(email: str) -> uuid.UUID:

@@ -3,6 +3,10 @@
 # --- Security headers ---
 # Tests baseline HTTP security headers on responses. Does not test CSP for the SPA.
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 
 def test_security_headers_are_present(client):
     response = client.get("/")

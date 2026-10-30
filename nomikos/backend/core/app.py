@@ -1,10 +1,11 @@
 """FastAPI application factory: wires routers from core and bounded contexts."""
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
-from typing import Any
+from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -16,6 +17,7 @@ import infrastructure.models  # noqa: F401 - register all ORM mappers before fir
 from backend.annotation.api.history import router as annotation_history_router
 from backend.annotation.api.segment_health import router as segment_health_router
 from backend.core.api.admin import router as admin_router
+from backend.core.api.body_limit import BodySizeLimitMiddleware
 from backend.core.api.client_failures import router as client_failures_router
 from backend.core.api.feedback import router as feedback_router
 from backend.core.api.health import router as health_router
@@ -33,12 +35,12 @@ from backend.core.schemas.errors import ApiErrorResponse
 from backend.core.settings import (
     get_app_settings,
     get_auth_settings,
+    get_inference_settings,
     get_infrastructure_settings,
-    get_ml_settings,
     get_storage_settings,
 )
 from backend.core.settings.device import get_device_settings
-from backend.core.settings.job import get_job_settings
+from backend.core.settings.job import JobSettings, get_job_settings
 from backend.core.version import get_version
 from backend.document.api.document_batch import router as document_batch_router
 from backend.document.api.documents import router as documents_router
@@ -76,7 +78,7 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
 }
 
-COMMON_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+COMMON_ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
     401: {"model": ApiErrorResponse, "description": "Not authenticated"},
     403: {"model": ApiErrorResponse, "description": "Not authorized"},
     404: {"model": ApiErrorResponse, "description": "Resource not found"},
@@ -281,44 +283,71 @@ def _register_exception_handlers(app: FastAPI) -> None:
         )
 
 
+@dataclass(frozen=True)
+class LifespanPlan:
+    """Which startup work the lifespan runs. Pure data, decided by settings."""
+
+    ensure_dev_user: bool
+    notifications: bool
+    worker: bool
+    media_gc: bool
+
+
+def plan_lifespan_tasks(*, environment: str, job_settings: JobSettings) -> LifespanPlan:
+    """Decide the lifespan's startup work from settings alone, so it is testable."""
+    return LifespanPlan(
+        ensure_dev_user=environment == "development",
+        notifications=job_settings.job_sse_notifications_enabled,
+        worker=job_settings.job_worker_enabled,
+        media_gc=job_settings.media_gc_enabled,
+    )
+
+
+async def _ensure_dev_user_at_startup() -> None:
+    from backend.dev.bootstrap import ensure_dev_user_exists
+    from infrastructure.db import AsyncSessionLocal
+
+    try:
+        async with AsyncSessionLocal() as session:
+            if await ensure_dev_user_exists(session):
+                logger.info("Recreated missing dev login user after database reset")
+    except Exception:
+        logger.exception("Failed to ensure dev user exists at startup")
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    import asyncio
+    from infrastructure.db import engine, sync_engine
 
-    from infrastructure.db import AsyncSessionLocal, engine, sync_engine
-
-    stop_event = asyncio.Event()
     job_settings = get_job_settings()
-    if get_infrastructure_settings().environment == "development":
-        from backend.dev.bootstrap import ensure_dev_user_exists
-
-        try:
-            async with AsyncSessionLocal() as session:
-                if await ensure_dev_user_exists(session):
-                    logger.info("Recreated missing dev login user after database reset")
-        except Exception:
-            logger.exception("Failed to ensure dev user exists at startup")
+    plan = plan_lifespan_tasks(
+        environment=get_infrastructure_settings().environment,
+        job_settings=job_settings,
+    )
+    stop_event = asyncio.Event()
+    if plan.ensure_dev_user:
+        await _ensure_dev_user_at_startup()
     notification_task = (
         asyncio.create_task(platform_job_notification_loop(stop_event))
-        if job_settings.job_sse_notifications_enabled
+        if plan.notifications
         else None
     )
-    worker_task = (
-        asyncio.create_task(worker_loop(stop_event)) if job_settings.job_worker_enabled else None
-    )
-    media_gc_task = asyncio.create_task(media_gc_loop(stop_event))
+    worker_task = asyncio.create_task(worker_loop(stop_event)) if plan.worker else None
+    media_gc_task = asyncio.create_task(media_gc_loop(stop_event)) if plan.media_gc else None
     yield
     stop_event.set()
     if worker_task is not None:
         worker_task.cancel()
     if notification_task is not None:
         notification_task.cancel()
-    media_gc_task.cancel()
+    if media_gc_task is not None:
+        media_gc_task.cancel()
     if notification_task is not None:
         with suppress(asyncio.CancelledError):
             await notification_task
-    with suppress(asyncio.CancelledError):
-        await media_gc_task
+    if media_gc_task is not None:
+        with suppress(asyncio.CancelledError):
+            await media_gc_task
     if worker_task is not None:
         with suppress(asyncio.CancelledError):
             await worker_task
@@ -336,7 +365,7 @@ def create_app() -> FastAPI:
     get_device_settings()
     app_settings = get_app_settings()
     job_settings = get_job_settings()
-    ml_settings = get_ml_settings()
+    ml_settings = get_inference_settings()
     if ml_settings.cloud_inference_enabled or job_settings.job_worker_enabled:
         ml_settings.require_callback_receiver_configuration()
     get_storage_settings()
@@ -365,12 +394,14 @@ def create_app() -> FastAPI:
         response.headers.update(SECURITY_HEADERS)
         return response
 
+    app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origin_list,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
+        expose_headers=["X-Error-ID"],
     )
     _register_exception_handlers(app)
     app.include_router(root_router)

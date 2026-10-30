@@ -517,33 +517,18 @@ def _stored_page_bytes(agent: Researcher, ids: tuple[str, str]) -> bytes:
         return response.read()
 
 
-@pytest.mark.ml
 def test_only_one_page_is_ever_in_flight(installed_cli, platform_url, agent) -> None:
     """A batch is N claims, not one claim of N pages (ADR 0002).
 
-    Watched from outside while the loop runs: a page the agent holds is
-    `waiting`, so the count of `waiting` jobs is the number in flight. If the
-    loop ever claimed ahead, this would see two.
-
-    Keeps its `ml` marker, and the real model run is load-bearing for the
-    *observation* rather than for the claim. This test infers "the agent holds
-    one page" from "one row says `waiting`", and those two are the same statement
-    only while a page takes appreciably longer to run than the platform takes to
-    move a row between states. Re-pointed at a **Registry** with no reachable
-    weights - so that a page travels the whole loop and fails in milliseconds -
-    it went red on `assert in_flight <= 1` roughly one run in three: the previous
-    page's terminal callback and the next page's claim land close enough together
-    that a sampler catches both rows saying `waiting`, which is the loop behaving
-    correctly and the proxy failing to say so.
-
-    That is a false failure on the invariant, which is the worst kind to put in
-    the pull-request lane, and the only ways out weaken the test: relax the
-    bound, or stop asserting a page was ever observed in flight at all. The
-    honest fix is a different observation - the platform stamps `started_at` when
-    a page is claimed and `completed_at` when its callback lands, so asserting
-    those intervals do not overlap would settle the same question with no
-    sampling and no weights. That is a rewrite rather than a re-marking, so it is
-    left as one.
+    Proven from the platform's own stamps, not sampled row states. The platform
+    records ``started_at`` when a page is claimed and ``completed_at`` when its
+    callback lands, so two pages ever in flight together would leave overlapping
+    intervals. Sampling ``waiting`` instead went red about one run in three once
+    pages travelled the loop in milliseconds: a terminal callback and the next
+    claim land close enough together for a sampler to catch both rows saying
+    ``waiting``, which is the loop behaving correctly and the proxy failing to
+    say so. Failed pages are stamped the same way finished ones are, so this
+    needs no weights and no ``ml`` marker.
     """
     first = agent.submit_segment(agent.new_page())
     second = agent.submit_segment(agent.new_page())
@@ -554,22 +539,22 @@ def test_only_one_page_is_ever_in_flight(installed_cli, platform_url, agent) -> 
         agent.home,
         arguments=("--exit-when-empty", "--wait-seconds", "0"),
     )
-    try:
-        highest = 0
-        while run.process.poll() is None:
-            in_flight = sum(
-                1 for job_id in (first, second) if agent.job(job_id)["status"] == "waiting"
-            )
-            highest = max(highest, in_flight)
-            assert in_flight <= 1, f"{in_flight} pages were in flight at once"
-            time.sleep(0.2)
-    finally:
-        run.wait()
-
+    run.wait()
     assert run.returncode == 0, run.output
-    assert highest == 1, "no page was ever observed in flight, so nothing was proved"
-    assert agent.await_job(first, status="done")
-    assert agent.await_job(second, status="done")
+
+    windows = []
+    for job_id in (first, second):
+        deadline = time.monotonic() + 60
+        job = agent.job(job_id)
+        while job["status"] not in ("done", "failed"):
+            assert time.monotonic() < deadline, f"job {job_id} never finished"
+            time.sleep(0.2)
+            job = agent.job(job_id)
+        assert job["started_at"] and job["completed_at"], job
+        windows.append((job["started_at"], job["completed_at"]))
+
+    (first_start, first_end), (second_start, second_end) = windows
+    assert first_end <= second_start or second_end <= first_start, windows
     assert "[2] segment" in run.stdout, run.stdout
 
 
@@ -639,9 +624,10 @@ def test_ctrl_c_reports_the_page_in_flight_before_exiting(
 
 # `test_a_killed_process_leaves_a_page_the_lease_later_releases` stood here. The lease
 # semantics it asserted - an expired lease re-pends a page rather than failing it, and
-# hands it to a different agent - are `tests/nomikos/integration/test_device_lease.py::
-# test_an_expired_lease_is_re_pended_and_never_failed` and
-# `::test_an_expired_lease_returns_the_page_to_a_different_agent`, tested against the
+# hands it to a different agent - are `tests/nomikos/integration/test_job_worker_sweeps.py::
+# test_a_slept_laptop_re_pends_and_an_unclaimed_row_is_left_alone` and
+# `tests/nomikos/integration/test_device_lease.py::
+# test_an_expired_lease_returns_the_page_to_a_different_agent`, tested against the
 # platform that implements them. The CLI increment was "SIGKILL cannot be caught", which
 # is an OS guarantee. It cost a second Postgres database, a second alembic run, a third
 # uvicorn process and a hard `time.sleep(32)`; all four went with it, along with the
@@ -748,14 +734,3 @@ def test_a_hosted_worker_runs_the_same_loop_with_a_service_credential(
 # a 426 is `tests/inference/unit/test_cli_run_resilience.py::
 # test_a_version_refusal_still_leaves_the_loop`, and the message and exit code are
 # `test_cli_self_upgrade.py::test_a_failed_upgrade_exits_non_zero_and_claims_nothing`.
-
-
-def test_an_unpaired_machine_is_told_to_pair_rather_than_left_polling(
-    installed_cli, platform_url, tmp_path
-) -> None:
-    """There is no credential here to claim with, and nothing to wait for."""
-    run = _run(installed_cli, platform_url, tmp_path / "empty-home")
-
-    assert run.returncode != 0, run.output
-    assert "not paired" in run.stderr.lower()
-    assert "nomikos pair" in run.stderr

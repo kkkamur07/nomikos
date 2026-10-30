@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.settings import get_infrastructure_settings
 from backend.users.application.auth_service import AuthService
-from backend.users.application.password import hash_password
+from backend.users.application.password import hash_password_async
 
 # Must pass Pydantic EmailStr (`.local` / `.test` TLDs are rejected).
 DEV_EMAIL = os.environ.get("DEV_USER_EMAIL", "dev@example.com")
@@ -59,5 +59,5 @@ async def reset_dev_user_password(session: AsyncSession) -> None:
             password=DEV_PASSWORD,
         )
         return
-    user.hashed_password = hash_password(DEV_PASSWORD)
+    user.hashed_password = await hash_password_async(DEV_PASSWORD)
     await session.commit()

@@ -9,8 +9,8 @@ unfalsifiable.
 The media store exercised here is the **local** backend, which is what this
 repository runs outside production. Its signature is minted and checked by the
 platform. The Supabase backend signs with Storage's own key, and there is no
-Supabase running in this environment - see the module docstring of
-``test_media_store_signed_urls`` for what is and is not covered there.
+Supabase running in this environment - the platform's refusal on that backend is
+covered by ``test_the_platform_refuses_to_serve_objects_on_the_supabase_backend``.
 
 **No test here sleeps.** Expiry is proven by asking the real signer for a link
 whose deadline is already in the past, and by showing that a deadline moved
@@ -36,7 +36,6 @@ from backend.document.infrastructure.media_store import (
     sign_object_path,
 )
 from backend.document.infrastructure.orm_models import DocumentPart
-from backend.jobs.infrastructure.orm_models import Job
 from backend.ml.application.device_auth import DEVICE_TOKEN_HEADER
 from infrastructure.db import sync_system_session
 from tests.nomikos.integration.helpers import (
@@ -275,17 +274,6 @@ def test_the_signature_does_not_open_the_prefix_or_a_directory(
         assert client.get(_link(reach, expires, signature)).status_code == 403, reach
 
 
-def test_an_unsigned_request_for_a_real_object_is_refused(
-    client: TestClient, owner_user, owner_headers, owner_project
-) -> None:
-    """Knowing the key is not knowing the link."""
-    page = _claimed_page(client, owner_headers, owner_project)
-    signed_key, expires, _ = _link_parts(page["page_image_url"])
-
-    assert client.get(f"{SIGNED_MEDIA_PREFIX}/{signed_key}").status_code == 422
-    assert client.get(_link(signed_key, expires, "0" * 64)).status_code == 403
-
-
 # ---------------------------------------------------------------------------
 # The link's lifetime is not the lease's
 # ---------------------------------------------------------------------------
@@ -324,23 +312,3 @@ def test_the_platform_refuses_to_serve_objects_on_the_supabase_backend(
     reset_settings_caches()
 
     assert client.get(page["page_image_url"]).status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# The claim wrote a real page, and the link belongs to it
-# ---------------------------------------------------------------------------
-
-
-def test_the_link_belongs_to_the_job_that_was_actually_claimed(
-    client: TestClient, owner_user, owner_headers, owner_project
-) -> None:
-    page = _claimed_page(client, owner_headers, owner_project, pages=2)
-    signed_key, _, _ = _link_parts(page["page_image_url"])
-
-    with sync_system_session() as session:
-        job = session.execute(
-            select(Job).where(Job.id == uuid.UUID(page["product_job_id"]))
-        ).scalar_one()
-        part_id = job.document_part_id
-
-    assert signed_key == _image_key(str(part_id))

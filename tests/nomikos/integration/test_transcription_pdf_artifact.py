@@ -7,6 +7,7 @@ from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader
@@ -18,6 +19,8 @@ from backend.document.infrastructure.orm_models import (
 )
 from infrastructure.db import sync_system_session
 from tests.nomikos.integration.helpers import documents_url
+
+pytestmark = pytest.mark.integration
 
 
 def _png_bytes(width: int = 160, height: int = 90) -> bytes:
@@ -76,63 +79,6 @@ def _create_document_part_with_segments(
 # Tests PDF bytes from paired or empty pages. Does not run OCR.
 
 
-def test_member_generates_transcription_pdf_from_paired_ground_truth(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
-) -> None:
-    project_id, document_id, part_id, line_ids = _create_document_part_with_segments(
-        client, owner_headers, owner_project
-    )
-    base = documents_url(project_id)
-    import_response = client.put(
-        f"{base}/{document_id}/parts/{part_id}/page-transcription",
-        headers=owner_headers,
-        json={"text": "Αθήνα\nunused"},
-    )
-    assert import_response.status_code == 200
-    pair = client.post(
-        f"{base}/{document_id}/parts/{part_id}/pairings",
-        headers=owner_headers,
-        json={"line_id": line_ids[0], "text_line_order": 0},
-    )
-    assert pair.status_code == 200
-
-    response = client.post(
-        f"{base}/{document_id}/parts/{part_id}/transcription-pdf",
-        headers=owner_headers,
-    )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/pdf"
-    assert response.content.startswith(b"%PDF")
-    reader = _pdf_reader(response.content)
-    assert len(reader.pages) == 1
-    assert "Αθήνα" in (reader.pages[0].extract_text() or "")
-    assert reader.pages[0].mediabox.width == 160
-    assert reader.pages[0].mediabox.height == 90
-
-
-def test_member_generates_blank_same_size_transcription_pdf_without_paired_lines(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
-) -> None:
-    project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
-        client, owner_headers, owner_project
-    )
-    base = documents_url(project_id)
-
-    response = client.post(
-        f"{base}/{document_id}/parts/{part_id}/transcription-pdf",
-        headers=owner_headers,
-    )
-
-    assert response.status_code == 200
-    assert response.content.startswith(b"%PDF")
-    reader = _pdf_reader(response.content)
-    assert len(reader.pages) == 1
-    assert (reader.pages[0].extract_text() or "").strip() == ""
-    assert reader.pages[0].mediabox.width == 160
-    assert reader.pages[0].mediabox.height == 90
-
-
 def test_member_pdf_renders_unapproved_machine_text_when_nothing_is_approved(
     client: TestClient, owner_headers: dict[str, str], owner_project: dict
 ) -> None:
@@ -183,7 +129,12 @@ def test_member_pdf_renders_unapproved_machine_text_when_nothing_is_approved(
     )
 
     assert response.status_code == 200
-    text = _pdf_reader(response.content).pages[0].extract_text() or ""
+    assert response.headers["content-type"] == "application/pdf"
+    reader = _pdf_reader(response.content)
+    assert len(reader.pages) == 1
+    assert reader.pages[0].mediabox.width == 160
+    assert reader.pages[0].mediabox.height == 90
+    text = reader.pages[0].extract_text() or ""
     assert "Αθήνα" in text
     assert "Σπάρτη" in text
     assert "Αθηνα?" not in text
@@ -210,6 +161,18 @@ def test_outsider_cannot_generate_transcription_pdf(
     )
 
     assert response.status_code in (403, 404)
+    assert (
+        client.get(
+            f"{base}/{document_id}/parts/{part_id}/page-xml", headers=outsider_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/{document_id}/parts/{part_id}/page-xml-bundle", headers=outsider_headers
+        ).status_code
+        == 403
+    )
 
 
 # --- PAGE XML export ---
@@ -262,29 +225,6 @@ def test_member_exports_page_xml_with_transcription_polygon_and_baseline(
     assert coords.attrib["points"] == "10,10 120,10 120,30 10,30"
     assert baseline.attrib["points"] == "10,10 120,10 120,30 10,30"
     assert text.text == "alpha"
-
-
-# --- PAGE XML access control ---
-# Tests outsiders cannot export member-route XML. Does not test public XML download.
-
-
-def test_outsider_cannot_export_page_xml(
-    client: TestClient,
-    owner_headers: dict[str, str],
-    outsider_headers: dict[str, str],
-    owner_project: dict,
-) -> None:
-    project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
-        client, owner_headers, owner_project
-    )
-    base = documents_url(project_id)
-
-    response = client.get(
-        f"{base}/{document_id}/parts/{part_id}/page-xml",
-        headers=outsider_headers,
-    )
-
-    assert response.status_code in (403, 404)
 
 
 # --- PAGE XML bundle ---
@@ -373,25 +313,6 @@ def test_page_xml_bundle_numbers_pages_by_position_not_by_order_value(
     assert (
         renumbered.headers["content-disposition"] == 'attachment; filename="PDF_codex_page_1.zip"'
     )
-
-
-def test_outsider_cannot_export_page_xml_bundle(
-    client: TestClient,
-    owner_headers: dict[str, str],
-    outsider_headers: dict[str, str],
-    owner_project: dict,
-) -> None:
-    project_id, document_id, part_id, _line_ids = _create_document_part_with_segments(
-        client, owner_headers, owner_project
-    )
-    base = documents_url(project_id)
-
-    response = client.get(
-        f"{base}/{document_id}/parts/{part_id}/page-xml-bundle",
-        headers=outsider_headers,
-    )
-
-    assert response.status_code in (403, 404)
 
 
 # --- Per-page Word export ---

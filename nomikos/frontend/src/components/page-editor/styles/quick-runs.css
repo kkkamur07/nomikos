@@ -1,0 +1,28 @@
+/* ─── Toolbar quick runs (Segment / Transcribe) ──────────────────── */
+.pe-tb-btn__icon {
+  width: 13px;
+  height: 13px;
+  display: block;
+  flex: none;
+}
+.pe-tb-btn__scope {
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-4);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-2);
+}
+.pe-tb-btn:disabled .pe-tb-btn__scope {
+  background: transparent;
+}
+
+/* The inference state sits at the foot of the Workflow menu now. */
+.pe-dd-footer {
+  padding: 4px 6px 2px;
+}
+.pe-dd-footer .pe-infstat {
+  width: 100%;
+  justify-content: flex-start;
+}

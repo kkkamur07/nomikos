@@ -14,7 +14,7 @@ export type ResourceTag = string;
  * and forth costs nothing, short enough that a collaborator's change shows up
  * without a reload.
  */
-export const RESOURCE_FRESH_MS = 30_000;
+const RESOURCE_FRESH_MS = 30_000;
 
 /**
  * A module singleton rather than a value created inside a component, because
@@ -45,7 +45,7 @@ export const queryClient = new QueryClient({
  * knowing its key. Tags are that indirection: a write names what it dirtied and
  * never enumerates the reads that happen to depend on it.
  */
-export type ResourceMeta = { tags: readonly ResourceTag[] };
+type ResourceMeta = { tags: readonly ResourceTag[] };
 
 export function taggedMeta(tags: readonly ResourceTag[]): ResourceMeta {
   return { tags };
@@ -56,11 +56,20 @@ function queryTags(query: Query): readonly ResourceTag[] {
   return meta?.tags ?? [];
 }
 
-/** Drop every cached read carrying one of `tags` and refetch whoever is showing it. */
-export function invalidateResourceTags(tags: readonly ResourceTag[]): void {
-  if (tags.length === 0) return;
+/**
+ * Drop every cached read carrying one of `tags` and refetch whoever is showing it.
+ *
+ * Awaitable: a mutation that just wrote keeps its busy flag up across the
+ * reload instead of firing a second explicit refetch at the same key.
+ */
+export function invalidateResourceTags(
+  tags: readonly ResourceTag[],
+): Promise<void> {
+  if (tags.length === 0) return Promise.resolve();
   const dirty = new Set(tags);
-  void queryClient.invalidateQueries({
-    predicate: (query) => queryTags(query).some((tag) => dirty.has(tag)),
-  });
+  return queryClient
+    .invalidateQueries({
+      predicate: (query) => queryTags(query).some((tag) => dirty.has(tag)),
+    })
+    .then(() => undefined);
 }

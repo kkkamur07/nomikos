@@ -12,18 +12,15 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.core.settings.device import get_device_settings
-from backend.core.settings.job import JobSettings, get_job_settings
+from backend.core.settings.job import get_job_settings
 from backend.jobs.infrastructure.handlers import TestJobHandlerError, run_test_handler
-from backend.jobs.infrastructure.job_claim_engine import (
-    claim_next_pending_job,
+from backend.jobs.infrastructure.job_claim_engine import claim_next_pending_job
+from backend.jobs.infrastructure.job_sweeps import (
     clear_stale_callback_claims,
-    fail_stale_waiting_jobs,
-    mark_job_done,
-    mark_job_failed,
     reclaim_stale_running_jobs,
     release_expired_device_leases,
-    seconds_until_next_stale_waiting_job,
 )
+from backend.jobs.infrastructure.job_terminal import mark_job_done, mark_job_failed
 from backend.jobs.infrastructure.orm_models import Job
 
 if TYPE_CHECKING:
@@ -32,11 +29,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _public_job_error(exc: BaseException, *, fallback: str = "Job failed") -> str:
+def _public_job_error(exc: BaseException) -> str:
     """Return allowlisted job output; exception text stays server-side only."""
     if isinstance(exc, TestJobHandlerError):
         return "Test job failed"
-    return fallback
+    return "Job failed"
 
 
 def execute_claimed_job(job: Job) -> None:
@@ -80,14 +77,7 @@ def process_one_job() -> bool:
         # ceiling is failed here rather than re-pended, and the repository logs
         # each of those by id.
         logger.warning("released %s stale platform job claim(s)", reclaimed)
-    # Sweep waiting before releasing claims: releasing touches the row and would
-    # otherwise push the waiting deadline out by another timeout window.
-    timed_out = fail_stale_waiting_jobs(
-        waiting_timeout_seconds=settings.job_worker_waiting_timeout_seconds
-    )
-    if timed_out:
-        logger.warning("failed %s platform job(s) waiting past the inference timeout", timed_out)
-    # Agent-held pages are the other half of ``waiting``, and they re-pend rather
+    # Agent-held pages are the whole of ``waiting``, and they re-pend rather
     # than fail. The worker runs the identical sweep the read paths run, so a
     # deployment with a worker and one without recover a stopped agent the same
     # way - one lease, one behaviour, not two that drift.
@@ -108,28 +98,6 @@ def process_one_job() -> bool:
     return True
 
 
-async def _idle_wait_seconds(settings: JobSettings, idle_interval: float) -> float:
-    """Cap the idle backoff so it can never sleep past a waiting job's deadline.
-
-    The deadline being respected is the inference-dispatch timeout, whose
-    population is empty today - nothing calls ``mark_job_waiting`` any more, so
-    ``fail_stale_waiting_jobs`` has no rows. The cap still fires whenever *any*
-    job is waiting, agent-held ones included, because the query does not
-    discriminate. The effect is a worker that wakes sooner than it needs to,
-    which is the harmless direction; it is not the lease's mechanism. Pages an
-    agent holds are recovered by ``release_expired_device_leases``, from this same
-    tick and from the on-read sweep.
-    """
-    waiting_deadline = await asyncio.to_thread(
-        seconds_until_next_stale_waiting_job,
-        waiting_timeout_seconds=settings.job_worker_waiting_timeout_seconds,
-    )
-    if waiting_deadline is None:
-        return idle_interval
-    # Floor at the poll interval so an already-expired deadline cannot spin the loop.
-    return max(min(idle_interval, waiting_deadline), settings.job_poll_interval_seconds)
-
-
 async def worker_loop(stop_event: Event) -> None:
     """Poll for pending jobs until ``stop_event`` is set; backoff when idle."""
     settings = get_job_settings()
@@ -147,9 +115,6 @@ async def worker_loop(stop_event: Event) -> None:
             idle_interval = min_interval
         else:
             try:
-                await asyncio.wait_for(
-                    stop_event.wait(),
-                    timeout=await _idle_wait_seconds(settings, idle_interval),
-                )
+                await asyncio.wait_for(stop_event.wait(), timeout=idle_interval)
             except TimeoutError:
                 idle_interval = min(idle_interval * 2, max_interval)

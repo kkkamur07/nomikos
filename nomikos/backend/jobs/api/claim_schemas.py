@@ -16,7 +16,6 @@ submit contract stays where it belongs, describing a submission.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -61,7 +60,7 @@ class ClaimedPageRequest(BaseModel):
     registry_model_id: str = Field(min_length=1)
     registry_tag: str = Field(default="stable", min_length=1)
     product_job_id: UUID
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, object] = Field(default_factory=dict)
 
 
 class ClaimedPageResponse(BaseModel):

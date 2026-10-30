@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "../components/ui/toast";
-import { api, type RegisterRequest } from "../api/client";
+import { api } from "../api/client";
 import { ApiError } from "../api/errors";
+import { submitAuthForm } from "../auth/authSubmit";
 import { authRedirectTarget } from "../auth/redirect";
 import { useAuthSession } from "../auth/AuthProvider";
 import { AuthFormWrap, AuthLayout } from "../components/layout/AuthLayout";
@@ -19,21 +19,17 @@ export function RegisterPage() {
   const from = authRedirectTarget(searchParams?.get("callbackUrl"));
   const { establish } = useAuthSession();
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setLoading(true);
-    const values: RegisterRequest = { email, username, password };
-    try {
-      const token = await api.register(values);
-      establish(token.access_token);
-      toast.success("Account created");
-      router.replace(from);
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "Registration failed";
-      toast.error(msg);
-    } finally {
-      setLoading(false);
-    }
+    void submitAuthForm({
+      setLoading,
+      request: () => api.register({ email, username, password }),
+      establish,
+      successMessage: "Account created",
+      failureMessage: (err) =>
+        err instanceof ApiError ? err.message : "Registration failed",
+      redirect: () => router.replace(from),
+    });
   };
 
   return (

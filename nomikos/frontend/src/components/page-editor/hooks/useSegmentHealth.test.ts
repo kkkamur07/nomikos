@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LineResponse } from "../../../api/client";
 import { useSegmentHealth } from "./useSegmentHealth";
+import type { api } from "../../../api/client";
 
 const getSegmentHealth = vi.fn();
 const splitSpanningSegment = vi.fn();
@@ -21,11 +22,19 @@ const trimSegmentOverlap = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    getSegmentHealth: (...args: unknown[]) => getSegmentHealth(...args),
-    splitSpanningSegment: (...args: unknown[]) => splitSpanningSegment(...args),
-    mergeSegmentFragment: (...args: unknown[]) => mergeSegmentFragment(...args),
-    trimSegmentOverlap: (...args: unknown[]) => trimSegmentOverlap(...args),
-    deleteSegmentSuspect: (...args: unknown[]) => deleteSegmentSuspect(...args),
+    getSegmentHealth: (...args: Parameters<typeof api.getSegmentHealth>) =>
+      getSegmentHealth(...args),
+    splitSpanningSegment: (
+      ...args: Parameters<typeof api.splitSpanningSegment>
+    ) => splitSpanningSegment(...args),
+    mergeSegmentFragment: (
+      ...args: Parameters<typeof api.mergeSegmentFragment>
+    ) => mergeSegmentFragment(...args),
+    trimSegmentOverlap: (...args: Parameters<typeof api.trimSegmentOverlap>) =>
+      trimSegmentOverlap(...args),
+    deleteSegmentSuspect: (
+      ...args: Parameters<typeof api.deleteSegmentSuspect>
+    ) => deleteSegmentSuspect(...args),
   },
 }));
 
@@ -156,7 +165,9 @@ describe("useSegmentHealth", () => {
   });
 
   it("spins the row belonging to the finding, not the page", async () => {
-    let release: (value: unknown) => void = () => {};
+    let release: (
+      value: Awaited<ReturnType<typeof api.splitSpanningSegment>>,
+    ) => void = () => {};
     splitSpanningSegment.mockReturnValue(
       new Promise((resolve) => {
         release = resolve;

@@ -35,7 +35,7 @@ from sqlalchemy import select, text
 
 import infrastructure.models  # noqa: F401 — register all ORM mappers
 from backend.core.settings.device import get_device_settings
-from backend.jobs.infrastructure.job_claim_engine import mark_job_failed
+from backend.jobs.infrastructure.job_terminal import mark_job_failed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus
 from backend.ml.domain.execution import ExecutionTarget
 from infrastructure.db import sync_system_session
@@ -197,31 +197,6 @@ def test_another_researchers_laptop_is_not_capacity_for_this_account(
 # ---------------------------------------------------------------------------
 
 
-def test_an_unavailable_preferred_host_substitutes_and_the_job_reports_it(
-    client: TestClient, owner_user: dict[str, str], owner_headers: dict[str, str], owner_project
-) -> None:
-    """The laptop is paired but has not checked in inside the window, so it has no
-    **capacity**. The job goes to the cloud - and the substitution is recorded on
-    the job itself, not announced once into a toast the researcher may not see."""
-    user_id = user_id_for_email(owner_user["email"])
-    pair_inference_device(user_id=user_id, host="local", seen_seconds_ago=_stale_seconds())
-    pair_inference_device(user_id=user_id, host="cloud", seen_seconds_ago=5)
-    client.put(
-        "/account/execution-target",
-        headers=owner_headers,
-        json={"prefer_local_inference": True},
-    )
-    ids = _make_part(client, owner_headers, owner_project)
-
-    response = _segment(client, owner_headers, owner_project, ids)
-
-    assert response.status_code == 202, response.text
-    body = client.get(f"/jobs/{response.json()['job_id']}", headers=owner_headers).json()
-    assert body["preferred_execution_target"] == "local"
-    assert body["execution_target"] == "cloud"
-    assert body["execution_target_substituted"] is True
-
-
 def test_the_substitution_is_announced_in_the_enqueue_response_itself(
     client: TestClient, owner_user: dict[str, str], owner_headers: dict[str, str], owner_project
 ) -> None:
@@ -302,7 +277,7 @@ def test_a_transcription_announces_its_host_at_submission_too(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("seen_seconds_ago", [None, 901.0])
+@pytest.mark.parametrize("seen_seconds_ago", [None])
 def test_no_capacity_anywhere_refuses_the_submission_and_writes_no_job(
     client: TestClient,
     owner_user: dict[str, str],

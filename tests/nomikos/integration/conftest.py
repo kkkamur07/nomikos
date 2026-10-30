@@ -67,7 +67,6 @@ from backend.core.app import create_app
 # module still cared which caches there were, when the whole point of
 # `reset_settings_caches` is that it does not have to.
 from backend.core.settings import reset_settings_caches
-from backend.users.api.rate_limit import clear_auth_rate_limit_state
 from infrastructure.db import Base, sync_engine
 
 _truncate_engine = sync_engine
@@ -168,12 +167,10 @@ def isolated_platform_state(client: TestClient):
     # the storage and device accessors, so a test that repointed STORAGE_BACKEND or
     # any DEVICE_* value leaked it into whichever test ran next.
     reset_settings_caches()
-    clear_auth_rate_limit_state()
 
     _truncate_database()
 
     yield
-    clear_auth_rate_limit_state()
 
 
 @pytest.fixture

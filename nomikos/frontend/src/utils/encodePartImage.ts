@@ -19,7 +19,7 @@
  * accept, and so an enormous scan fails fast before a canvas allocation.
  */
 
-export const MAX_PART_DECODE_PIXELS = 200_000_000;
+const MAX_PART_DECODE_PIXELS = 200_000_000;
 
 /** Formats every browser displays natively; their original bytes upload as-is. */
 const NATIVE_UPLOAD_EXTENSIONS: Record<string, string> = {
@@ -28,7 +28,7 @@ const NATIVE_UPLOAD_EXTENSIONS: Record<string, string> = {
   "image/webp": "webp",
 };
 
-export type EncodedPartImage = {
+type EncodedPartImage = {
   /** Lossless PNG bytes. */
   data: Blob;
   /** Source width in pixels. */
@@ -49,7 +49,7 @@ export type DirectUploadPayload = {
   height?: number;
 };
 
-export class UnsupportedImageError extends Error {
+class UnsupportedImageError extends Error {
   constructor(message = "Uploaded file is not a valid image") {
     super(message);
     this.name = "UnsupportedImageError";
@@ -57,7 +57,7 @@ export class UnsupportedImageError extends Error {
 }
 
 /** Swap (or append) the filename's extension so it matches the uploaded bytes. */
-export function withExtension(filename: string, extension: string): string {
+function withExtension(filename: string, extension: string): string {
   const stem = filename.replace(/\.[^./\\]+$/, "");
   return `${stem || filename}.${extension}`;
 }
@@ -102,7 +102,7 @@ export async function prepareDirectUpload(
  * then asks for ``image/png`` output, the one ``canvas.toBlob`` format that is
  * lossless in every browser.
  */
-export async function encodePartImage(file: File): Promise<EncodedPartImage> {
+async function encodePartImage(file: File): Promise<EncodedPartImage> {
   const bitmap = await createImageBitmap(file).catch(() => {
     throw new UnsupportedImageError();
   });

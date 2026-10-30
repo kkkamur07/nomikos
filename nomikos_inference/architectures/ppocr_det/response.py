@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from nomikos_inference.architectures.ppocr_det.geometry import (
+    RefinedLine,
+    synthetic_baseline_points,
+)
 from nomikos_inference.architectures.ppocr_det.polygons import (
     DEFAULT_OUTLINE_TOLERANCE_PX,
     DEFAULT_VERTICAL_GROWTH,
@@ -26,23 +30,7 @@ from nomikos_inference.contracts.segment import SegmentBlock, SegmentLine, Segme
 #: the polyline three quarters down the quad sides.
 DEFAULT_BASELINE_FRACTION = 0.75
 
-
-def synthetic_baseline_points(quad: list[list[float]], fraction: float) -> list[list[float]]:
-    """Two-point baseline across a clockwise quad at ``fraction`` down."""
-    top_left, top_right, bottom_right, bottom_left = quad
-    left = [
-        top_left[0] + fraction * (bottom_left[0] - top_left[0]),
-        top_left[1] + fraction * (bottom_left[1] - top_left[1]),
-    ]
-    right = [
-        top_right[0] + fraction * (bottom_right[0] - top_right[0]),
-        top_right[1] + fraction * (bottom_right[1] - top_right[1]),
-    ]
-    return [left, right]
-
-
-def _baseline_points(quad: list[list[float]], fraction: float) -> list[list[float]]:
-    return synthetic_baseline_points(quad, fraction)
+Metadata = dict[str, str | float | int | bool]
 
 
 def _bounds_box(polys: list[list[list[float]]]) -> dict[str, Any]:
@@ -104,7 +92,7 @@ def _poly_points_for(
     quad_points = [[float(x), float(y)] for x, y in quad.points]
     outline = quad.polygon if quad.polygon is not None else quad_points
     fallback = bool(quad.polygon_fallback) or quad.polygon is None
-    quad_baseline = _baseline_points(quad_points, baseline_fraction)
+    quad_baseline = synthetic_baseline_points(quad_points, baseline_fraction)
     simplified = simplify_outline(
         outline,
         outline_tolerance_px=outline_tolerance_px,
@@ -162,7 +150,9 @@ def build_ppocr_det_response(
             [simplified for simplified, _, _, _ in per_survivor],
             [ring for _, ring, _, _ in per_survivor],
             factor=float(vertical_growth),
-            baselines=[_baseline_points(quad.points, baseline_fraction) for quad in survivors],
+            baselines=[
+                synthetic_baseline_points(quad.points, baseline_fraction) for quad in survivors
+            ],
             page_width=image_width,
             page_height=image_height,
             outline_tolerance_px=outline_tolerance_px,
@@ -185,7 +175,7 @@ def build_ppocr_det_response(
     for position, quad_index in enumerate(reading):
         quad = survivors[quad_index]
         block_external_id = block_of_line[position]
-        source_metadata: dict[str, Any] = {
+        source_metadata: Metadata = {
             "detector": "pp-ocrv6-det",
             "score": float(quad.score),
             "baseline_source": "quad_axis",
@@ -213,7 +203,7 @@ def build_ppocr_det_response(
                 external_id=f"ppocr-det-line-{position + 1}",
                 order=position,
                 block_external_id=block_external_id,
-                baseline={"points": _baseline_points(quad.points, baseline_fraction)},
+                baseline={"points": synthetic_baseline_points(quad.points, baseline_fraction)},
                 mask=None,
                 points=[[float(x), float(y)] for x, y in quad.points],
                 kraken_ceiling=None,
@@ -223,11 +213,128 @@ def build_ppocr_det_response(
     return SegmentRunResponse(blocks=blocks if lines else [], lines=lines)
 
 
+def _mid(item: RefinedLine) -> tuple[float, float]:
+    first, second = item.baseline[0], item.baseline[-1]
+    return ((first[0] + second[0]) / 2.0, (first[1] + second[1]) / 2.0)
+
+
+def _survivors(items: list[RefinedLine], noise_policy: str) -> list[RefinedLine]:
+    """Drop suspects under ``"drop"``, then keep the best ``MAX_SEGMENT_LINES``."""
+    scoped = [item for item in items if not (noise_policy == "drop" and item.suspect)]
+    ranked = sorted(
+        range(len(scoped)),
+        key=lambda i: (-scoped[i].score, _mid(scoped[i])[1], _mid(scoped[i])[0]),
+    )
+    return [scoped[i] for i in ranked[:MAX_SEGMENT_LINES]]
+
+
+def _emission_order(
+    survivors: list[RefinedLine], quads: list[DetectedQuad], direction: str
+) -> list[RefinedLine]:
+    """Each line once, at its first member's place in the raw quads' order."""
+    owner: dict[int, RefinedLine] = {}
+    for item in survivors:
+        for member in item.members:
+            owner.setdefault(member, item)
+    emission: list[RefinedLine] = []
+    seen: set[int] = set()
+    for quad_index in order_lines(quads, direction=direction):
+        owned = owner.get(quad_index)
+        if owned is None or id(owned) in seen:
+            continue
+        seen.add(id(owned))
+        emission.append(owned)
+    return emission
+
+
+def _row_group_of(layout: PageLayout) -> dict[int, tuple[int, int]]:
+    """Quad index to its (column, row) group."""
+    return {
+        member: (column_index, row_index)
+        for column_index, column in enumerate(layout.columns)
+        for row_index, row in enumerate(column.rows)
+        for member in row
+    }
+
+
+def _initials_first(emission: list[RefinedLine], layout: PageLayout) -> None:
+    """Within each row group, move initials ahead of the row's other lines.
+
+    A line whose members span more than one row group keeps its place.
+    """
+    group_of = _row_group_of(layout)
+    slots: dict[tuple[int, int], list[int]] = {}
+    for position, item in enumerate(emission):
+        groups = {group_of[member] for member in item.members if member in group_of}
+        if len(groups) == 1:
+            slots.setdefault(groups.pop(), []).append(position)
+    for positions in slots.values():
+        ordered = sorted(
+            (emission[position] for position in positions), key=lambda item: item.role != "initial"
+        )
+        for position, item in zip(positions, ordered, strict=True):
+            emission[position] = item
+
+
+def _suspects_last(emission: list[RefinedLine]) -> list[RefinedLine]:
+    body = [item for item in emission if not item.suspect]
+    tail = sorted(
+        (item for item in emission if item.suspect),
+        key=lambda item: (_mid(item)[1], _mid(item)[0]),
+    )
+    return body + tail
+
+
+def _item_columns(emission: list[RefinedLine], layout: PageLayout) -> list[int | None]:
+    """Each line's column, or None when it spans columns or has a spanning member."""
+    spanning = set(layout.spanning)
+    column_of_member: dict[int, int] = {}
+    for column_index, column in enumerate(layout.columns):
+        for member in column.members:
+            column_of_member[member] = column_index
+
+    def _item_column(item: RefinedLine) -> int | None:
+        columns = set()
+        for member in item.members:
+            if member in spanning:
+                return None
+            column = column_of_member.get(member)
+            if column is None:
+                return None
+            columns.add(column)
+        if len(columns) == 1:
+            return next(iter(columns))
+        return None
+
+    return [_item_column(item) for item in emission]
+
+
+def _refined_metadata(item: RefinedLine, baseline_fraction: float, box_type: str) -> Metadata:
+    metadata: Metadata = {
+        "detector": "pp-ocrv6-det",
+        "score": float(item.score),
+        "baseline_source": "merged_axis" if item.merged_from > 1 else "quad_axis",
+        "baseline_fraction": float(baseline_fraction),
+    }
+    if item.role == "initial":
+        metadata["role"] = "initial"
+    if item.merged_from > 1:
+        metadata["merged_from"] = item.merged_from
+    if item.suspect:
+        metadata["suspect"] = True
+        metadata["suspect_reason"] = item.suspect_reason
+    if item.overlap_unresolved:
+        metadata["overlap_unresolved"] = True
+    if box_type == "poly" and item.polygon_fallback:
+        metadata["polygon_fallback"] = True
+    return metadata
+
+
 def build_refined_ppocr_det_response(
     image_width: int,
     image_height: int,
     quads: list[DetectedQuad],
-    items: list,
+    items: list[RefinedLine],
     layout: PageLayout,
     *,
     baseline_fraction: float = DEFAULT_BASELINE_FRACTION,
@@ -249,115 +356,32 @@ def build_refined_ppocr_det_response(
 
     if box_type not in ("quad", "poly"):
         raise ValueError('box_type must be "poly" or "quad"')
-    scoped = [item for item in items if not (noise_policy == "drop" and item.suspect)]
-
-    def _mid(item: Any) -> tuple[float, float]:
-        first, second = item.baseline[0], item.baseline[-1]
-        return ((first[0] + second[0]) / 2.0, (first[1] + second[1]) / 2.0)
-
-    ranked = sorted(
-        range(len(scoped)),
-        key=lambda i: (-scoped[i].score, _mid(scoped[i])[1], _mid(scoped[i])[0]),
-    )
-    survivors = [scoped[i] for i in ranked[:MAX_SEGMENT_LINES]]
-    owner: dict[int, Any] = {}
-    for item in survivors:
-        for member in item.members:
-            owner.setdefault(member, item)
-    emission: list[Any] = []
-    seen: set[int] = set()
-    for quad_index in order_lines(quads, direction=reading_direction):
-        item = owner.get(quad_index)
-        if item is None or id(item) in seen:
-            continue
-        seen.add(id(item))
-        emission.append(item)
-
-    group_of: dict[int, tuple[int, int]] = {}
-    for column_index, column in enumerate(layout.columns):
-        for row_index, row in enumerate(column.rows):
-            for member in row:
-                group_of[member] = (column_index, row_index)
-    slots: dict[tuple[int, int] | None, list[int]] = {}
-    for position, item in enumerate(emission):
-        groups = {group_of.get(member) for member in item.members} - {None}
-        key = next(iter(groups)) if len(groups) == 1 else None
-        slots.setdefault(key, []).append(position)
-    for key, positions in slots.items():
-        if key is None:
-            continue
-        first = [position for position in positions if emission[position].role == "initial"]
-        rest = [position for position in positions if emission[position].role != "initial"]
-        ordered = [emission[position] for position in first + rest]
-        for position, item in zip(positions, ordered, strict=True):
-            emission[position] = item
-
+    emission = _emission_order(_survivors(items, noise_policy), quads, reading_direction)
+    _initials_first(emission, layout)
     if noise_policy == "flag":
-        body = [item for item in emission if not item.suspect]
-        tail = sorted(
-            (item for item in emission if item.suspect),
-            key=lambda item: (_mid(item)[1], _mid(item)[0]),
+        emission = _suspects_last(emission)
+
+    blocks, block_of_line = _regions(
+        _item_columns(emission, layout), [item.points for item in emission]
+    )
+    lines = [
+        SegmentLine(
+            external_id=f"ppocr-det-line-{position + 1}",
+            order=position,
+            block_external_id=block_of_line[position],
+            baseline={"points": [[float(x), float(y)] for x, y in item.baseline]},
+            mask=None,
+            points=[[float(x), float(y)] for x, y in item.points],
+            kraken_ceiling=None,
+            source_metadata=_refined_metadata(item, baseline_fraction, box_type),
         )
-        emission = body + tail
-
-    spanning = set(layout.spanning)
-    column_of_member: dict[int, int] = {}
-    for column_index, column in enumerate(layout.columns):
-        for member in column.members:
-            column_of_member[member] = column_index
-
-    def _item_column(item: Any) -> int | None:
-        columns = set()
-        for member in item.members:
-            if member in spanning:
-                return None
-            column = column_of_member.get(member)
-            if column is None:
-                return None
-            columns.add(column)
-        if len(columns) == 1:
-            return next(iter(columns))
-        return None
-
-    item_columns = [_item_column(item) for item in emission]
-    blocks, block_of_line = _regions(item_columns, [item.points for item in emission])
-
-    lines = []
-    for position, item in enumerate(emission):
-        block_external_id = block_of_line[position]
-        source_metadata: dict[str, Any] = {
-            "detector": "pp-ocrv6-det",
-            "score": float(item.score),
-            "baseline_source": "merged_axis" if item.merged_from > 1 else "quad_axis",
-            "baseline_fraction": float(baseline_fraction),
-        }
-        if item.role == "initial":
-            source_metadata["role"] = "initial"
-        if item.merged_from > 1:
-            source_metadata["merged_from"] = item.merged_from
-        if item.suspect:
-            source_metadata["suspect"] = True
-            source_metadata["suspect_reason"] = item.suspect_reason
-        if item.overlap_unresolved:
-            source_metadata["overlap_unresolved"] = True
-        if box_type == "poly" and getattr(item, "polygon_fallback", False):
-            source_metadata["polygon_fallback"] = True
-        lines.append(
-            SegmentLine(
-                external_id=f"ppocr-det-line-{position + 1}",
-                order=position,
-                block_external_id=block_external_id,
-                baseline={"points": [[float(x), float(y)] for x, y in item.baseline]},
-                mask=None,
-                points=[[float(x), float(y)] for x, y in item.points],
-                kraken_ceiling=None,
-                source_metadata=source_metadata,
-            )
-        )
+        for position, item in enumerate(emission)
+    ]
     return SegmentRunResponse(blocks=blocks if lines else [], lines=lines)
 
 
 __all__ = [
+    "DEFAULT_BASELINE_FRACTION",
     "build_ppocr_det_response",
     "build_refined_ppocr_det_response",
     "synthetic_baseline_points",
