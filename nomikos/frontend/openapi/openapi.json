@@ -4723,6 +4723,28 @@
           "points": {
             "title": "Points"
           },
+          "run_external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run External Id"
+          },
+          "segmentation_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segmentation Run Id"
+          },
           "source": {
             "title": "Source",
             "type": "string"

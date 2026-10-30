@@ -26,6 +26,10 @@ class SnapshotLineState(TypedDict):
     source_metadata: object
     kraken_ceiling: object
     approved_text: str | None
+    # The model origin (ADR 0013). Absent from snapshots taken before runs were
+    # recorded, like the geometry keys above.
+    segmentation_run_id: NotRequired[str | None]
+    run_external_id: NotRequired[str | None]
 
 
 class SnapshotState(TypedDict):

@@ -4102,6 +4102,10 @@ export interface components {
       order: number;
       /** Points */
       points: unknown;
+      /** Run External Id */
+      run_external_id?: string | null;
+      /** Segmentation Run Id */
+      segmentation_run_id?: string | null;
       /** Source */
       source: string;
       /** Source Metadata */
