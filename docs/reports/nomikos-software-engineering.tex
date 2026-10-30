@@ -1,0 +1,220 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{fit,arrows.meta,backgrounds}
+\usepackage[font=small,skip=8pt]{caption}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+
+\setlist{nosep,leftmargin=1.2em}
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+\titlespacing*{\section}{0pt}{0.9em}{0.5em}
+\titleformat*{\section}{\large\bfseries}
+\setlength{\textfloatsep}{12pt plus 2pt}
+\setlength{\floatsep}{10pt plus 2pt}
+\DeclareUrlCommand\code{\urlstyle{tt}}
+\newcommand{\choice}[1]{\par\smallskip\textbf{#1}\enspace}
+
+\definecolor{accent}{HTML}{B40000}
+\definecolor{boxfill}{HTML}{F6F3EE}
+\definecolor{groupline}{HTML}{8A8378}
+
+\tikzset{
+  box/.style={draw, rounded corners=2pt, fill=boxfill, align=center,
+    inner xsep=6pt, inner ysep=4pt, minimum width=2.5cm, minimum height=0.85cm,
+    font=\footnotesize},
+  store/.style={box, fill=white},
+  group/.style={draw=groupline, dashed, rounded corners=6pt, inner sep=8pt},
+  glabel/.style={font=\scriptsize\itshape, text=groupline, anchor=south west, inner sep=2pt},
+  run/.style={-{Stealth[length=5pt]}, thick},
+  art/.style={-{Stealth[length=5pt]}, thick, dashed},
+  lab/.style={font=\scriptsize, fill=white, inner sep=1.5pt, align=center},
+  key/.style={font=\scriptsize, anchor=west},
+}
+
+\begin{document}
+
+{\LARGE\bfseries Nomikos: software engineering report}\par
+\smallskip
+{\small 30 October 2026, branch \texttt{main} at \texttt{a68cf6fa}. Every claim names a file or ADR in the repository.}
+
+\section{Purpose and quality goals}
+
+Nomikos is a platform for handwritten text recognition (HTR) of manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, corrects the result in a browser editor, and exports PAGE XML, docx, PDF or text. The platform exists for the corrections, since each one turns a model proposal into ground truth for training the next model (ADR 0013). Four goals follow from that: the platform gives the same output as the training machine, no human correction is lost, inference runs the same code on a researcher's CPU and on a hosted worker, and the browser never reaches the database or storage directly (\code{docs/architecture.md}).
+
+\section{Containers and deployment}
+
+\begin{figure}[ht]
+\centering
+\resizebox{0.88\linewidth}{!}{%
+\begin{tikzpicture}
+  \node[box] (browser) at (0,0) {Browser};
+  \node[box] (laptop) at (2.4,-3.3) {Agent (laptop)\\device token};
+  \node[box] (next) at (6.2,1.9) {Next.js editor};
+  \node[box] (landing) at (9.6,1.9) {Landing page};
+  \node[box, draw=accent, very thick] (api) at (6.2,0) {FastAPI API\\uvicorn};
+  \node[store] (pg) at (13.0,0) {Postgres};
+  \node[store] (media) at (9.6,-1.5) {Media volume};
+  \node[box] (worker) at (13.0,-1.5) {Platform worker};
+  \node[box] (hosted) at (6.2,-3.3) {Agent (hosted)\\service token};
+  \node[store] (hf) at (4.3,-4.9) {Hugging Face Hub};
+  \node[store] (pypi) at (9.6,-3.3) {PyPI};
+  \node[box] (gha) at (13.0,-3.3) {GitHub Actions};
+
+  \begin{scope}[on background layer]
+    \node[group, fit=(browser)(laptop)] (gres) {};
+    \node[group, fit=(next)(landing)] (gvercel) {};
+    \node[group, fit=(api)(pg)(media)(worker)] (gcool) {};
+    \node[group, fit=(hosted)] (ginf) {};
+  \end{scope}
+  \node[glabel] at (gres.north west) {Researcher machine};
+  \node[glabel] at (gvercel.north west) {Vercel};
+  \node[glabel] at (gcool.north west) {Coolify host};
+  \node[glabel] at (ginf.north west) {Inference host};
+
+  \draw[run] (browser.north) |- node[lab, pos=0.75] {HTTPS, app bundle} (next.west);
+  \draw[run] (browser) -- node[lab] {HTTPS JSON\\JWT, SSE} (api);
+  \draw[run] (api) -- node[lab] {SQL, NOTIFY} (pg);
+  \draw[run] (api.south east) -- node[lab, right=3pt] {files} (media.north west);
+  \draw[run] (worker) -- node[lab, right=3pt] {SQL, jobs} (pg);
+  \draw[run] (laptop.north east) -- node[lab, sloped] {claim, callback} (api.south west);
+  \draw[run] (hosted) -- node[lab, pos=0.62] {claim, callback} (api);
+  \draw[art] (hf.north west) -- node[lab, right=2pt] {weights} (laptop.south);
+  \draw[art] (hf.north east) -- node[lab, right=2pt] {weights} (hosted.south);
+  \draw[art] (pypi) -- node[lab, above=2pt] {install} (hosted);
+  \draw[art] (pypi.south) |- ++(0,-2.25) -| node[lab, pos=0.25] {uv tool install} ([xshift=-11mm]laptop.south);
+  \draw[art] (gha) -- node[lab, above=2pt] {wheel} (pypi);
+
+  \begin{scope}[shift={(0.6,-6.5)}]
+    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {runtime request};
+    \draw[art] (3.4,0) -- (4.3,0); \node[key] at (4.4,0) {artifact delivery};
+    \draw[groupline, dashed, rounded corners=3pt] (7.0,-0.18) rectangle (7.9,0.18);
+    \node[key] at (8.0,0) {deployment boundary};
+    \draw[accent, very thick, rounded corners=2pt, fill=boxfill] (11.3,-0.18) rectangle (12.2,0.18);
+    \node[key] at (12.3,0) {only HTTP entry};
+  \end{scope}
+\end{tikzpicture}}
+\caption{Container and deployment view. The browser loads the editor from Vercel and then calls the API directly. Both agents run the same PyPI package and connect outbound only.}
+\label{fig:containers}
+\end{figure}
+
+There are three deployable units (Figure~\ref{fig:containers}). The \textbf{frontend} (\code{nomikos/frontend/}) is Next.js 16 and React 19, rendered on the client. The \textbf{platform API} (\code{nomikos/backend/}) is FastAPI. The \textbf{inference agent} (\code{nomikos_inference/}) is the only package on PyPI and has no database, queue or listening port.
+
+Vercel serves the landing page and the editor. One Coolify host runs the backend: the API is a Coolify application built from \code{nomikos/Dockerfile}, Postgres is a Coolify-managed container (\code{docs/inference/adding-inference-models.md}), and media sit in a host directory, \code{/data/nomikos/media}, since the move off Supabase Storage. The platform worker uses the same image under its own Compose file (\code{infrastructure/docker-compose.worker.yml}) and mounts that directory read-only. The hosted agent runs on a separate machine as \code{nomikos-worker@} systemd units (\code{scripts/platform/apply_email_env.sh}).
+
+\section{Key architectural choices}
+
+\choice{A modular monolith.} The API is one process split into bounded contexts (\code{users}, \code{project}, \code{document}, \code{annotation}, \code{ml}, \code{jobs}), each with \code{api/}, \code{application/}, \code{domain/} and \code{infrastructure/} layers (\code{nomikos/backend/README.md}). For a small team this keeps one deploy, one transaction scope and one database, where microservices would add network boundaries. The boundaries are weaker between contexts, where \code{document}, \code{annotation}, \code{ml} and \code{jobs} import each other both ways.
+
+\choice{One Postgres queue, outbound agents.} The \code{jobs} table is the only queue (ADR 0003). An agent claims one page at a time with \texttt{FOR UPDATE SKIP LOCKED} through \code{POST /device/v1/jobs/claim} and reports through \code{POST /internal/inference/job-complete}. A message broker or a listening inference service would have repeated an earlier mistake: a second queue, \code{inference_jobs}, had needed its own claim loop and locks, and laptop and cloud ran different code. The credential decides what an agent may claim (ADR 0005): a device token gets its owner's \texttt{local} jobs and a service token any \texttt{cloud} job. A page whose lease expires goes back to \texttt{pending}. In exchange, the hosted worker depends on the API being up, and Postgres carries the queue load.
+
+\choice{ONNX serving with preprocessing parity.} Agents run ONNX Runtime on CPU. PyTorch only builds the graphs, in \code{nomikos_inference/export/}, outside the wheel (ADR 0006). With PyTorch as the runtime, the install had grown to 817\,MB on macOS arm64 and peak memory to 7.0\,GB. Pages from the training set once came back wrong, so ADR 0007 requires serving preprocessing to reproduce the training loader exactly, with crop padding recorded per model in \code{registry.yaml}. This adds an export step and parity tests in \code{tests/export/} that have to keep passing.
+
+\choice{Server-owned reading order.} Line order used to come from the client, and edits left gaps and collisions. The server now keeps \texttt{order} dense after every write and numbers lines region by region (ADR 0008, 0011, \code{reading_order.py}), so the editor, viewer and exports agree. Each line write renumbers the page while holding a lock on it.
+
+\choice{Model output as an immutable layer.} Each segmentation run is stored once in \code{segmentation_runs} as JSONB, with the model identity copied in, and never updated (ADR 0013, migration \code{011}). Before, an edit overwrote the proposal and a deleted false positive left no trace, so corrections could not become training data. Transcriptions follow the same rule: one \texttt{model} layer per run beside a single \texttt{ground\_truth} layer. Runs are kept forever.
+
+\choice{A generated API contract.} \code{scripts/platform/export_openapi.py} writes \code{openapi/openapi.json} (115 operations) and \texttt{openapi-typescript} turns it into \code{src/api/schema.d.ts}. A pre-commit hook regenerates both on backend changes and the CI job \texttt{check:api} fails on any drift, so the frontend cannot use a field the backend dropped. Every API change now needs a generation step, and the generated files are never edited by hand.
+
+\choice{Signed URLs, one authorisation path.} The browser talks only to the API. Images are served through short-lived signed links (\code{core/settings/storage.py}) behind a \texttt{MediaStore} protocol with local and Supabase backends. Row-level security is off and FastAPI checks access before every query (\code{docs/database-design.md}, section 10), so access is checked in one layer, and every route has to remember to call it.
+
+\choice{Self-hosted backend, frontend on Vercel.} The backend needs a persistent worker, a direct database connection, a \texttt{LISTEN} loop for server-sent events and a disk, which is why the worker ``never ran on Vercel'' (\code{docker-compose.worker.yml}). The static frontend stays on Vercel. The cost is operating that host, including its backups and releases.
+
+\begin{figure}[ht]
+\centering
+\resizebox{0.7\linewidth}{!}{%
+\begin{tikzpicture}[
+  actor/.style={box, minimum width=2.3cm},
+  msg/.style={-{Stealth[length=5pt]}, thick},
+  ret/.style={-{Stealth[length=5pt]}, thick, dashed},
+  ml/.style={font=\footnotesize, above=0.5pt, inner sep=1pt, fill=white}]
+  \def\xb{0} \def\xa{4.2} \def\xd{8.0} \def\xg{12.4}
+  \foreach \x/\n in {\xb/Browser, \xa/API, \xd/Postgres, \xg/Agent} {
+    \node[actor] at (\x,0) {\n};
+    \draw[groupline] (\x,-0.43) -- (\x,-7.0);
+  }
+  \draw[msg] (\xb,-0.9) -- node[ml] {POST parts/upload, finalize} (\xa,-0.9);
+  \draw[msg] (\xb,-1.35) -- node[ml] {POST parts/\{part\}/segment} (\xa,-1.35);
+  \draw[msg] (\xa,-1.8) -- node[ml] {INSERT job, pending} (\xd,-1.8);
+  \draw[ret] (\xa,-2.25) -- node[ml] {202, job id} (\xb,-2.25);
+  \draw[msg] (\xg,-2.7) -- node[ml] {POST /device/v1/jobs/claim} (\xa,-2.7);
+  \draw[msg] (\xa,-3.15) -- node[ml] {SKIP LOCKED, waiting} (\xd,-3.15);
+  \draw[ret] (\xa,-3.6) -- node[ml] {page request, signed URL} (\xg,-3.6);
+  \draw[msg] (\xg,-4.05) -- node[ml] {GET signed image} (\xa,-4.05);
+  \node[box, minimum width=2.1cm, minimum height=0.45cm, inner ysep=1pt] at (\xg,-4.5) {ONNX model};
+  \draw[msg] (\xg,-5.1) -- node[ml] {POST /internal/inference/job-complete} (\xa,-5.05);
+  \draw[msg] (\xa,-5.5) -- node[ml] {run + lines, done, NOTIFY} (\xd,-5.5);
+  \draw[ret] (\xa,-5.95) -- node[ml] {SSE /jobs/\{id\}/events} (\xb,-5.95);
+  \draw[msg] (\xb,-6.4) -- node[ml] {PATCH lines, text} (\xa,-6.4);
+  \draw[msg] (\xb,-6.85) -- node[ml] {GET export/page-xml, docx} (\xa,-6.85);
+  \begin{scope}[shift={(5.6,-7.55)}]
+    \draw[msg] (0,0) -- (0.9,0); \node[key] at (1.0,0) {request};
+    \draw[ret] (2.5,0) -- (3.4,0); \node[key] at (3.5,0) {response or push};
+  \end{scope}
+\end{tikzpicture}}
+\caption{One page end to end: upload, segment, correct, export. Paths without a leading slash sit under \texttt{/projects/\{p\}/documents/\{d\}/}.}
+\label{fig:sequence}
+\end{figure}
+
+\section{Job flow and data model}
+
+In Figure~\ref{fig:sequence}, the callback handler locks the job row and sets \code{callback_claimed_at} before merging, so a retried callback cannot merge twice (\code{docs/database-design.md}, 8.3). Without server-sent events the browser polls \code{GET /jobs/{id}}. In Figure~\ref{fig:er}, live lines point back to their run, which keeps the model identity as text, so it survives deletion of the job.
+
+\begin{figure}[ht]
+\centering
+\resizebox{0.78\linewidth}{!}{%
+\begin{tikzpicture}[ent/.style={box, minimum width=2.7cm}, rel/.style={thick}]
+  \node[ent] (proj) at (0,0) {project};
+  \node[ent] (doc) at (4.2,0) {document};
+  \node[ent] (tr) at (8.4,0) {transcription\\\scriptsize model | ground\_truth};
+  \node[ent] (lt) at (12.6,0) {line\_transcription};
+  \node[ent] (job) at (0,-1.8) {job};
+  \node[ent] (page) at (4.2,-1.8) {document\_part\\\scriptsize page};
+  \node[ent] (block) at (8.4,-1.8) {block\\\scriptsize region};
+  \node[ent] (model) at (0,-3.6) {inference\_model};
+  \node[ent, draw=accent, very thick] (run) at (4.2,-3.6) {segmentation\_run\\\scriptsize JSONB, model identity};
+  \node[ent] (line) at (8.4,-3.6) {line};
+
+  \draw[rel] (proj) -- node[lab] {1:n} (doc);
+  \draw[rel] (doc) -- node[lab] {1:n} (tr);
+  \draw[rel] (tr) -- node[lab] {1:n} (lt);
+  \draw[rel] (doc) -- node[lab] {1:n} (page);
+  \draw[rel] (job) -- node[lab] {targets} (page);
+  \draw[rel] (job) -- node[lab] {uses} (model);
+  \draw[rel] (page) -- node[lab] {1:n} (block);
+  \draw[rel] (page) -- node[lab] {1:n runs} (run);
+  \draw[rel] (page.south east) -- node[lab, pos=0.4] {1:n} (line.north west);
+  \draw[rel] (block) -- node[lab] {0..1:n} (line);
+  \draw[rel] (run) -- node[lab, below=2pt] {origin of} (line);
+  \draw[rel] (line.east) -| node[lab, pos=0.75] {1:n} (lt.south);
+\end{tikzpicture}}
+\caption{Core entities; identity, sharing and history tables omitted. The outlined entity is written once and never updated.}
+\label{fig:er}
+\end{figure}
+
+\section{Quality engineering and releases}
+
+\textbf{Tests.} \code{tests/nomikos/} (unit, integration on real Postgres), \code{tests/inference/} (also on real weights), \code{tests/export/} (ONNX against PyTorch), \code{tests/hf/} and \code{tests/load/}.
+
+\textbf{CI} (\code{.github/workflows/}, actions pinned by SHA). \code{quality.yml} runs \texttt{tsc}, ESLint, Vitest and a build, then Ruff, mypy, unit tests, Postgres 16 integration tests after \texttt{alembic upgrade head}, a nightly real-weights lane and \texttt{check:api}. \code{security.yml} runs gitleaks, \texttt{npm audit} and \texttt{pip-audit} with documented VEX exceptions. \code{deployment.yml} builds both images with SBOMs and Trivy scans, and \code{release.yml} publishes the wheel with an attestation through PyPI trusted publishing. Pre-commit repeats the fast checks. Changes land as squash-merged pull requests, and commit bodies cite Greptile review findings.
+
+\textbf{Releases.} Production never runs Alembic, because the API image only starts uvicorn, so the schema must be in place before Coolify deploys. \code{scripts/platform/release_2026_10_11.sh} runs as root on the Coolify host: it applies dated SQL files inside the Postgres container, sets environment variables through the Coolify API, waits for the merge and a healthy new API container, then checks \code{alembic_version} and \code{/health}. Catalog rows go through \code{apply_catalog_sql.sh}. \code{tests/platform/} tests these scripts against stubs.
+
+\section{Limits and next steps}
+
+\begin{itemize}
+  \item \textbf{Schema by hand.} Releases apply migrations as hand-run SQL; an \texttt{alembic upgrade} step would remove that risk.
+  \item \textbf{mypy does not gate.} It runs with \texttt{continue-on-error: true} and names a path, \texttt{inference}, that no longer exists (\code{quality.yml}).
+  \item \textbf{Docs lag production.} \code{docs/deployment/production.md} still puts the API on Vercel with Supabase storage, and \code{docs/database-design.md} 5.4 still says the callback blocks the event loop, which \code{job_callback_service.py} no longer does.
+  \item \textbf{One host.} API, database and media share one Coolify host; metrics stay in memory (ADR 0010).
+\end{itemize}
+
+\end{document}
