@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import type { LayoutPoint, LinePoint } from "../api/client";
+import type {
+  DocumentPartResponse,
+  LayoutPoint,
+  DocumentWithPartsResponse,
+  DocumentWorkflow,
+} from "../api/client";
 import { invalidateAfter } from "../api/resources";
 import { useHostPreference } from "../inference";
-import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { PageEditorCanvas } from "../components/page-editor/PageEditorCanvas";
 import type { DrawTool } from "../components/page-editor/PageEditorCanvasIsland";
 import { PageEditorRegionPanel } from "../components/page-editor/PageEditorRegionPanel";
@@ -17,11 +21,7 @@ import {
   inPageOrder,
   prunedGroup,
 } from "../components/page-editor/segmentSelection";
-import {
-  PageEditorPageRail,
-  PageEditorPageRailTab,
-  PAGE_RAIL_TOGGLE_ID,
-} from "../components/page-editor/PageEditorPageRail";
+import { PageEditorPageRailSlot } from "../components/page-editor/PageEditorPageRailSlot";
 import { PageEditorTranscriptionStrip } from "../components/page-editor/PageEditorTranscriptionStrip";
 import { PageEditorShell } from "../components/page-editor/PageEditorShell";
 import {
@@ -34,31 +34,55 @@ import {
 } from "../components/page-editor/PageEditorStatusAlerts";
 import { PageEditorInferenceBanner } from "../components/page-editor/PageEditorInferenceBanner";
 import { PageEditorToolbar } from "../components/page-editor/PageEditorToolbar";
-import { PageEditorTranscriptionPdfWrap } from "../components/page-editor/PageEditorTranscriptionPdfWrap";
+import { PageEditorTranscriptionPdfSlot } from "../components/page-editor/PageEditorTranscriptionPdfWrap";
+import { PageEditorBaselineBar } from "../components/page-editor/PageEditorBaselineBar";
+import { PageEditorCanvasHint } from "../components/page-editor/PageEditorCanvasHint";
+import { canvasHintFor } from "../components/page-editor/canvasHint";
+import { rectanglePoints } from "../components/page-editor/canvasGeometry";
 import {
-  rectanglePoints,
-  removePolygonVertex,
-} from "../components/page-editor/canvasGeometry";
-import {
-  pageNeighbours,
   useDocumentPaging,
   useLayoutMutations,
   usePageEditorData,
   usePageEditorJobQueue,
   usePageEditorRunState,
+  usePageTurns,
   usePairingState,
   useRegions,
   useSegmentHealth,
   useSegmentMerge,
 } from "../components/page-editor/hooks";
-import {
-  loadPageRailOpen,
-  savePageRailOpen,
-} from "../components/page-editor/pageEditorSettings";
-import {
-  segmentHasGroundTruth,
-  segmentIdsWithGroundTruth,
-} from "../components/page-editor/hooks/utils";
+import { useEditorDrawState } from "../components/page-editor/hooks/useEditorDrawState";
+import { useEditorSelection } from "../components/page-editor/hooks/useEditorSelection";
+import { useEditorShortcuts } from "../components/page-editor/hooks/useEditorShortcuts";
+import { segmentIdsWithGroundTruth } from "../components/page-editor/hooks/utils";
+
+function documentHrefFor(
+  projectId: string | undefined,
+  documentId: string | undefined,
+): string {
+  return projectId && documentId
+    ? `/projects/${projectId}/documents/${documentId}`
+    : "/projects";
+}
+
+/** The document and page together, once both have loaded. */
+function loadedPage(
+  document: DocumentWithPartsResponse | null,
+  part: DocumentPartResponse | null,
+) {
+  return document && part ? { document, part } : null;
+}
+
+function unavailableDescriptionFor(
+  error: string | null,
+  document: DocumentWithPartsResponse | null,
+  part: DocumentPartResponse | null,
+): string | null {
+  if (error) return error;
+  return loadedPage(document, part)
+    ? null
+    : "This document part was not found.";
+}
 
 export function PageEditorPlaceholderPage() {
   const {
@@ -71,9 +95,7 @@ export function PageEditorPlaceholderPage() {
     partId: string;
   }>() ?? {};
 
-  const [drawMode, setDrawMode] = useState<"none" | DrawTool>("none");
-  const [draftStart, setDraftStart] = useState<LayoutPoint | null>(null);
-  const [draftPolygon, setDraftPolygon] = useState<LinePoint[]>([]);
+  const draw = useEditorDrawState();
   const [actionsOpen, setActionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [segmentHealthOpen, setSegmentHealthOpen] = useState(false);
@@ -82,12 +104,9 @@ export function PageEditorPlaceholderPage() {
   const [transcriptionPdfRefreshKey, setTranscriptionPdfRefreshKey] =
     useState(0);
   const [stripDismissed, setStripDismissed] = useState(false);
-  const [pageRailOpen, setPageRailOpen] = useState(loadPageRailOpen);
-  const [reclaimRailFocus, setReclaimRailFocus] = useState(false);
   const [selectedVertexIndex, setSelectedVertexIndex] = useState<number | null>(
     null,
   );
-  const [vertexCommitSignal, setVertexCommitSignal] = useState(0);
   // The platform refused a submission because no **inference host** had
   // capacity. Held on the page, not in a toast: it is an explanation to act on.
   const [submissionRefusal, setSubmissionRefusal] = useState<string | null>(
@@ -110,9 +129,7 @@ export function PageEditorPlaceholderPage() {
     });
 
   const editorData = usePageEditorData(projectId, documentId, partId, () => {
-    setDrawMode("none");
-    setDraftPolygon([]);
-    setDraftStart(null);
+    draw.resetDrawing();
     setStripDismissed(false);
     setSelectedVertexIndex(null);
     setHoveredSegmentId(null);
@@ -162,29 +179,7 @@ export function PageEditorPlaceholderPage() {
     [lines, goToPartUnguarded],
   );
 
-  const { previousPartId, nextPartId } = pageNeighbours(parts, partId);
-  const goToPreviousPage = useCallback(() => {
-    if (previousPartId) goToPart(previousPartId);
-  }, [previousPartId, goToPart]);
-  const goToNextPage = useCallback(() => {
-    if (nextPartId) goToPart(nextPartId);
-  }, [nextPartId, goToPart]);
-
-  function handlePageRailOpenChange(open: boolean) {
-    setPageRailOpen(open);
-    savePageRailOpen(open);
-    // Closing the rail unmounts whatever inside it had focus, and the rail's
-    // own collapse button is the likeliest thing that did. The effect below
-    // hands focus to the edge tab that takes the rail's place once the rail
-    // is actually gone.
-    if (!open) setReclaimRailFocus(true);
-  }
-
-  useEffect(() => {
-    if (!reclaimRailFocus) return;
-    setReclaimRailFocus(false);
-    globalThis.document.getElementById(PAGE_RAIL_TOGGLE_ID)?.focus();
-  }, [reclaimRailFocus]);
+  const pageTurns = usePageTurns(parts, partId, goToPart);
 
   const segmentHealth = useSegmentHealth({
     projectId,
@@ -238,7 +233,7 @@ export function PageEditorPlaceholderPage() {
     setSelectedSegmentId: pairing.setSelectedSegmentId,
     setApprovedTextDraft: pairing.setApprovedTextDraft,
     selectedSegmentModelId,
-    onDrawComplete: () => setDrawMode("none"),
+    onDrawComplete: () => draw.setDrawMode("none"),
     setSubmissionRefusal,
     trackJobAndWait: jobQueue.trackAndWait,
     subscribeToJobCompletion: jobQueue.subscribeToJobCompletion,
@@ -280,26 +275,6 @@ export function PageEditorPlaceholderPage() {
     }
   }, [lines, pairing]);
 
-  const {
-    selectedLineId,
-    setSelectedLineId,
-    setSelectedLineSnapshot,
-    saveMessage,
-    setSaveMessage,
-    mutationError,
-    segmenting,
-    segmentMessage,
-    moveSelectedBaseline,
-    saveSelectedLine,
-    resetSelectedLine,
-    replaceWithManualLine,
-    updateSegmentPoints,
-    deleteSelectedSegment,
-    undoEdit,
-    redoEdit,
-    runAutoSegment,
-  } = layoutMutations;
-
   const regions = useRegions({
     projectId,
     documentId,
@@ -312,115 +287,42 @@ export function PageEditorPlaceholderPage() {
   });
   const { selectedRegionId, setSelectedRegionId } = regions;
 
+  const { selectedLineId, segmenting, replaceWithManualLine } = layoutMutations;
   const {
     selectedSegmentId,
-    setSelectedSegmentId,
-    setSelectedSegmentIds,
-    approvedTextDraft,
-    setApprovedTextDraft,
-    transcriptionSaveMessage,
     ocrRunning,
     ocrScope,
-    ocrMessage,
     selectedSegment,
     selectedSegmentNumber,
-    selectedTranscriptionLayer,
-    pairTextLine,
-    commitLineText,
-    reloadLineText,
-    saveApprovedText,
-    selectTranscriptionLayer,
-    saveGroundTruthText,
-    runSegmentOcr,
-    runPageOcr,
-    promoteSelectedSegmentToGroundTruth,
-    selectSegment,
-    navigateSegment,
   } = pairing;
 
-  // Latest selection, readable after an await: a save may resolve after the user
-  // has switched segments, and the strip must not be dismissed on the new one.
-  const selectedSegmentIdRef = useRef(selectedSegmentId);
-  selectedSegmentIdRef.current = selectedSegmentId;
+  const { resetDrawing } = draw;
+  const resetTools = useCallback(() => {
+    resetDrawing();
+    setActionsOpen(false);
+  }, [resetDrawing]);
+
+  const selection = useEditorSelection({
+    lines,
+    layoutLines: layout.lines,
+    pairing,
+    mutations: layoutMutations,
+    selectedVertexIndex,
+    setSelectedVertexIndex,
+    setStripDismissed,
+    setSelectedRegionId,
+    resetTools,
+  });
 
   const pairedIds = useMemo(() => segmentIdsWithGroundTruth(lines), [lines]);
   const stripVisible =
     Boolean(selectedSegment) && !stripDismissed && !canvasSettings.sideBySide;
-
-  function handleSelectSegment(lineId: string, additive = false) {
-    setSelectedRegionId(null);
-    setSelectedLineId(null);
-    setSaveMessage(null);
-    setStripDismissed(false);
-    setSelectedVertexIndex(null);
-    selectSegment(lineId, additive);
-  }
-
-  function handleRemoveSelectedVertex() {
-    if (!selectedSegmentId || selectedVertexIndex === null) return;
-    const segment = lines.find((line) => line.id === selectedSegmentId);
-    if (!segment) return;
-    const nextPoints = removePolygonVertex(segment.points, selectedVertexIndex);
-    if (!nextPoints) return;
-    setSelectedVertexIndex(null);
-    void updateSegmentPoints(selectedSegmentId, nextPoints);
-  }
-
   const runState = usePageEditorRunState({ segmenting, ocrRunning, ocrScope });
 
-  // A page turn keeps the editor on screen, so the hint is where it says the
-  // next page's Segments are still on their way.
-  const canvasHint = partLoading
-    ? partIndex
-      ? `Loading page ${partIndex}…`
-      : "Loading page…"
-    : runState.processingLabel
-      ? `${runState.processingLabel}…`
-      : drawMode === "polygon"
-        ? draftPolygon.length === 0
-          ? "Polygon: click to place the first corner · hold Space to pan"
-          : `Polygon: ${draftPolygon.length} point${draftPolygon.length === 1 ? "" : "s"} · click to add · double-click or Enter to finish`
-        : drawMode === "rectangle"
-          ? "Rectangle: drag to draw a segment · hold Space to pan"
-          : drawMode === "region"
-            ? "Region: drag around a folio or column · the segments inside join it"
-            : selectedSegment
-              ? selectedVertexIndex !== null
-                ? `Segment ${selectedSegmentNumber} · vertex ${selectedVertexIndex + 1} selected · Delete removes point · Esc deselects`
-                : `Segment ${selectedSegmentNumber} ${
-                    segmentHasGroundTruth(selectedSegment)
-                      ? "paired"
-                      : "unpaired"
-                  } · click edge to add · click handle to select · Esc deselects`
-              : "Drag to pan · scroll to zoom · Page Up/Down for pages · select a segment to edit it";
-
   function pickDrawMode(nextMode: DrawTool) {
-    setDrawMode((mode) => (mode === nextMode ? "none" : nextMode));
-    setDraftPolygon([]);
-    setDraftStart(null);
+    draw.toggleDrawMode(nextMode);
     setActionsOpen(false);
   }
-
-  const handlePanSelect = useCallback(() => {
-    setDrawMode("none");
-    setDraftPolygon([]);
-    setDraftStart(null);
-    setActionsOpen(false);
-    setVertexCommitSignal((value) => value + 1);
-    setSelectedVertexIndex(null);
-    setSelectedSegmentId(null);
-    setSelectedSegmentIds([]);
-    setSelectedLineId(null);
-    setSelectedRegionId(null);
-    setApprovedTextDraft("");
-    setStripDismissed(false);
-  }, [
-    setSelectedSegmentId,
-    setSelectedSegmentIds,
-    setSelectedLineId,
-    setSelectedRegionId,
-    setApprovedTextDraft,
-  ]);
 
   // G arms the Region tool and T toggles the side-by-side transcript pane.
   // Kept here rather than in the shared shortcut hook, with the same rule
@@ -429,6 +331,8 @@ export function PageEditorPlaceholderPage() {
   pickDrawModeRef.current = pickDrawMode;
   const canvasSettingsRef = useRef(canvasSettings);
   canvasSettingsRef.current = canvasSettings;
+  const selectedSegmentIdRef = useRef(selectedSegmentId);
+  selectedSegmentIdRef.current = selectedSegmentId;
   // Set when the keyboard opens the pane, read once by the pane as it mounts
   // so the selected row takes focus.
   const transcriptFocusOnOpenRef = useRef(false);
@@ -488,38 +392,27 @@ export function PageEditorPlaceholderPage() {
     };
   }, []);
 
-  function completeDraftPolygon() {
-    if (draftPolygon.length >= 3) {
-      void replaceWithManualLine("polygon", draftPolygon);
-    }
-    setDraftPolygon([]);
-  }
+  const completeDraftPolygon = () =>
+    draw.completeDraftPolygon(replaceWithManualLine);
 
-  useKeyboardShortcuts({
-    onDrawBox: () => pickDrawMode("rectangle"),
-    onDrawPolygon: () => pickDrawMode("polygon"),
-    onDelete:
-      selectedVertexIndex !== null && selectedSegmentId
-        ? () => handleRemoveSelectedVertex()
-        : selectedSegmentId || selectedLineId
-          ? () => {
-              if (selectedSegmentId) void deleteSelectedSegment();
-              if (selectedLineId) void resetSelectedLine();
-            }
-          : undefined,
-    onEscape: handlePanSelect,
+  useEditorShortcuts({
+    selectedSegmentId,
+    selectedLineId,
+    selectedVertexIndex,
+    onPickDrawMode: pickDrawMode,
+    onRemoveSelectedVertex: selection.removeSelectedVertex,
+    onDeleteSelection: selection.deleteSelection,
+    onEscape: selection.clearSelection,
     onMerge:
       pairing.selectedSegmentIds.length >= 2
         ? mergeSelectedSegments
         : undefined,
-    onUndo: () => void undoEdit(),
-    onRedo: () => void redoEdit(),
-    onEnter:
-      drawMode === "polygon" && draftPolygon.length >= 3
-        ? completeDraftPolygon
-        : undefined,
-    onPreviousPage: previousPartId ? goToPreviousPage : undefined,
-    onNextPage: nextPartId ? goToNextPage : undefined,
+    onUndo: () => void layoutMutations.undoEdit(),
+    onRedo: () => void layoutMutations.redoEdit(),
+    canCompletePolygon: draw.canCompletePolygon,
+    onCompletePolygon: completeDraftPolygon,
+    onPreviousPage: pageTurns.turnBack,
+    onNextPage: pageTurns.turnForward,
   });
 
   function handleCanvasSettingsChange(next: typeof canvasSettings) {
@@ -539,35 +432,63 @@ export function PageEditorPlaceholderPage() {
 
   const statusAlertProps = {
     submissionRefusal,
-    saveMessage,
-    transcriptionSaveMessage,
-    ocrMessage,
-    segmentMessage,
-    mutationError,
+    saveMessage: layoutMutations.saveMessage,
+    transcriptionSaveMessage: pairing.transcriptionSaveMessage,
+    ocrMessage: pairing.ocrMessage,
+    segmentMessage: layoutMutations.segmentMessage,
+    mutationError: layoutMutations.mutationError,
     pairingError,
     layoutError,
     lineError,
   };
 
-  const documentHref =
-    projectId && documentId
-      ? `/projects/${projectId}/documents/${documentId}`
-      : "/projects";
+  function handleDocumentWorkflowChange(workflow: DocumentWorkflow) {
+    setDocument((current) => (current ? { ...current, workflow } : current));
+    // Publishing is the one write in this editor that changes what a reader
+    // can reach at all, so the local copy above isn't enough: without this,
+    // the document list, detail page and public page would keep showing the
+    // old status.
+    if (projectId && documentId) {
+      invalidateAfter.documentUpdated(projectId, documentId);
+    }
+  }
 
-  const imageWidth = part?.width ?? 640;
-  const imageHeight = part?.height ?? 900;
+  const loaded = loadedPage(document, part);
+  const canvasHint = canvasHintFor({
+    partLoading,
+    partIndex,
+    processingLabel: runState.processingLabel,
+    drawMode: draw.drawMode,
+    draftPointCount: draw.draftPolygon.length,
+    selectedSegment,
+    selectedSegmentNumber,
+    selectedVertexIndex,
+  });
+
   const preferredModelLayerId =
-    selectedTranscriptionLayer?.kind === "model"
-      ? selectedTranscriptionLayer.id
+    pairing.selectedTranscriptionLayer?.kind === "model"
+      ? pairing.selectedTranscriptionLayer.id
       : null;
 
-  const canvasPaneContent = (
+  async function handleRectangleDrawn(end: LayoutPoint) {
+    if (draw.drawMode === "region") {
+      if (!draw.draftStart) return;
+      const rectangle = rectanglePoints(draw.draftStart, end);
+      draw.resetDrawing();
+      pairing.setSelectedSegmentId(null);
+      await regions.createRegion(rectangle);
+      return;
+    }
+    await draw.finishRectangle(end, replaceWithManualLine);
+  }
+
+  const canvasPaneContent = (page: DocumentPartResponse) => (
     <>
       <PageEditorCanvas
-        imageUrl={part?.image_url ?? ""}
+        imageUrl={page.image_url}
         imageAlt={`Page ${partIndex}`}
-        imageWidth={imageWidth}
-        imageHeight={imageHeight}
+        imageWidth={page.width ?? 640}
+        imageHeight={page.height ?? 900}
         layout={layout}
         lines={lines}
         selectedSegmentId={selectedSegmentId}
@@ -584,61 +505,30 @@ export function PageEditorPlaceholderPage() {
         onHoverSegment={setHoveredSegmentId}
         focusRequest={focusRequest}
         settings={canvasSettings}
-        drawingRectangle={drawMode === "rectangle"}
-        drawingRegion={drawMode === "region"}
-        drawingPolygon={drawMode === "polygon"}
-        draftStart={draftStart}
-        draftPolygon={draftPolygon}
-        onDraftStart={setDraftStart}
-        onRectangleDrawn={async (end) => {
-          if (!draftStart) return;
-          const rectangle = rectanglePoints(draftStart, end);
-          if (drawMode === "region") {
-            setDraftStart(null);
-            setDrawMode("none");
-            setSelectedSegmentId(null);
-            await regions.createRegion(rectangle);
-            return;
-          }
-          await replaceWithManualLine("rectangle", rectangle);
-          setDraftStart(null);
-        }}
-        onPolygonPoint={(point) =>
-          setDraftPolygon((current) => [...current, point])
-        }
+        drawingRectangle={draw.drawMode === "rectangle"}
+        drawingRegion={draw.drawMode === "region"}
+        drawingPolygon={draw.drawMode === "polygon"}
+        draftStart={draw.draftStart}
+        draftPolygon={draw.draftPolygon}
+        onDraftStart={draw.setDraftStart}
+        onRectangleDrawn={handleRectangleDrawn}
+        onPolygonPoint={draw.addPolygonPoint}
         onPolygonComplete={completeDraftPolygon}
-        onSelectLine={(lineId) => {
-          const selectedLine = layout.lines.find((line) => line.id === lineId);
-          setSelectedLineId(lineId);
-          setSelectedSegmentId(null);
-          setSelectedVertexIndex(null);
-          setSelectedLineSnapshot({
-            baseline: selectedLine?.baseline,
-            mask: selectedLine?.mask,
-          });
-        }}
-        onSelectSegment={handleSelectSegment}
+        onSelectLine={selection.selectLine}
+        onSelectSegment={selection.selectSegment}
         selectedRegionId={selectedRegionId}
-        onSelectRegion={(regionId) => {
-          setSelectedSegmentId(null);
-          setSelectedLineId(null);
-          setSelectedVertexIndex(null);
-          setSelectedRegionId(regionId);
-        }}
+        onSelectRegion={selection.selectRegion}
         segmentVertexEditEnabled={
-          drawMode === "none" && Boolean(selectedSegmentId)
+          draw.drawMode === "none" && Boolean(selectedSegmentId)
         }
-        onSelectTool={handlePanSelect}
+        onSelectTool={selection.clearSelection}
         onPickDrawMode={pickDrawMode}
-        canDelete={Boolean(selectedSegmentId || selectedLineId)}
-        onDeleteSelected={() => {
-          if (selectedSegmentId) void deleteSelectedSegment();
-          if (selectedLineId) void resetSelectedLine();
-        }}
+        canDelete={selection.hasSelection}
+        onDeleteSelected={selection.deleteSelection}
         selectedVertexIndex={selectedVertexIndex}
         onSelectedVertexChange={setSelectedVertexIndex}
-        commitSignal={vertexCommitSignal}
-        onSegmentPointsChange={updateSegmentPoints}
+        commitSignal={selection.vertexCommitSignal}
+        onSegmentPointsChange={layoutMutations.updateSegmentPoints}
       />
       <PageEditorRegionPanel
         regions={layout.blocks}
@@ -655,35 +545,18 @@ export function PageEditorPlaceholderPage() {
         onClose={() => setSelectedRegionId(null)}
         error={regions.regionError}
       />
-      <p
-        className={`pe-canvas-hint${runState.processingKind ? " pe-canvas-hint--processing" : ""}`}
-        id="canvas-hint"
-        role="status"
-      >
-        {canvasHint}
-      </p>
-      <div className="pe-seg-legend" aria-label="Segment pairing">
-        <div className="pe-seg-legend__item">
-          <span className="pe-seg-legend__swatch pe-seg-legend__swatch--paired" />
-          paired
-        </div>
-        <div className="pe-seg-legend__item">
-          <span className="pe-seg-legend__swatch pe-seg-legend__swatch--unpaired" />
-          unpaired
-        </div>
-      </div>
+      <PageEditorCanvasHint
+        hint={canvasHint}
+        processing={Boolean(runState.processingKind)}
+      />
     </>
   );
 
   return (
     <PageEditorShell
       loading={loading}
-      backHref={documentHref}
-      unavailableDescription={
-        error || !document || !part
-          ? (error ?? "This document part was not found.")
-          : null
-      }
+      backHref={documentHrefFor(projectId, documentId)}
+      unavailableDescription={unavailableDescriptionFor(error, document, part)}
       showStatusAlerts={hasPageEditorStatusAlerts(statusAlertProps)}
       statusAlerts={<PageEditorStatusAlerts {...statusAlertProps} />}
       inferenceBanner={
@@ -696,35 +569,24 @@ export function PageEditorPlaceholderPage() {
         />
       }
       toolbar={
-        document && part ? (
+        loaded ? (
           <PageEditorToolbar
             projectId={projectId}
             documentId={documentId}
-            partId={part.id}
-            document={document}
+            partId={loaded.part.id}
+            document={loaded.document}
             partIndex={partIndex ?? 1}
             pageCount={parts.length}
-            hasPreviousPart={Boolean(previousPartId)}
-            hasNextPart={Boolean(nextPartId)}
-            onPreviousPart={goToPreviousPage}
-            onNextPart={goToNextPage}
+            hasPreviousPart={pageTurns.hasPreviousPage}
+            hasNextPart={pageTurns.hasNextPage}
+            onPreviousPart={pageTurns.goToPreviousPage}
+            onNextPart={pageTurns.goToNextPage}
             lines={lines}
             pairingProgress={pairingProgress}
             selectedSegmentId={selectedSegmentId}
             textLines={textLines}
-            onPairTextLine={pairTextLine}
-            onDocumentWorkflowChange={(workflow) => {
-              setDocument((current) =>
-                current ? { ...current, workflow } : current,
-              );
-              // Publishing is the one write in this editor that changes what a
-              // reader can reach at all, so the local copy above isn't
-              // enough: without this, the document list, detail page and
-              // public page would keep showing the old status.
-              if (projectId && documentId) {
-                invalidateAfter.documentUpdated(projectId, documentId);
-              }
-            }}
+            onPairTextLine={pairing.pairTextLine}
+            onDocumentWorkflowChange={handleDocumentWorkflowChange}
             actionsOpen={actionsOpen}
             onActionsOpenChange={setActionsOpen}
             segmenting={segmenting}
@@ -736,9 +598,9 @@ export function PageEditorPlaceholderPage() {
             segmentModels={segmentModels}
             selectedSegmentModelId={selectedSegmentModelId}
             onSelectedSegmentModelIdChange={setSelectedSegmentModelId}
-            onRunAutoSegment={runAutoSegment}
-            onRunSegmentOcr={runSegmentOcr}
-            onRunPageOcr={runPageOcr}
+            onRunAutoSegment={layoutMutations.runAutoSegment}
+            onRunSegmentOcr={pairing.runSegmentOcr}
+            onRunPageOcr={pairing.runPageOcr}
             transcriptionPdfOpen={transcriptionPdfOpen}
             onOpenTranscriptionPdf={openTranscriptionPdf}
             onCloseTranscriptionPdf={() => setTranscriptionPdfOpen(false)}
@@ -762,22 +624,14 @@ export function PageEditorPlaceholderPage() {
         ) : null
       }
     >
-      {document && part && (
+      {loaded && (
         <div className="pe-workspace">
           <div className="pe-body">
-            {parts.length > 1 &&
-              (pageRailOpen ? (
-                <PageEditorPageRail
-                  parts={parts}
-                  activePartId={partId}
-                  onSelectPart={goToPart}
-                  onCollapse={() => handlePageRailOpenChange(false)}
-                />
-              ) : (
-                <PageEditorPageRailTab
-                  onExpand={() => handlePageRailOpenChange(true)}
-                />
-              ))}
+            <PageEditorPageRailSlot
+              parts={parts}
+              activePartId={partId}
+              onSelectPart={goToPart}
+            />
             <div className="pe-canvas-pane">
               {/* Always the split pane, collapsed while the transcript is
                   closed: the canvas stays mounted, so T keeps zoom and pan. */}
@@ -790,7 +644,7 @@ export function PageEditorPlaceholderPage() {
                     splitRatio: ratio,
                   })
                 }
-                left={canvasPaneContent}
+                left={canvasPaneContent(loaded.part)}
                 right={
                   canvasSettings.sideBySide && (
                     <PageEditorTranscriptEditor
@@ -799,13 +653,13 @@ export function PageEditorPlaceholderPage() {
                       selectedSegmentId={selectedSegmentId}
                       hoveredSegmentId={hoveredSegmentId}
                       preferredLayerId={preferredModelLayerId}
-                      onSelectSegment={handleSelectSegment}
+                      onSelectSegment={selection.selectSegment}
                       onHoverSegment={setHoveredSegmentId}
                       onFocusSegment={(id) =>
                         setFocusRequest({ segmentId: id, nonce: Date.now() })
                       }
-                      onCommitText={commitLineText}
-                      onReloadLine={reloadLineText}
+                      onCommitText={pairing.commitLineText}
+                      onReloadLine={pairing.reloadLineText}
                       onReturnToCanvas={() =>
                         window.document
                           .querySelector<SVGElement>(
@@ -830,82 +684,50 @@ export function PageEditorPlaceholderPage() {
                 }
               />
             </div>
-            {transcriptionPdfOpen && projectId && documentId && partId && (
-              <PageEditorTranscriptionPdfWrap
-                projectId={projectId}
-                documentId={documentId}
-                partId={partId}
-                downloadFilename={`${document.name.replace(/\s+/g, "_")}_page_${partIndex}_transcription.pdf`}
-                refreshKey={transcriptionPdfRefreshKey}
-                onClose={() => setTranscriptionPdfOpen(false)}
-                onRefresh={refreshTranscriptionPdf}
-              />
-            )}
+            <PageEditorTranscriptionPdfSlot
+              open={transcriptionPdfOpen}
+              projectId={projectId}
+              documentId={documentId}
+              partId={partId}
+              downloadFilename={`${loaded.document.name.replace(/\s+/g, "_")}_page_${partIndex}_transcription.pdf`}
+              refreshKey={transcriptionPdfRefreshKey}
+              onClose={() => setTranscriptionPdfOpen(false)}
+              onRefresh={refreshTranscriptionPdf}
+            />
           </div>
 
           {selectedLineId && (
-            <div className="pe-baseline-bar">
-              <span>Selected baseline</span>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => moveSelectedBaseline(5)}
-              >
-                Move baseline down
-              </button>
-              <button
-                type="button"
-                className="btn btn--active btn--sm"
-                onClick={() => void saveSelectedLine()}
-              >
-                Save layout
-              </button>
-              <button
-                type="button"
-                className="btn btn--danger-ghost btn--sm"
-                onClick={() => void resetSelectedLine()}
-              >
-                Reset layout
-              </button>
-            </div>
+            <PageEditorBaselineBar
+              onMoveDown={() => layoutMutations.moveSelectedBaseline(5)}
+              onSave={() => void layoutMutations.saveSelectedLine()}
+              onReset={() => void layoutMutations.resetSelectedLine()}
+            />
           )}
 
           <PageEditorTranscriptionStrip
             visible={stripVisible}
             transcriptionLayers={transcriptionLayers}
             selectedTranscriptionLayerId={selectedTranscriptionLayerId}
-            onSelectTranscriptionLayer={selectTranscriptionLayer}
+            onSelectTranscriptionLayer={pairing.selectTranscriptionLayer}
             selectedSegmentNumber={selectedSegmentNumber}
             selectedSegment={selectedSegment}
-            selectedTranscriptionLayer={selectedTranscriptionLayer}
-            approvedTextDraft={approvedTextDraft}
-            onApprovedTextDraftChange={setApprovedTextDraft}
-            onSaveGroundTruthText={async () => {
-              const savedSegmentId = selectedSegmentId;
-              if (
-                (await saveGroundTruthText()) &&
-                selectedSegmentIdRef.current === savedSegmentId
-              ) {
-                setStripDismissed(true);
-              }
-            }}
-            onPromoteSelectedSegmentToGroundTruth={
-              promoteSelectedSegmentToGroundTruth
+            selectedTranscriptionLayer={pairing.selectedTranscriptionLayer}
+            approvedTextDraft={pairing.approvedTextDraft}
+            onApprovedTextDraftChange={pairing.setApprovedTextDraft}
+            onSaveGroundTruthText={() =>
+              selection.dismissAfterSave(pairing.saveGroundTruthText)
             }
-            onRunSegmentOcr={runSegmentOcr}
-            onNavigateSegment={navigateSegment}
+            onPromoteSelectedSegmentToGroundTruth={
+              pairing.promoteSelectedSegmentToGroundTruth
+            }
+            onRunSegmentOcr={pairing.runSegmentOcr}
+            onNavigateSegment={pairing.navigateSegment}
             onDismiss={() => setStripDismissed(true)}
             lines={lines}
             selectedSegmentId={selectedSegmentId}
-            onSaveApprovedText={async () => {
-              const savedSegmentId = selectedSegmentId;
-              if (
-                (await saveApprovedText()) &&
-                selectedSegmentIdRef.current === savedSegmentId
-              ) {
-                setStripDismissed(true);
-              }
-            }}
+            onSaveApprovedText={() =>
+              selection.dismissAfterSave(pairing.saveApprovedText)
+            }
             transcribeModels={transcribeModels}
             selectedTranscribeModelId={selectedTranscribeModelId}
             onSelectedTranscribeModelIdChange={setSelectedTranscribeModelId}

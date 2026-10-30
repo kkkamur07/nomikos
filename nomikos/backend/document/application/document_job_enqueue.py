@@ -22,6 +22,7 @@ row: a job created for a host nobody claims from has no terminal outcome.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +52,14 @@ def _decide_execution(
     execution: ExecutionRequest, model: InferenceModel | None, *, task: InferenceTask
 ) -> ExecutionDecision:
     return choose_execution_target(execution, eligible=eligible_targets_for_model(model, task=task))
+
+
+@dataclass(frozen=True)
+class _ResolvedModel:
+    model: InferenceModel | None
+    model_id: UUID | None
+    binding_id: UUID | None
+    params: dict[str, object]
 
 
 class DocumentJobEnqueueService:
@@ -90,33 +99,16 @@ class DocumentJobEnqueueService:
                 raise NotFoundError("Line not found")
             if not selected_ids:
                 raise ValidationError("At least one line must be selected for transcription")
-        binding_id: UUID | None = None
-        selected_model_id = model_id
-        selected_model: InferenceModel | None = None
-        ml_params: dict = {}
-        if selected_model_id is not None:
-            selected_model = await self._inference_models.get_model_for_task(
-                session, selected_model_id, InferenceTask.transcribe
-            )
-            ml_params = dict(selected_model.default_params or {})
-        else:
-            try:
-                resolved = await self._inference_models.resolve_for_part(
-                    session,
-                    user,
-                    project_id,
-                    document_id,
-                    part_id,
-                    task=InferenceTask.transcribe,
-                )
-            except NotFoundError:
-                raise ValidationError(NO_TRANSCRIBE_MODEL_MESSAGE) from None
-            selected_model = resolved.model
-            selected_model_id = resolved.model.id
-            binding_id = resolved.binding.id
-            ml_params = dict(resolved.effective_params)
-        decision = _decide_execution(execution, selected_model, task=InferenceTask.transcribe)
-        payload: dict = {"ml_params": ml_params, "execution": decision.target.value}
+        resolved = await self._resolve_model(
+            session, user, project_id, document_id, part_id, model_id, InferenceTask.transcribe
+        )
+        if resolved.model is None:
+            raise ValidationError(NO_TRANSCRIBE_MODEL_MESSAGE)
+        decision = _decide_execution(execution, resolved.model, task=InferenceTask.transcribe)
+        payload: dict[str, object] = {
+            "ml_params": resolved.params,
+            "execution": decision.target.value,
+        }
         if line_ids is not None:
             payload["line_ids"] = [str(line_id) for line_id in line_ids]
         job = Job(
@@ -125,8 +117,8 @@ class DocumentJobEnqueueService:
             user_id=user.id,
             document_id=document.id,
             document_part_id=part.id,
-            model_id=selected_model_id,
-            binding_id=binding_id,
+            model_id=resolved.model_id,
+            binding_id=resolved.binding_id,
             execution_target=decision.target,
             preferred_execution_target=decision.preferred,
             payload=payload,
@@ -146,49 +138,24 @@ class DocumentJobEnqueueService:
         *,
         execution: ExecutionRequest,
         model_id: UUID | None = None,
-        ml_params: dict | None = None,
+        ml_params: dict[str, object] | None = None,
     ) -> Job:
         context = await self._access.require_part(session, user, project_id, document_id, part_id)
         document, part = context.document, context.part
-        binding_id: UUID | None = None
-        selected_model_id = model_id
-        selected_model: InferenceModel | None = None
-        effective_params: dict = dict(ml_params or {})
-        if selected_model_id is not None:
-            selected_model = await self._inference_models.get_model_for_task(
-                session, selected_model_id, InferenceTask.segment
-            )
-            resolved_params = dict(selected_model.default_params or {})
-            resolved_params.update(effective_params)
-            effective_params = resolved_params
-        else:
-            try:
-                resolved = await self._inference_models.resolve_for_part(
-                    session,
-                    user,
-                    project_id,
-                    document_id,
-                    part_id,
-                    task=InferenceTask.segment,
-                )
-            except NotFoundError:
-                selected_model_id = None
-            else:
-                selected_model = resolved.model
-                selected_model_id = resolved.model.id
-                binding_id = resolved.binding.id
-                merged_params = dict(resolved.effective_params)
-                merged_params.update(effective_params)
-                effective_params = merged_params
-        decision = _decide_execution(execution, selected_model, task=InferenceTask.segment)
+        resolved = await self._resolve_model(
+            session, user, project_id, document_id, part_id, model_id, InferenceTask.segment
+        )
+        # Caller-supplied params override the model's defaults key by key.
+        effective_params = {**resolved.params, **(ml_params or {})}
+        decision = _decide_execution(execution, resolved.model, task=InferenceTask.segment)
         job = Job(
             type=JobType.segment,
             status=JobStatus.pending,
             user_id=user.id,
             document_id=document.id,
             document_part_id=part.id,
-            model_id=selected_model_id,
-            binding_id=binding_id,
+            model_id=resolved.model_id,
+            binding_id=resolved.binding_id,
             execution_target=decision.target,
             preferred_execution_target=decision.preferred,
             payload={"ml_params": effective_params, "execution": decision.target.value},
@@ -197,3 +164,30 @@ class DocumentJobEnqueueService:
         await session.commit()
         await session.refresh(job)
         return job
+
+    async def _resolve_model(
+        self,
+        session: AsyncSession,
+        user: User,
+        project_id: UUID,
+        document_id: UUID,
+        part_id: UUID,
+        model_id: UUID | None,
+        task: InferenceTask,
+    ) -> _ResolvedModel:
+        """The explicit model and its defaults, else the nearest binding, else none."""
+        if model_id is not None:
+            model = await self._inference_models.get_model_for_task(session, model_id, task)
+            return _ResolvedModel(model, model_id, None, dict(model.default_params or {}))
+        try:
+            resolved = await self._inference_models.resolve_for_part(
+                session, user, project_id, document_id, part_id, task=task
+            )
+        except NotFoundError:
+            return _ResolvedModel(None, None, None, {})
+        return _ResolvedModel(
+            resolved.model,
+            resolved.model.id,
+            resolved.binding.id,
+            dict(resolved.effective_params),
+        )

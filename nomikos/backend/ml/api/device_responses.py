@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from backend.ml.api.device_schemas import DeviceResponse, PairingRequestResponse
-from backend.ml.application.device_service import DevicePairingService
+from backend.ml.application.pairing_service import DevicePairingService
 from backend.ml.infrastructure.device_orm_models import HelperDevice, HelperPairing
 
 

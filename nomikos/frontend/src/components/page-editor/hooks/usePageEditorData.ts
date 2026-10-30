@@ -1,21 +1,13 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type DocumentPartResponse,
   type DocumentWithPartsResponse,
-  type InferenceModelResponse,
   type LineResponse,
   type PartLayoutResponse,
   type TranscriptionLayerResponse,
 } from "../../../api/client";
+import type { components } from "../../../api/schema";
 import { ApiError } from "../../../api/errors";
 import { queryClient, taggedMeta } from "../../../api/queryClient";
 import { resourceTags } from "../../../api/resources";
@@ -25,37 +17,31 @@ import {
   redirectToLogin,
 } from "../../../auth/session";
 import { useBackgroundJobs } from "../../../context/BackgroundJobsContext";
-import { resolveSegmentModelId } from "../segmentModelChoice";
-import { resolveTranscribeModelId } from "../transcribeModelChoice";
+import type { SetState } from "./editorHookTypes";
+import {
+  fetchPartContent,
+  type ApplyIfCurrent,
+  type PartContentSetters,
+} from "./fetchPartContent";
+import { useEditorModels } from "./useEditorModels";
 
+type PageTranscriptionTextLineResponse =
+  components["schemas"]["PageTranscriptionTextLineResponse"];
+type PairingProgressResponse = components["schemas"]["PairingProgressResponse"];
+
+const EMPTY_LAYOUT: PartLayoutResponse = { blocks: [], lines: [] };
+const NO_PAIRING: PairingProgressResponse = {
+  paired_lines: 0,
+  total_lines: 0,
+  percent: 0,
+};
+
+/** A 401 never reaches here: the caller redirects to login first. */
 function accessMessage(error: ApiError): string {
-  if (error.status === 401) {
-    redirectToLogin();
-    return "";
-  }
   if (error.status === 403 || error.status === 404) {
     return "This page is not available to your account.";
   }
   return error.message;
-}
-
-/**
- * The banner for one part of the page that failed to load while the rest of it
- * succeeded. 403 and 404 both mean "not yours to see", which reads better as the
- * feature-specific sentence than as the raw API message.
- */
-function partialLoadMessage(
-  error: unknown,
-  unavailable: string,
-  fallback: string,
-): string {
-  if (
-    error instanceof ApiError &&
-    (error.status === 403 || error.status === 404)
-  ) {
-    return unavailable;
-  }
-  return error instanceof Error ? error.message : fallback;
 }
 
 function sortedParts(
@@ -80,305 +66,48 @@ function canReuseDocument(
 }
 
 /**
- * The model pickers' contents for one page. The catalog is the
- * document-level half and is only refetched when the caller passes it; the
- * bindings are resolved for every page, since they can be bound per part.
- *
- * Both pickers read the one `listInferenceModels()` call: the catalog is
- * filtered by task, never fetched twice.
+ * The part a page turn lands on, when the document on screen already lists
+ * it; null means a cold load of a document this hook has not read yet.
  */
-async function loadEditorModels(
+function carriedPartFor(
+  document: DocumentWithPartsResponse | null,
   projectId: string,
   documentId: string,
   partId: string,
-  catalog: Promise<InferenceModelResponse[]> | null,
-): Promise<{
-  transcribeModels: InferenceModelResponse[] | null;
-  resolvedTranscribeModel: InferenceModelResponse | null;
-  segmentModels: InferenceModelResponse[] | null;
-  resolvedSegmentModel: InferenceModelResponse | null;
-}> {
-  let catalogModels: InferenceModelResponse[] | null = null;
-  if (catalog) {
-    try {
-      catalogModels = await catalog;
-    } catch {
-      catalogModels = [];
-    }
-  }
-  const transcribeModels = catalogModels
-    ? catalogModels.filter((model) => model.task === "transcribe")
-    : null;
-  const segmentModels = catalogModels
-    ? catalogModels.filter((model) => model.task === "segment")
-    : null;
-
-  const [transcribeResult, segmentResult] = await Promise.allSettled([
-    api.resolvePartModelBinding(projectId, documentId, partId, "transcribe"),
-    api.resolvePartModelBinding(projectId, documentId, partId, "segment"),
-  ]);
-  return {
-    transcribeModels,
-    resolvedTranscribeModel:
-      transcribeResult.status === "fulfilled"
-        ? transcribeResult.value.model
-        : null,
-    segmentModels,
-    resolvedSegmentModel:
-      segmentResult.status === "fulfilled" ? segmentResult.value.model : null,
-  };
+): DocumentPartResponse | null {
+  if (!canReuseDocument(document, projectId, documentId)) return null;
+  return resolvePart(document, partId);
 }
 
-type PartContentSetters = {
-  setLayout: Dispatch<SetStateAction<PartLayoutResponse>>;
-  setLayoutError: Dispatch<SetStateAction<string | null>>;
-  setLines: Dispatch<SetStateAction<LineResponse[]>>;
-  setLineError: Dispatch<SetStateAction<string | null>>;
-  setTranscriptionLayers: Dispatch<
-    SetStateAction<TranscriptionLayerResponse[]>
-  >;
-  setGroundTruthTranscriptionId: Dispatch<SetStateAction<string | null>>;
-  setSelectedTranscriptionLayerId: Dispatch<SetStateAction<string | null>>;
-  setPairingError: Dispatch<SetStateAction<string | null>>;
-  setTextLines: Dispatch<
-    SetStateAction<
-      { order: number; text: string; paired_line_id: string | null }[]
-    >
-  >;
-  setPairingProgress: Dispatch<
-    SetStateAction<{
-      paired_lines: number;
-      total_lines: number;
-      percent: number;
-    }>
-  >;
-  setTranscribeModels: Dispatch<SetStateAction<InferenceModelResponse[]>>;
-  setSelectedTranscribeModelId: Dispatch<SetStateAction<string | null>>;
-  setSegmentModels: Dispatch<SetStateAction<InferenceModelResponse[]>>;
-  setSelectedSegmentModelId: Dispatch<SetStateAction<string | null>>;
-};
-
 /**
- * The layout/lines/transcriptions/pairing/models read for one part.
- *
- * Shared by the route-keyed mount effect below and the job-completion refresh
- * effect: the first runs it once resolving a fresh part, the second re-runs it
- * when a segmentation or OCR job finishes for the part already on screen.
- * `apply` is the caller's own cancelled/stale guard - this function does not
- * know or care which one it was given.
- *
- * `documentLevel` is what separates a page turn from a load. The transcription
- * layers and the model catalog belong to the document and do not change when
- * the page does, so a page turn fetches only what is the page's own: its
- * layout, its Segments, its pairing and its model binding. A cold load and a
- * finished job (which may have written a new layer) fetch everything.
- *
- * `segmentChoiceIsExplicitRef` is what keeps an explicit picker choice for
- * the rest of the document. The picker's change handler sets it, a
- * document-level load clears it, and the selection below reads it at apply
- * time so a choice made while the read is in flight still wins.
+ * The document for a route. Paging through a document re-runs the route
+ * effect for every part, and the document itself does not change between
+ * them; the cache is what stops each page turn from refetching it.
  */
-async function fetchPartContent(
+async function documentFor(
   projectId: string,
   documentId: string,
-  partId: string,
-  apply: <T>(setter: (value: T) => void, value: T) => void,
-  setters: PartContentSetters,
-  {
-    documentLevel,
-    segmentChoiceIsExplicitRef,
-    transcribeChoiceIsExplicitRef,
-  }: {
-    documentLevel: boolean;
-    segmentChoiceIsExplicitRef?: { current: boolean };
-    transcribeChoiceIsExplicitRef?: { current: boolean };
-  },
-): Promise<void> {
-  const [
-    layoutResult,
-    linesResult,
-    transcriptionsResult,
-    pairingResult,
-    modelsResult,
-  ] = await Promise.allSettled([
-    api.getPartLayout(projectId, documentId, partId),
-    api.listPartLines(projectId, documentId, partId),
-    documentLevel
-      ? api.listTranscriptions(projectId, documentId)
-      : Promise.resolve(null),
-    api.getPagePairing(projectId, documentId, partId),
-    loadEditorModels(
-      projectId,
-      documentId,
-      partId,
-      documentLevel ? api.listInferenceModels() : null,
-    ),
-  ]);
-
-  if (layoutResult.status === "fulfilled") {
-    apply(setters.setLayout, layoutResult.value ?? { blocks: [], lines: [] });
-  } else {
-    const err = layoutResult.reason;
-    if (isUnauthorized(err)) {
-      redirectToLogin();
-      return;
-    }
-    apply(
-      setters.setLayoutError,
-      partialLoadMessage(
-        err,
-        "Layout editing is not available for this page.",
-        "Failed to load layout.",
-      ),
-    );
+  initialDocument: DocumentWithPartsResponse | null | undefined,
+): Promise<DocumentWithPartsResponse> {
+  if (canReuseDocument(initialDocument, projectId, documentId)) {
+    return initialDocument;
   }
+  return queryClient.fetchQuery({
+    queryKey: ["document", projectId, documentId],
+    queryFn: () => api.getDocument(projectId, documentId),
+    meta: taggedMeta([resourceTags.document(projectId, documentId)]),
+  });
+}
 
-  if (linesResult.status === "fulfilled") {
-    apply(setters.setLines, linesResult.value);
-  } else {
-    const err = linesResult.reason;
-    if (isUnauthorized(err)) {
-      redirectToLogin();
-      return;
-    }
-    apply(
-      setters.setLineError,
-      partialLoadMessage(
-        err,
-        "Segment geometry is not available for this page.",
-        "Failed to load Segment geometry.",
-      ),
-    );
+/** The error a failed route load shows, or null after a redirect to login. */
+function routeLoadMessage(error: unknown): string | null {
+  if (isUnauthorized(error)) {
+    redirectToLogin();
+    return null;
   }
-
-  if (transcriptionsResult.status === "fulfilled") {
-    const layers = transcriptionsResult.value;
-    if (layers !== null) {
-      const groundTruth = layers.find((layer) => layer.kind === "ground_truth");
-      apply(setters.setTranscriptionLayers, layers);
-      apply(setters.setGroundTruthTranscriptionId, groundTruth?.id ?? null);
-      apply(
-        setters.setSelectedTranscriptionLayerId,
-        groundTruth?.id ?? layers[0]?.id ?? null,
-      );
-    }
-  } else {
-    const err = transcriptionsResult.reason;
-    if (isUnauthorized(err)) {
-      redirectToLogin();
-      return;
-    }
-    apply(
-      setters.setPairingError,
-      partialLoadMessage(
-        err,
-        "Pairing is not available for this page.",
-        "Failed to load Pairing progress.",
-      ),
-    );
-  }
-
-  if (pairingResult.status === "fulfilled") {
-    apply(setters.setTextLines, pairingResult.value.text_lines);
-    apply(setters.setPairingProgress, pairingResult.value.pairing_progress);
-  } else {
-    const err = pairingResult.reason;
-    if (isUnauthorized(err)) {
-      redirectToLogin();
-      return;
-    }
-    apply(
-      setters.setPairingError,
-      partialLoadMessage(
-        err,
-        "Pairing is not available for this page.",
-        "Failed to load Pairing progress.",
-      ),
-    );
-  }
-
-  if (modelsResult.status === "fulfilled") {
-    const {
-      transcribeModels,
-      resolvedTranscribeModel,
-      segmentModels,
-      resolvedSegmentModel,
-    } = modelsResult.value;
-    // On a page turn the catalogs are null and the catalogs already on screen
-    // are kept; a bound model still joins its catalog if the catalog does not
-    // list it.
-    apply(setters.setTranscribeModels, (current: InferenceModelResponse[]) => {
-      const catalog = transcribeModels ?? current;
-      return resolvedTranscribeModel &&
-        !catalog.some((model) => model.id === resolvedTranscribeModel.id)
-        ? [resolvedTranscribeModel, ...catalog]
-        : catalog;
-    });
-    // Same order as the segment picker: an explicit choice wins for the rest
-    // of the document, then the binding, then the first catalog row. On a
-    // page turn an explicit choice keeps the current value, else the binding
-    // if any else the current value is kept.
-    apply(setters.setSelectedTranscribeModelId, (current: string | null) => {
-      const persisted = transcribeChoiceIsExplicitRef?.current ? current : null;
-      if (!transcribeModels) {
-        if (persisted) return persisted;
-        return resolvedTranscribeModel ? resolvedTranscribeModel.id : current;
-      }
-      const catalog =
-        resolvedTranscribeModel &&
-        !transcribeModels.some(
-          (model) => model.id === resolvedTranscribeModel.id,
-        )
-          ? [resolvedTranscribeModel, ...transcribeModels]
-          : transcribeModels;
-      return resolveTranscribeModelId(
-        catalog,
-        persisted,
-        resolvedTranscribeModel?.id ?? null,
-      );
-    });
-    apply(setters.setSegmentModels, (current: InferenceModelResponse[]) => {
-      const catalog = segmentModels ?? current;
-      return resolvedSegmentModel &&
-        !catalog.some((model) => model.id === resolvedSegmentModel.id)
-        ? [resolvedSegmentModel, ...catalog]
-        : catalog;
-    });
-    // There is no empty choice here: one catalog row is always selected, so
-    // a new catalog row must not silently change what runs. An explicit
-    // choice wins over bindings for the rest of the document: on a
-    // document-level load the flag was cleared before this read, so the
-    // binding if any else the canonical row else the first row applies; on
-    // a page turn an explicit choice keeps the current value, else the
-    // binding if any else the current value is kept.
-    apply(setters.setSelectedSegmentModelId, (current: string | null) => {
-      const persisted = segmentChoiceIsExplicitRef?.current ? current : null;
-      if (!segmentModels) {
-        if (persisted) return persisted;
-        return resolvedSegmentModel ? resolvedSegmentModel.id : current;
-      }
-      const catalog =
-        resolvedSegmentModel &&
-        !segmentModels.some((model) => model.id === resolvedSegmentModel.id)
-          ? [resolvedSegmentModel, ...segmentModels]
-          : segmentModels;
-      return resolveSegmentModelId(
-        catalog,
-        persisted,
-        resolvedSegmentModel?.id ?? null,
-      );
-    });
-  } else {
-    apply(setters.setTranscribeModels, []);
-    apply(setters.setSelectedTranscribeModelId, null);
-    apply(setters.setSegmentModels, []);
-    // The catalog failed to load: keep whatever was selected (null on a
-    // fresh load), so the request omits the model id exactly as before.
-    apply(
-      setters.setSelectedSegmentModelId,
-      (current: string | null) => current,
-    );
-  }
+  return error instanceof ApiError
+    ? accessMessage(error)
+    : "Failed to load page.";
 }
 
 export function usePageEditorData(
@@ -392,10 +121,7 @@ export function usePageEditorData(
     null,
   );
   const [part, setPart] = useState<DocumentPartResponse | null>(null);
-  const [layout, setLayout] = useState<PartLayoutResponse>({
-    blocks: [],
-    lines: [],
-  });
+  const [layout, setLayout] = useState<PartLayoutResponse>(EMPTY_LAYOUT);
   const [lines, setLines] = useState<LineResponse[]>([]);
   const [loading, setLoading] = useState(true);
   /**
@@ -417,60 +143,45 @@ export function usePageEditorData(
     string | null
   >(null);
   const [textLines, setTextLines] = useState<
-    { order: number; text: string; paired_line_id: string | null }[]
+    PageTranscriptionTextLineResponse[]
   >([]);
-  const [pairingProgress, setPairingProgress] = useState({
-    paired_lines: 0,
-    total_lines: 0,
-    percent: 0,
-  });
+  const [pairingProgress, setPairingProgress] = useState(NO_PAIRING);
   const [pairingError, setPairingError] = useState<string | null>(null);
-  const [transcribeModels, setTranscribeModels] = useState<
-    InferenceModelResponse[]
-  >([]);
-  const [selectedTranscribeModelId, setSelectedTranscribeModelId] = useState<
-    string | null
-  >(null);
-  const [segmentModels, setSegmentModels] = useState<InferenceModelResponse[]>(
-    [],
-  );
-  /**
-   * One of the `segmentModels` ids once the catalog loads: the picker has
-   * no empty entry, so the segment request always carries it. Null only
-   * while the catalog is empty or failed to load, when the select is
-   * disabled and `model_id` is not sent. A page turn keeps an explicit
-   * choice (see fetchPartContent).
-   */
-  const [selectedSegmentModelId, setSelectedSegmentModelId] = useState<
-    string | null
-  >(null);
+  const models = useEditorModels();
+  const {
+    setTranscribeModels,
+    setSelectedTranscribeModelId,
+    setSegmentModels,
+    setSelectedSegmentModelId,
+    segmentChoiceIsExplicit,
+    transcribeChoiceIsExplicit,
+    forgetModelChoices,
+  } = models;
 
-  /**
-   * Whether the segment picker choice came from the user. Set by the
-   * picker's change handler, cleared on a document-level load. While set,
-   * page turns keep the choice instead of applying the next part's binding.
-   */
-  const segmentChoiceIsExplicitRef = useRef(false);
-  const handleSelectedSegmentModelIdChange = useCallback(
-    (value: SetStateAction<string | null>) => {
-      segmentChoiceIsExplicitRef.current = true;
-      setSelectedSegmentModelId(value);
-    },
-    [],
-  );
-
-  /**
-   * Whether the transcribe picker choice came from the user. Same contract as
-   * the segment one above: set by the picker's change handler, cleared on a
-   * document-level load, read when a read lands so an in-flight choice wins.
-   */
-  const transcribeChoiceIsExplicitRef = useRef(false);
-  const handleSelectedTranscribeModelIdChange = useCallback(
-    (value: SetStateAction<string | null>) => {
-      transcribeChoiceIsExplicitRef.current = true;
-      setSelectedTranscribeModelId(value);
-    },
-    [],
+  /** Every setter `fetchPartContent` writes through, built once. */
+  const contentSetters = useMemo<PartContentSetters>(
+    () => ({
+      setLayout,
+      setLayoutError,
+      setLines,
+      setLineError,
+      setTranscriptionLayers,
+      setGroundTruthTranscriptionId,
+      setSelectedTranscriptionLayerId,
+      setPairingError,
+      setTextLines,
+      setPairingProgress,
+      setTranscribeModels,
+      setSelectedTranscribeModelId,
+      setSegmentModels,
+      setSelectedSegmentModelId,
+    }),
+    [
+      setTranscribeModels,
+      setSelectedTranscribeModelId,
+      setSegmentModels,
+      setSelectedSegmentModelId,
+    ],
   );
 
   /**
@@ -500,6 +211,14 @@ export function usePageEditorData(
   const documentRef = useRef<DocumentWithPartsResponse | null>(null);
   documentRef.current = document;
 
+  // The route effect runs per route, not per render: these are read from it
+  // as they are when it runs. `initialDocument` only matters on the first
+  // load for a route key.
+  const onRouteChangeRef = useRef(onRouteChange);
+  onRouteChangeRef.current = onRouteChange;
+  const initialDocumentRef = useRef(initialDocument);
+  initialDocumentRef.current = initialDocument;
+
   /**
    * Which page the setters handed out of this hook may still write to.
    *
@@ -516,11 +235,12 @@ export function usePageEditorData(
   activePartIdRef.current = partId;
   const partSetters = useMemo(() => {
     const mintedFor = partId;
-    const forPart = <T>(set: Dispatch<SetStateAction<T>>) =>
-      ((value: SetStateAction<T>) => {
+    const forPart =
+      <T>(set: SetState<T>): SetState<T> =>
+      (value) => {
         if (activePartIdRef.current !== mintedFor) return;
         set(value);
-      }) as Dispatch<SetStateAction<T>>;
+      };
     return {
       setPart: forPart(setPart),
       setLayout: forPart(setLayout),
@@ -532,6 +252,32 @@ export function usePageEditorData(
       setPairingError: forPart(setPairingError),
     };
   }, [partId]);
+
+  /**
+   * Clears what belonged to the previous route. A page turn keeps the
+   * document and its document-level state; see fetchPartContent.
+   */
+  const resetForRoute = useCallback(
+    (carriedPart: DocumentPartResponse | null) => {
+      setLoading(!carriedPart);
+      setPartLoading(true);
+      setError(null);
+      setLayoutError(null);
+      setLineError(null);
+      setPart(carriedPart);
+      setLayout(EMPTY_LAYOUT);
+      setLines([]);
+      setTextLines([]);
+      setPairingProgress(NO_PAIRING);
+      setPairingError(null);
+      if (carriedPart) return;
+      setDocument(null);
+      setTranscriptionLayers([]);
+      setSelectedTranscriptionLayerId(null);
+      setGroundTruthTranscriptionId(null);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!projectId || !documentId || !partId) {
@@ -546,127 +292,74 @@ export function usePageEditorData(
 
     let cancelled = false;
     const generation = ++contentGenerationRef.current;
-    const apply = <T>(setter: (value: T) => void, value: T) => {
+    const apply: ApplyIfCurrent = (setter, value) => {
       if (!cancelled && generation === contentGenerationRef.current) {
         setter(value);
       }
     };
 
-    const carriedDocument = canReuseDocument(
+    const carriedPart = carriedPartFor(
       documentRef.current,
       projectId,
       documentId,
-    )
-      ? documentRef.current
-      : null;
-    const carriedPart = carriedDocument
-      ? resolvePart(carriedDocument, partId)
-      : null;
-    const isDocumentLoad = !carriedPart;
-    if (isDocumentLoad) {
-      segmentChoiceIsExplicitRef.current = false;
-      transcribeChoiceIsExplicitRef.current = false;
-    }
+      partId,
+    );
+    if (!carriedPart) forgetModelChoices();
+    resetForRoute(carriedPart);
+    onRouteChangeRef.current?.();
 
-    setLoading(!carriedPart);
-    setPartLoading(true);
-    setError(null);
-    setLayoutError(null);
-    setLineError(null);
-    if (carriedPart) {
-      setPart(carriedPart);
-    } else {
-      setDocument(null);
-      setPart(null);
-    }
-    setLayout({ blocks: [], lines: [] });
-    setLines([]);
-    if (!carriedPart) {
-      // Document-level state survives a page turn; see fetchPartContent.
-      setTranscriptionLayers([]);
-      setSelectedTranscriptionLayerId(null);
-      setGroundTruthTranscriptionId(null);
-    }
-    setTextLines([]);
-    setPairingProgress({ paired_lines: 0, total_lines: 0, percent: 0 });
-    setPairingError(null);
-    onRouteChange?.();
-
-    void (async () => {
-      try {
-        // Paging through a document re-runs this effect for every part, and the
-        // document itself does not change between them; the cache is what stops
-        // each page turn from refetching it.
-        const doc = canReuseDocument(initialDocument, projectId, documentId)
-          ? initialDocument
-          : await queryClient.fetchQuery({
-              queryKey: ["document", projectId, documentId],
-              queryFn: () => api.getDocument(projectId, documentId),
-              meta: taggedMeta([resourceTags.document(projectId, documentId)]),
-            });
-        if (cancelled) return;
-
-        const selectedPart = resolvePart(doc, partId);
-        if (!selectedPart) {
-          apply(setError, "This document part was not found.");
-          return;
-        }
-
-        apply(setDocument, doc);
-        apply(setPart, selectedPart);
-        if (cancelled) return;
-
-        await fetchPartContent(
-          projectId,
-          documentId,
-          partId,
-          apply,
-          {
-            setLayout,
-            setLayoutError,
-            setLines,
-            setLineError,
-            setTranscriptionLayers,
-            setGroundTruthTranscriptionId,
-            setSelectedTranscriptionLayerId,
-            setPairingError,
-            setTextLines,
-            setPairingProgress,
-            setTranscribeModels,
-            setSelectedTranscribeModelId,
-            setSegmentModels,
-            setSelectedSegmentModelId,
-          },
-          {
-            documentLevel: !carriedPart,
-            segmentChoiceIsExplicitRef,
-            transcribeChoiceIsExplicitRef,
-          },
-        );
-      } catch (err) {
-        if (isUnauthorized(err)) {
-          redirectToLogin();
-          return;
-        }
-        apply(
-          setError,
-          err instanceof ApiError ? accessMessage(err) : "Failed to load page.",
-        );
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-          setPartLoading(false);
-        }
+    async function load(projectId: string, documentId: string, partId: string) {
+      const doc = await documentFor(
+        projectId,
+        documentId,
+        initialDocumentRef.current,
+      );
+      if (cancelled) return;
+      const selectedPart = resolvePart(doc, partId);
+      if (!selectedPart) {
+        apply(setError, "This document part was not found.");
+        return;
       }
-    })();
+      apply(setDocument, doc);
+      apply(setPart, selectedPart);
+      await fetchPartContent(
+        projectId,
+        documentId,
+        partId,
+        apply,
+        contentSetters,
+        {
+          documentLevel: !carriedPart,
+          segmentChoiceIsExplicit,
+          transcribeChoiceIsExplicit,
+        },
+      );
+    }
+
+    void load(projectId, documentId, partId)
+      .catch((err: unknown) => {
+        const message = routeLoadMessage(err);
+        if (message !== null) apply(setError, message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+        setPartLoading(false);
+      });
 
     return () => {
       cancelled = true;
     };
-    // onRouteChange resets page-local UI state when route params change; omit from deps intentionally.
-    // initialDocument is only read on first mount for the current route key.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- route-keyed reset only
-  }, [projectId, documentId, partId]);
+  }, [
+    projectId,
+    documentId,
+    partId,
+    contentSetters,
+    resetForRoute,
+    forgetModelChoices,
+    segmentChoiceIsExplicit,
+    transcribeChoiceIsExplicit,
+  ]);
 
   const { subscribeToJobCompletion } = useBackgroundJobs();
 
@@ -698,7 +391,7 @@ export function usePageEditorData(
       if (event.documentPartId !== partId) return;
 
       const generation = ++contentGenerationRef.current;
-      const apply = <T>(setter: (value: T) => void, value: T) => {
+      const apply: ApplyIfCurrent = (setter, value) => {
         if (cancelled || generation !== contentGenerationRef.current) return;
         setter(value);
       };
@@ -708,26 +401,11 @@ export function usePageEditorData(
         documentId,
         partId,
         apply,
-        {
-          setLayout,
-          setLayoutError,
-          setLines,
-          setLineError,
-          setTranscriptionLayers,
-          setGroundTruthTranscriptionId,
-          setSelectedTranscriptionLayerId,
-          setPairingError,
-          setTextLines,
-          setPairingProgress,
-          setTranscribeModels,
-          setSelectedTranscribeModelId,
-          setSegmentModels,
-          setSelectedSegmentModelId,
-        },
+        contentSetters,
         {
           documentLevel: true,
-          segmentChoiceIsExplicitRef,
-          transcribeChoiceIsExplicitRef,
+          segmentChoiceIsExplicit,
+          transcribeChoiceIsExplicit,
         },
       );
     });
@@ -736,7 +414,15 @@ export function usePageEditorData(
       cancelled = true;
       unsubscribe();
     };
-  }, [projectId, documentId, partId, subscribeToJobCompletion]);
+  }, [
+    projectId,
+    documentId,
+    partId,
+    subscribeToJobCompletion,
+    contentSetters,
+    segmentChoiceIsExplicit,
+    transcribeChoiceIsExplicit,
+  ]);
 
   /** Every page of this document, in page order. The page rail reads it. */
   const parts = useMemo(
@@ -775,12 +461,12 @@ export function usePageEditorData(
     setPairingProgress: partSetters.setPairingProgress,
     pairingError,
     setPairingError: partSetters.setPairingError,
-    transcribeModels,
-    selectedTranscribeModelId,
-    setSelectedTranscribeModelId: handleSelectedTranscribeModelIdChange,
-    segmentModels,
-    selectedSegmentModelId,
-    setSelectedSegmentModelId: handleSelectedSegmentModelIdChange,
+    transcribeModels: models.transcribeModels,
+    selectedTranscribeModelId: models.selectedTranscribeModelId,
+    setSelectedTranscribeModelId: models.chooseTranscribeModelId,
+    segmentModels: models.segmentModels,
+    selectedSegmentModelId: models.selectedSegmentModelId,
+    setSelectedSegmentModelId: models.chooseSegmentModelId,
     parts,
     partIndex,
   };

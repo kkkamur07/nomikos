@@ -16,11 +16,9 @@ from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.elements import Case
 from sqlalchemy.sql.selectable import Select
 
-from backend.document.infrastructure.document_repository import (
-    DocumentRepository,
-    temporary_reorder_offset,
-)
+from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.orm_models import Document, DocumentPart
+from backend.document.infrastructure.part_repository import temporary_reorder_offset
 
 
 class _Result:

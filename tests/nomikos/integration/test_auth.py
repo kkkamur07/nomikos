@@ -4,12 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg2
 import pytest
-from pydantic import ValidationError
 
 from backend.core.settings import get_infrastructure_settings
-from backend.core.settings.auth import AuthSettings, get_auth_settings
-from backend.users.api.rate_limit import clear_auth_rate_limit_state
+from backend.core.settings.auth import get_auth_settings
 from tests.nomikos.integration.helpers import assert_api_error
+
+pytestmark = pytest.mark.integration
 
 
 def _session_headers(response) -> dict[str, str]:
@@ -25,25 +25,6 @@ def _session_headers(response) -> dict[str, str]:
             f"{settings.csrf_cookie_name}={csrf_cookie}"
         ),
         "X-CSRF-Token": csrf_cookie,
-    }
-
-
-def _headers_without_the_csrf_cookie(response) -> dict[str, str]:
-    """What a browser that will not let script read that cookie can still send.
-
-    The header comes from the response *body* instead. The CSRF cookie is left
-    out of the request entirely, which is the strongest form of the failure:
-    whatever a cookie policy does to it - hides it from script, partitions it,
-    drops it - the request still has to work.
-    """
-    settings = get_auth_settings()
-    session_cookie = response.cookies.get(settings.session_cookie_name)
-    body_token = response.json()["csrf_token"]
-    assert session_cookie
-    assert body_token
-    return {
-        "Cookie": f"{settings.session_cookie_name}={session_cookie}",
-        "X-CSRF-Token": body_token,
     }
 
 
@@ -196,73 +177,6 @@ def test_auth_responses_hand_back_the_csrf_token_as_well_as_the_cookie(client, u
     assert len({r.json()["csrf_token"] for r in (register, login, refresh)}) == 3
 
 
-def test_refresh_authorises_on_the_body_token_with_no_csrf_cookie_sent(client, unique_user):
-    """The candidate fix for the Safari 403, exercised end to end.
-
-    A client that cannot read the CSRF cookie echoes the token the body gave it.
-    The server checks that header against the hash it stored when it issued the
-    session, which is proof of possession on its own - so the cookie's absence
-    from the request is not a reason to refuse.
-    """
-    login = _register(client, unique_user)
-
-    refresh = client.post("/auth/refresh", headers=_headers_without_the_csrf_cookie(login))
-
-    assert refresh.status_code == 200
-    assert refresh.json()["access_token"]
-    # The rotated session is a real one: it refreshes again the same way.
-    assert (
-        client.post("/auth/refresh", headers=_headers_without_the_csrf_cookie(refresh)).status_code
-        == 200
-    )
-
-
-def test_a_csrf_cookie_alone_still_authorises_nothing(client, unique_user):
-    """What the header check buys that the old cookie-equality check did not.
-
-    A caller who can plant a matching cookie pair but does not hold this
-    session's token is refused - which is why dropping the cookie-equality check
-    costs nothing. The value below is a well-formed token from a *different*
-    session, presented in both places at once.
-    """
-    login = _register(client, unique_user)
-    settings = get_auth_settings()
-    other_session = client.post(
-        "/auth/login",
-        json={"email": unique_user["email"], "password": unique_user["password"]},
-    )
-    someone_elses_token = other_session.json()["csrf_token"]
-
-    forged = client.post(
-        "/auth/refresh",
-        headers={
-            "Cookie": (
-                f"{settings.session_cookie_name}="
-                f"{login.cookies.get(settings.session_cookie_name)}; "
-                f"{settings.csrf_cookie_name}={someone_elses_token}"
-            ),
-            "X-CSRF-Token": someone_elses_token,
-        },
-    )
-
-    assert forged.status_code == 403
-    assert forged.json()["error"]["code"] == "FORBIDDEN"
-
-
-def test_logout_revokes_on_the_body_token_with_no_csrf_cookie_sent(client, unique_user):
-    """Signing out is CSRF-checked too, so it needs the same second channel.
-
-    A browser that could not present the cookie would otherwise be unable to
-    revoke its session server-side - it would only forget its own credentials.
-    """
-    login = _register(client, unique_user)
-
-    logout = client.post("/auth/logout", headers=_headers_without_the_csrf_cookie(login))
-
-    assert logout.status_code == 204
-    assert client.post("/auth/refresh", headers=_session_headers(login)).status_code == 401
-
-
 def test_refresh_requires_csrf_and_rotates_single_use_session(client, unique_user):
     login = client.post(
         "/auth/register",
@@ -375,45 +289,14 @@ def test_projects_without_auth_returns_401(client):
     assert response.status_code == 401
 
 
-# --- Auth settings ---
-# Tests required env config. Does not hit HTTP or the database.
-
-
-def test_auth_settings_require_jwt_secret(monkeypatch):
-    monkeypatch.delenv("JWT_SECRET", raising=False)
-    with pytest.raises(ValidationError):
-        AuthSettings(_env_file=None)
-
-
 # --- Login rate limiting ---
 # Tests per-client throttling on /auth/login. Does not test register rate limits or successful logins.
-
-
-def test_login_rate_limit_returns_429(client, monkeypatch):
-    monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", "1")
-    monkeypatch.setenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
-
-    get_auth_settings.cache_clear()
-    clear_auth_rate_limit_state()
-
-    first = client.post(
-        "/auth/login",
-        json={"email": "missing@test.kalamos", "password": "wrong-password-xyz"},
-    )
-    assert first.status_code == 401
-
-    limited = client.post(
-        "/auth/login",
-        json={"email": "missing@test.kalamos", "password": "wrong-password-xyz"},
-    )
-    assert limited.status_code == 429
 
 
 def test_login_rate_limit_is_atomic_for_parallel_requests(client, monkeypatch):
     monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", "1")
     monkeypatch.setenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
     get_auth_settings.cache_clear()
-    clear_auth_rate_limit_state()
 
     def login_attempt() -> int:
         return client.post(

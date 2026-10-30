@@ -254,6 +254,25 @@ def _polygon_for_contour(
     ]
 
 
+def _contour_quad(
+    contour: np.ndarray, pred: np.ndarray, *, box_thresh: float, unclip_ratio: float
+) -> tuple[np.ndarray, float] | None:
+    """The scored, unclipped, clockwise quad of one contour, or None if it fails a gate."""
+    box, short_side = get_mini_boxes(contour)
+    if short_side < PPOCR_MIN_SIDE:
+        return None
+    score = box_score_fast(pred, np.asarray(box, dtype=np.float64))
+    if score < box_thresh:
+        return None
+    expanded = unclip(np.asarray(box, dtype=np.float64), unclip_ratio)
+    if expanded is None:
+        return None
+    grown, grown_side = get_mini_boxes(expanded)
+    if grown_side < PPOCR_MIN_EXPANDED_SIDE:
+        return None
+    return order_quad_clockwise(np.asarray(grown, dtype=np.float64)), score
+
+
 def detect_lines(
     prob_map: np.ndarray,
     *,
@@ -299,19 +318,10 @@ def detect_lines(
 
     quads: list[DetectedQuad] = []
     for contour in contours[:max_candidates]:
-        box, short_side = get_mini_boxes(contour)
-        if short_side < PPOCR_MIN_SIDE:
+        found = _contour_quad(contour, pred, box_thresh=box_thresh, unclip_ratio=unclip_ratio)
+        if found is None:
             continue
-        score = box_score_fast(pred, np.asarray(box, dtype=np.float64))
-        if score < box_thresh:
-            continue
-        expanded = unclip(np.asarray(box, dtype=np.float64), unclip_ratio)
-        if expanded is None:
-            continue
-        grown, grown_side = get_mini_boxes(expanded)
-        if grown_side < PPOCR_MIN_EXPANDED_SIDE:
-            continue
-        ordered = order_quad_clockwise(np.asarray(grown, dtype=np.float64))
+        ordered, score = found
         mapped = [
             [
                 float(min(max(round(float(x) * width_scale), 0), orig_width)),

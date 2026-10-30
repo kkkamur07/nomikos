@@ -22,6 +22,7 @@ an oracle for which object keys exist.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -69,7 +70,8 @@ async def get_signed_object(
     if not signature_is_valid(image_key, expires=expires, signature=signature):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     try:
-        data = get_media_store().read(image_key)
+        # A blocking filesystem read; off the event loop like every other media read.
+        data = await asyncio.to_thread(get_media_store().read, image_key)
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from None
     return Response(

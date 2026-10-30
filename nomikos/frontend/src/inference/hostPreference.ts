@@ -22,7 +22,7 @@ export const HOST_PREFERENCE_LABEL = "Use my computer when it is available";
 export const HOST_PREFERENCE_HINT =
   "Jobs run on this computer while the nomikos agent is running, and in the cloud otherwise. Each job says which one it used.";
 
-export type HostPreference = {
+interface HostPreference {
   /** `null` until the account setting has been read. */
   preference: ExecutionPreferenceResponse | null;
   preferLocalInference: boolean;
@@ -41,7 +41,14 @@ export type HostPreference = {
   setPreferLocalInference: (preferLocal: boolean) => Promise<void>;
   /** Re-read the account setting and capacity with it. */
   refresh: () => Promise<void>;
-};
+}
+
+function readSettled(
+  signal: AbortSignal | undefined,
+  mounted: boolean,
+): boolean {
+  return signal?.aborted === true || !mounted;
+}
 
 export function useHostPreference(): HostPreference {
   const [preference, setPreference] =
@@ -61,14 +68,14 @@ export function useHostPreference(): HostPreference {
   const read = useCallback(async (signal?: AbortSignal) => {
     try {
       const value = await api.getExecutionPreference({ signal });
-      if (signal?.aborted || !mountedRef.current) return;
+      if (readSettled(signal, mountedRef.current)) return;
       setPreference(value);
       setError(null);
     } catch (failure) {
-      if (signal?.aborted || !mountedRef.current) return;
+      if (readSettled(signal, mountedRef.current)) return;
       setError(userFacingMessage(failure, "Could not read your host setting."));
     } finally {
-      if (!signal?.aborted && mountedRef.current) setLoading(false);
+      if (!readSettled(signal, mountedRef.current)) setLoading(false);
     }
   }, []);
 

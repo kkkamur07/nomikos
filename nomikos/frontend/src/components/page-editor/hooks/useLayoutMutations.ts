@@ -1,113 +1,45 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useRef } from "react";
 import {
   api,
-  type EnqueueJobResponse,
-  type JobResponse,
-  type LayoutBlockResponse,
-  type LayoutLineResponse,
   type LinePoint,
   type LineResponse,
   type PartLayoutResponse,
 } from "../../../api/client";
 import type { JobCompletionEvent } from "../../../context/BackgroundJobsContext";
-import { ApiError, isAbortError } from "../../../api/errors";
 import { invalidateAfter } from "../../../api/resources";
-import { submissionRefusalExplanation } from "../../../inference";
-import { cleanPolygonPoints, offsetGeometry } from "../canvasGeometry";
-import {
-  applyCanvasEdit,
-  applyCanvasEditInverse,
-  pushEditOntoStack,
-  type CanvasEdit,
-} from "../editUndo";
-import {
-  INFERENCE_JOB_WAIT_CEILING_MS,
-  type PageEditorJobKind,
-} from "../jobProgress";
+import { cleanPolygonPoints } from "../canvasGeometry";
 import { withServerOrders } from "../segmentNumbering";
-import { statusMessage, type StatusMessage } from "../statusMessage";
 import {
-  applyLayoutLineGeometryToSegments,
-  mergeSavedLine,
-  syncLayoutLinesFromSegments,
-} from "./utils";
+  errorMessage,
+  layoutMutationMessage,
+  showPairing,
+  type PairingProgressSetter,
+  type SetState,
+  type TextLinesSetter,
+  type TrackJobAndWait,
+} from "./editorHookTypes";
+import { useAutoSegment } from "./useAutoSegment";
+import { useBaselineEdit } from "./useBaselineEdit";
+import { isRegionEdit, useCanvasUndo } from "./useCanvasUndo";
+import { mergeSavedLine, syncLayoutLinesFromSegments } from "./utils";
 
-/**
- * A region write on the same undo stack as the Segment edits (ADR 0011). The
- * id is the region as it exists now: undo and redo re-create it under a new
- * one and record that.
- */
-type RegionBox = NonNullable<LayoutBlockResponse["box"]>;
-
-export type RegionEdit =
-  | {
-      kind: "region-create";
-      region: {
-        id: string;
-        box: RegionBox;
-        label: string | null;
-      };
-    }
-  | {
-      kind: "region-delete";
-      region: {
-        id: string;
-        box: RegionBox;
-        label: string | null;
-      };
-      /** The Segments it held, moved back into it when the delete is undone. */
-      lineIds: string[];
-    };
-
-type UndoEntry = CanvasEdit | RegionEdit;
-
-function isRegionEdit(entry: UndoEntry): entry is RegionEdit {
-  return entry.kind === "region-create" || entry.kind === "region-delete";
-}
-
-function pushEntry(stack: UndoEntry[], entry: UndoEntry): UndoEntry[] {
-  return pushEditOntoStack(stack as CanvasEdit[], entry as CanvasEdit);
-}
-
-function layoutMutationMessage(error: unknown): string {
-  if (error instanceof ApiError && error.status === 403) {
-    return "Only project members can edit layout.";
-  }
-  return error instanceof Error ? error.message : "Layout update failed.";
-}
+export type { RegionEdit } from "./useCanvasUndo";
 
 type LayoutMutationsInput = {
   projectId: string | undefined;
   documentId: string | undefined;
   partId: string | undefined;
   layout: PartLayoutResponse;
-  setLayout: Dispatch<SetStateAction<PartLayoutResponse>>;
+  setLayout: SetState<PartLayoutResponse>;
   lines: LineResponse[];
-  setLines: Dispatch<SetStateAction<LineResponse[]>>;
-  setLineError: Dispatch<SetStateAction<string | null>>;
-  setTextLines: Dispatch<
-    SetStateAction<
-      { order: number; text: string; paired_line_id: string | null }[]
-    >
-  >;
-  setPairingProgress: Dispatch<
-    SetStateAction<{
-      paired_lines: number;
-      total_lines: number;
-      percent: number;
-    }>
-  >;
-  setPairingError: Dispatch<SetStateAction<string | null>>;
+  setLines: SetState<LineResponse[]>;
+  setLineError: SetState<string | null>;
+  setTextLines: TextLinesSetter;
+  setPairingProgress: PairingProgressSetter;
+  setPairingError: SetState<string | null>;
   selectedSegmentId: string | null;
-  setSelectedSegmentId: Dispatch<SetStateAction<string | null>>;
-  setApprovedTextDraft: Dispatch<SetStateAction<string>>;
+  setSelectedSegmentId: SetState<string | null>;
+  setApprovedTextDraft: SetState<string>;
   /**
    * Null only while the segment catalog is empty or failed to load: then
    * `model_id` is not sent and the backend resolves its own default. Once
@@ -120,16 +52,22 @@ type LayoutMutationsInput = {
    * the error toast, because "no inference host had capacity" is something the
    * researcher has to act on, and a toast is gone before they can.
    */
-  setSubmissionRefusal: Dispatch<SetStateAction<string | null>>;
+  setSubmissionRefusal: SetState<string | null>;
   subscribeToJobCompletion?: (
     listener: (event: JobCompletionEvent) => void,
   ) => () => void;
-  trackJobAndWait: (
-    enqueued: EnqueueJobResponse,
-    meta: { label: string; kind: PageEditorJobKind },
-    options?: { timeoutMs?: number },
-  ) => Promise<JobResponse>;
+  trackJobAndWait: TrackJobAndWait;
 };
+
+function samePoints(before: LinePoint[], after: LinePoint[]): boolean {
+  return (
+    before.length === after.length &&
+    before.every(
+      (point, index) =>
+        point[0] === after[index][0] && point[1] === after[index][1],
+    )
+  );
+}
 
 export function useLayoutMutations({
   projectId,
@@ -152,63 +90,8 @@ export function useLayoutMutations({
   subscribeToJobCompletion,
   trackJobAndWait,
 }: LayoutMutationsInput) {
-  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
-  const [selectedLineSnapshot, setSelectedLineSnapshot] = useState<{
-    baseline?: LayoutLineResponse["baseline"];
-    mask?: LayoutLineResponse["mask"];
-  } | null>(null);
-  const [saveMessage, setSaveMessage] = useState<StatusMessage | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
-  // A count, not a flag: a superseded run unwinds while its successor is still
-  // going, and must not report the page as idle on the way out.
-  const [segmentRunCount, setSegmentRunCount] = useState(0);
-  const segmenting = segmentRunCount > 0;
-  const [segmentMessage, setSegmentMessage] = useState<StatusMessage | null>(
-    null,
-  );
-  const undoStackRef = useRef<UndoEntry[]>([]);
-  const redoStackRef = useRef<UndoEntry[]>([]);
-  const [editUndoRevision, setEditUndoRevision] = useState(0);
   const linesRef = useRef(lines);
   linesRef.current = lines;
-
-  useEffect(() => {
-    setSelectedLineId(null);
-    setSelectedLineSnapshot(null);
-    setSaveMessage(null);
-    setMutationError(null);
-    setSegmentMessage(null);
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-    setEditUndoRevision((value) => value + 1);
-  }, [projectId, documentId, partId]);
-
-  /**
-   * A finished job replaces this page's Segments wherever the refresh comes
-   * from, and only two of those routes run inside this hook.
-   *
-   * ``reloadAfterSegmentation`` clears the stacks for the run this hook
-   * started. The background refresh in ``usePageEditorData`` reaches the same
-   * lines from a sibling hook, so an undo left over from before a job that
-   * finished while the tab was in the background would name a line id the
-   * refresh has already replaced. Listening to the completion directly keeps
-   * the stacks the responsibility of the hook that owns them.
-   */
-  useEffect(() => {
-    if (!partId || !subscribeToJobCompletion) return;
-    return subscribeToJobCompletion((event) => {
-      if (event.documentPartId !== partId) return;
-      // Only a segmentation that finished replaces the Segments, and with them
-      // the line ids an undo entry names. Transcription patches text onto
-      // lines that are already there, and a run that failed changed nothing at
-      // all; clearing the stacks for either would throw away a geometry edit
-      // the researcher can still legitimately take back.
-      if (event.kind !== "segmentation" || event.status !== "done") return;
-      undoStackRef.current = [];
-      redoStackRef.current = [];
-      setEditUndoRevision((value) => value + 1);
-    });
-  }, [partId, subscribeToJobCompletion]);
 
   /**
    * Called once per committed write, after the server has taken it.
@@ -222,22 +105,29 @@ export function useLayoutMutations({
     invalidateAfter.partContentChanged(projectId, documentId);
   }, [projectId, documentId]);
 
-  const recordEdit = useCallback((edit: UndoEntry) => {
-    undoStackRef.current = pushEntry(undoStackRef.current, edit);
-    redoStackRef.current = [];
-    setEditUndoRevision((value) => value + 1);
-  }, []);
-
   const applyLocalLines = useCallback(
     (nextLines: LineResponse[]) => {
-      // Ahead of the re-render, so a read that resolves before it (the order
-      // sync after a create) merges into these lines, not the ones before.
+      // Ahead of the re-render, so a second write in the same tick builds on
+      // this one rather than on the render's snapshot.
       linesRef.current = nextLines;
       setLines(nextLines);
       setLayout((current) => syncLayoutLinesFromSegments(current, nextLines));
     },
     [setLines, setLayout],
   );
+
+  const undo = useCanvasUndo({
+    projectId,
+    documentId,
+    partId,
+    linesRef,
+    applyLocalLines,
+    blocks: layout.blocks,
+    selectedSegmentId,
+    setSelectedSegmentId,
+    subscribeToJobCompletion,
+  });
+  const { recordEdit } = undo;
 
   /**
    * Take the server's reading order after a create or delete. The server
@@ -260,125 +150,70 @@ export function useLayoutMutations({
     }
   }
 
-  function moveSelectedBaseline(deltaY: number) {
-    if (!selectedLineId) return;
-    setSaveMessage(null);
-    setMutationError(null);
-    setLayout((current) => {
-      const nextLayoutLines = current.lines.map((line) =>
-        line.id === selectedLineId
-          ? {
-              ...line,
-              baseline: offsetGeometry(line.baseline, deltaY),
-            }
-          : line,
-      );
-      setLines((segments) =>
-        applyLayoutLineGeometryToSegments(segments, nextLayoutLines),
-      );
-      return { ...current, lines: nextLayoutLines };
-    });
+  /** Region writes renumber the Page, so the layout and Segments are re-read. */
+  async function reloadAfterRegionWrite(
+    projectId: string,
+    documentId: string,
+    partId: string,
+  ) {
+    const [nextLayout, nextLines] = await Promise.all([
+      api.getPartLayout(projectId, documentId, partId),
+      api.listPartLines(projectId, documentId, partId),
+    ]);
+    linesRef.current = nextLines;
+    setLayout(nextLayout);
+    setLines(nextLines);
   }
 
-  async function saveSelectedLine() {
-    if (!projectId || !documentId || !partId || !selectedLineId) return;
-    const selectedLine = layout.lines.find(
-      (line) => line.id === selectedLineId,
-    );
-    if (!selectedLine) return;
+  const baseline = useBaselineEdit({
+    projectId,
+    documentId,
+    partId,
+    layout,
+    setLayout,
+    setLines,
+    setLineError,
+    notePartContentChanged,
+  });
 
-    try {
-      await api.updateLineGeometry(
-        projectId,
-        documentId,
-        partId,
-        selectedLineId,
-        {
-          baseline: selectedLine.baseline,
-          mask: selectedLine.mask,
-        },
-      );
-      setLayout((current) => ({
-        ...current,
-        lines: current.lines.map((line) =>
-          line.id === selectedLineId
-            ? { ...line, manual_geometry: true }
-            : line,
-        ),
-      }));
-      setLines((current) =>
-        current.map((line) =>
-          line.id === selectedLineId
-            ? {
-                ...line,
-                baseline: selectedLine.baseline ?? line.baseline,
-                mask: selectedLine.mask ?? line.mask,
-                manual_geometry: true,
-              }
-            : line,
-        ),
-      );
-      notePartContentChanged();
-      setMutationError(null);
-      setSaveMessage(statusMessage("Manual geometry saved"));
-      setSelectedLineSnapshot({
-        baseline: selectedLine.baseline,
-        mask: selectedLine.mask,
-      });
-    } catch (err) {
-      if (selectedLineSnapshot) {
-        setLayout((current) => ({
-          ...current,
-          lines: current.lines.map((line) =>
-            line.id === selectedLineId
-              ? {
-                  ...line,
-                  baseline: selectedLineSnapshot.baseline,
-                  mask: selectedLineSnapshot.mask,
-                }
-              : line,
-          ),
-        }));
-        setLines((current) =>
-          applyLayoutLineGeometryToSegments(current, [
-            {
-              id: selectedLineId,
-              baseline: selectedLineSnapshot.baseline,
-              mask: selectedLineSnapshot.mask,
-            },
-          ]),
-        );
-      }
-      setSaveMessage(null);
-      setMutationError(layoutMutationMessage(err));
-    }
-  }
+  const autoSegment = useAutoSegment({
+    projectId,
+    documentId,
+    partId,
+    lineCount: lines.length,
+    setLines,
+    setLayout,
+    setTextLines,
+    setPairingProgress,
+    setPairingError,
+    setSubmissionRefusal,
+    selectedSegmentModelId,
+    trackJobAndWait,
+    notePartContentChanged,
+    clearEditStacks: undo.clearEditStacks,
+    onSegmentsReloaded: () => {
+      baseline.setSelectedLineId(null);
+      setSelectedSegmentId(null);
+      baseline.setSelectedLineSnapshot(null);
+      setApprovedTextDraft("");
+    },
+  });
 
-  async function resetSelectedLine() {
-    if (!projectId || !documentId || !partId || !selectedLineId) return;
+  /**
+   * The pairing read that follows a committed segment write. It runs after
+   * the write, outside its rollback: a failure here is a stale pairing view,
+   * not a failed write, so it only reports.
+   */
+  async function refreshPairing(
+    projectId: string,
+    documentId: string,
+    partId: string,
+  ) {
     try {
-      const resetLayout = await api.resetPartLayout(
-        projectId,
-        documentId,
-        partId,
-        {
-          line_ids: [selectedLineId],
-        },
-      );
-      const nextLayout = resetLayout ?? { blocks: [], lines: [] };
-      setLayout(nextLayout);
-      setLines((current) =>
-        applyLayoutLineGeometryToSegments(current, nextLayout.lines),
-      );
-      setSelectedLineSnapshot(null);
-      notePartContentChanged();
-      setSaveMessage(statusMessage("Layout reset"));
+      const pairing = await api.getPagePairing(projectId, documentId, partId);
+      showPairing(pairing, setTextLines, setPairingProgress);
     } catch (err) {
-      // Both call sites - the Delete key and the Reset layout button - drop the
-      // returned promise, so a rejection that got this far said nothing at all:
-      // a reader without write access pressed Reset and the page did not move.
-      setSaveMessage(null);
-      setLineError(layoutMutationMessage(err));
+      setPairingError(errorMessage(err, "Pairing could not be refreshed."));
     }
   }
 
@@ -397,8 +232,7 @@ export function useLayoutMutations({
       // Merge into the segments as they are *now*, not as they were when the
       // request went out: an edit that landed while it was in flight must
       // survive, the way undo/redo already reads `linesRef`.
-      const nextLines = mergeSavedLine(linesRef.current, saved);
-      applyLocalLines(nextLines);
+      applyLocalLines(mergeSavedLine(linesRef.current, saved));
       recordEdit({ kind: "create", line: saved });
       notePartContentChanged();
       setLineError(null);
@@ -406,7 +240,7 @@ export function useLayoutMutations({
       await syncServerOrders();
     } catch (err) {
       setLineError(
-        err instanceof Error ? err.message : "Failed to save Segment geometry.",
+        layoutMutationMessage(err, "Failed to save Segment geometry."),
       );
     }
   }
@@ -418,44 +252,34 @@ export function useLayoutMutations({
       setLineError("A segment needs at least 3 points.");
       return;
     }
-    const previousSegment = lines.find((line) => line.id === segmentId);
+    // The segments as they are now: a second commit in the same render must
+    // build on the first, not on the render's snapshot.
+    const previousSegment = linesRef.current.find(
+      (line) => line.id === segmentId,
+    );
     if (!previousSegment) return;
     const before = previousSegment.points;
-    const pointsUnchanged =
-      before.length === cleanedPoints.length &&
-      before.every(
-        (point, index) =>
-          point[0] === cleanedPoints[index][0] &&
-          point[1] === cleanedPoints[index][1],
-      );
-    if (pointsUnchanged) return;
+    if (samePoints(before, cleanedPoints)) return;
 
-    const optimisticLines = lines.map((line) =>
-      line.id === segmentId
-        ? { ...line, points: cleanedPoints, source: "manual" as const }
-        : line,
+    applyLocalLines(
+      linesRef.current.map((line) =>
+        line.id === segmentId
+          ? { ...line, points: cleanedPoints, source: "manual" as const }
+          : line,
+      ),
     );
-    applyLocalLines(optimisticLines);
     try {
       const saved = await api.patchPartLine(
         projectId,
         documentId,
         partId,
         segmentId,
-        {
-          points: cleanedPoints,
-        },
+        { points: cleanedPoints },
       );
-      // `optimisticLines` is the snapshot from before the request; merging into
-      // it would revert any edit made while the patch was in flight.
-      const nextLines = mergeSavedLine(linesRef.current, saved);
-      applyLocalLines(nextLines);
-      recordEdit({
-        kind: "points",
-        segmentId,
-        before,
-        after: cleanedPoints,
-      });
+      // Merging into the optimistic snapshot would revert any edit made while
+      // the patch was in flight.
+      applyLocalLines(mergeSavedLine(linesRef.current, saved));
+      recordEdit({ kind: "points", segmentId, before, after: cleanedPoints });
       notePartContentChanged();
       setLineError(null);
     } catch (err) {
@@ -472,16 +296,6 @@ export function useLayoutMutations({
     }
   }
 
-  async function moveSelectedSegmentRight() {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) return;
-    const selectedLine = lines.find((line) => line.id === selectedSegmentId);
-    if (!selectedLine) return;
-    const nextPoints = selectedLine.points.map(
-      ([x, y]) => [x + 5, y] as LinePoint,
-    );
-    await updateSegmentPoints(selectedSegmentId, nextPoints);
-  }
-
   async function deleteSelectedSegment() {
     if (!projectId || !documentId || !partId || !selectedSegmentId) return;
     if (
@@ -492,336 +306,68 @@ export function useLayoutMutations({
       return;
     }
     const deletedId = selectedSegmentId;
-    const deletedLine = lines.find((line) => line.id === deletedId);
+    const deletedLine = linesRef.current.find((line) => line.id === deletedId);
     if (!deletedLine) return;
-    const optimisticLines = lines.filter((line) => line.id !== deletedId);
-    applyLocalLines(optimisticLines);
+    applyLocalLines(linesRef.current.filter((line) => line.id !== deletedId));
     setSelectedSegmentId(null);
     try {
       await api.deletePartLine(projectId, documentId, partId, deletedId);
-      recordEdit({ kind: "delete", line: deletedLine });
-      notePartContentChanged();
-      setLineError(null);
-      await syncServerOrders();
-      const pairing = await api.getPagePairing(projectId, documentId, partId);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
     } catch (err) {
       // Re-insert only the segment whose delete failed, into the segments as they
       // are now, so a concurrent edit to another segment is not rolled back too.
       applyLocalLines(mergeSavedLine(linesRef.current, deletedLine));
       setLineError(layoutMutationMessage(err));
-    }
-  }
-
-  /**
-   * The region a restored Segment goes back into, when that region still
-   * exists; otherwise nothing, and the server files it by where it sits.
-   */
-  function regionOf(line: { block_id?: string | null }) {
-    const blockId = line.block_id;
-    return blockId && layout.blocks.some((block) => block.id === blockId)
-      ? { block_id: blockId }
-      : {};
-  }
-
-  /** Region writes renumber the Page, so the layout and Segments are re-read. */
-  async function reloadAfterRegionWrite() {
-    const [nextLayout, nextLines] = await Promise.all([
-      api.getPartLayout(projectId!, documentId!, partId!),
-      api.listPartLines(projectId!, documentId!, partId!),
-    ]);
-    linesRef.current = nextLines;
-    setLayout(nextLayout);
-    setLines(nextLines);
-  }
-
-  /**
-   * Take back (or redo) a region write. Undo of a create and redo of a delete
-   * remove the region; the other two draw it again with the same box and
-   * label, and undo of a delete puts its recorded Segments back into it.
-   */
-  async function applyRegionEdit(
-    edit: RegionEdit,
-    direction: "undo" | "redo",
-  ): Promise<RegionEdit> {
-    const removes = (edit.kind === "region-create") === (direction === "undo");
-    if (removes) {
-      await api.deletePartBlock(
-        projectId!,
-        documentId!,
-        partId!,
-        edit.region.id,
-      );
-      return edit;
-    }
-    const created = await api.createPartBlock(
-      projectId!,
-      documentId!,
-      partId!,
-      {
-        box: edit.region.box,
-        label: edit.region.label,
-        assign_contained: edit.kind === "region-create",
-      },
-    );
-    const region = { ...edit.region, id: created.id };
-    if (edit.kind === "region-create") return { ...edit, region };
-    const present = new Set(linesRef.current.map((line) => line.id));
-    for (const lineId of edit.lineIds) {
-      if (!present.has(lineId)) continue;
-      await api.patchPartLine(projectId!, documentId!, partId!, lineId, {
-        block_id: created.id,
-      });
-    }
-    return { ...edit, region };
-  }
-
-  async function stepRegionEdit(edit: RegionEdit, direction: "undo" | "redo") {
-    const [from, to] =
-      direction === "undo"
-        ? [undoStackRef, redoStackRef]
-        : [redoStackRef, undoStackRef];
-    try {
-      const applied = await applyRegionEdit(edit, direction);
-      to.current = pushEntry(to.current, applied);
-      notePartContentChanged();
-      setLineError(null);
-      setEditUndoRevision((value) => value + 1);
-      await reloadAfterRegionWrite();
-    } catch (err) {
-      from.current = pushEntry(from.current, edit);
-      setLineError(layoutMutationMessage(err));
-      setEditUndoRevision((value) => value + 1);
-    }
-  }
-
-  async function undoEdit() {
-    const edit = undoStackRef.current.pop();
-    if (!edit || !projectId || !documentId || !partId) {
-      if (edit) undoStackRef.current.push(edit);
       return;
     }
-    if (isRegionEdit(edit)) {
-      await stepRegionEdit(edit, "undo");
-      return;
-    }
-    const previous = linesRef.current;
-    try {
-      if (edit.kind === "points") {
-        applyLocalLines(applyCanvasEditInverse(previous, edit));
-        await api.patchPartLine(projectId, documentId, partId, edit.segmentId, {
-          points: edit.before,
-        });
-        redoStackRef.current = pushEntry(redoStackRef.current, edit);
-      } else if (edit.kind === "create") {
-        applyLocalLines(applyCanvasEditInverse(previous, edit));
-        await api.deletePartLine(projectId, documentId, partId, edit.line.id);
-        if (selectedSegmentId === edit.line.id) setSelectedSegmentId(null);
-        redoStackRef.current = pushEntry(redoStackRef.current, edit);
-      } else {
-        const saved = await api.createPartLine(projectId, documentId, partId, {
-          order: edit.line.order,
-          kind: edit.line.kind,
-          points: edit.line.points,
-          ...regionOf(edit.line),
-        });
-        const restored: CanvasEdit = { kind: "delete", line: saved };
-        applyLocalLines(applyCanvasEditInverse(previous, restored));
-        redoStackRef.current = pushEntry(redoStackRef.current, restored);
-      }
-      notePartContentChanged();
-      setLineError(null);
-      setEditUndoRevision((value) => value + 1);
-      if (edit.kind !== "points") await syncServerOrders();
-      const pairing = await api.getPagePairing(projectId, documentId, partId);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-    } catch (err) {
-      undoStackRef.current = pushEntry(undoStackRef.current, edit);
-      applyLocalLines(previous);
-      setLineError(layoutMutationMessage(err));
-      setEditUndoRevision((value) => value + 1);
-    }
+    recordEdit({ kind: "delete", line: deletedLine });
+    notePartContentChanged();
+    setLineError(null);
+    await syncServerOrders();
+    await refreshPairing(projectId, documentId, partId);
   }
 
-  async function redoEdit() {
-    const edit = redoStackRef.current.pop();
-    if (!edit || !projectId || !documentId || !partId) {
-      if (edit) redoStackRef.current.push(edit);
-      return;
-    }
-    if (isRegionEdit(edit)) {
-      await stepRegionEdit(edit, "redo");
-      return;
-    }
-    const previous = linesRef.current;
-    try {
-      if (edit.kind === "points") {
-        applyLocalLines(applyCanvasEdit(previous, edit));
-        await api.patchPartLine(projectId, documentId, partId, edit.segmentId, {
-          points: edit.after,
-        });
-        undoStackRef.current = pushEntry(undoStackRef.current, edit);
-      } else if (edit.kind === "create") {
-        const saved = await api.createPartLine(projectId, documentId, partId, {
-          order: edit.line.order,
-          kind: edit.line.kind,
-          points: edit.line.points,
-          ...regionOf(edit.line),
-        });
-        const created: CanvasEdit = { kind: "create", line: saved };
-        applyLocalLines(applyCanvasEdit(previous, created));
-        undoStackRef.current = pushEntry(undoStackRef.current, created);
-      } else {
-        applyLocalLines(applyCanvasEdit(previous, edit));
-        await api.deletePartLine(projectId, documentId, partId, edit.line.id);
-        if (selectedSegmentId === edit.line.id) setSelectedSegmentId(null);
-        undoStackRef.current = pushEntry(undoStackRef.current, edit);
-      }
-      notePartContentChanged();
-      setLineError(null);
-      setEditUndoRevision((value) => value + 1);
-      if (edit.kind !== "points") await syncServerOrders();
-      const pairing = await api.getPagePairing(projectId, documentId, partId);
-      setTextLines(pairing.text_lines);
-      setPairingProgress(pairing.pairing_progress);
-    } catch (err) {
-      redoStackRef.current = pushEntry(redoStackRef.current, edit);
-      applyLocalLines(previous);
-      setLineError(layoutMutationMessage(err));
-      setEditUndoRevision((value) => value + 1);
-    }
-  }
-
-  /**
-   * The page state that follows a finished segmentation, local or cloud: both
-   * paths replace the same Segments, layout and pairing, and only the sentence
-   * they report differs. Returns the Segment count for that sentence.
-   *
-   * Callers reach this only after the `projectId`/`documentId`/`partId` guard in
-   * `runAutoSegment`.
-   */
-  async function reloadAfterSegmentation(): Promise<number> {
-    // The segmentation already replaced every Segment on the server, so any
-    // edit still on the undo/redo stack now names a line id that reload is
-    // about to make up. Left there, a later undo pops it, applyCanvasEditInverse
-    // silently no-ops against the new lines array, and the paired
-    // patchPartLine/deletePartLine 404s into setLineError. Cleared the same
-    // way the route-change effect clears it, and unconditionally: the
-    // segmentation is already stored by the time a caller reaches this
-    // function, whether or not the reload below succeeds.
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-    setEditUndoRevision((value) => value + 1);
-
-    const [reloadedLines, reloadedLayout, pairing] = await Promise.all([
-      api.listPartLines(projectId!, documentId!, partId!),
-      api.getPartLayout(projectId!, documentId!, partId!),
-      api.getPagePairing(projectId!, documentId!, partId!),
-    ]);
-    setLines(reloadedLines);
-    setLayout(reloadedLayout ?? { blocks: [], lines: [] });
-    setSelectedLineId(null);
-    setSelectedSegmentId(null);
-    setSelectedLineSnapshot(null);
-    setApprovedTextDraft("");
-    setTextLines(pairing.text_lines);
-    setPairingProgress(pairing.pairing_progress);
-    return reloadedLines.length;
-  }
-
-  /**
-   * The sentence a finished segmentation reports.
-   *
-   * It no longer names a host: the job does that itself, on the job, which is
-   * the entire user interface for **execution target** (ADR 0002). Saying it
-   * twice, in two places, with two sources, is how they come to disagree.
-   */
-  function segmentationMessage(segmentCount: number): string {
-    return `Kraken segmentation completed using raw Kraken boundaries (${segmentCount} Segment(s)).`;
-  }
-
-  async function runAutoSegment(modelId?: string | null) {
+  async function replayEdit(direction: "undo" | "redo") {
     if (!projectId || !documentId || !partId) return;
-    const chosenModelId =
-      modelId === undefined ? selectedSegmentModelId : modelId;
-    if (
-      lines.length > 0 &&
-      !window.confirm(
-        "Run Kraken line segmentation? Existing machine Segments on this Page will be replaced.",
-      )
-    ) {
+    let edit: Awaited<ReturnType<typeof undo.replay>>;
+    try {
+      edit = await undo.replay(direction);
+      if (!edit) return;
+      if (isRegionEdit(edit)) {
+        await reloadAfterRegionWrite(projectId, documentId, partId);
+      }
+    } catch (err) {
+      setLineError(layoutMutationMessage(err));
       return;
     }
-    setSegmentRunCount((count) => count + 1);
-    setSegmentMessage(null);
-    setPairingError(null);
-    setSubmissionRefusal(null);
-
-    const jobMeta = {
-      label: "Kraken line segmentation",
-      kind: "segmentation" as const,
-    };
-
-    try {
-      const enqueued = await api.segmentPart(
-        projectId,
-        documentId,
-        partId,
-        chosenModelId ? { model_id: chosenModelId } : {},
-      );
-      await trackJobAndWait(enqueued, jobMeta, {
-        timeoutMs: INFERENCE_JOB_WAIT_CEILING_MS,
-      });
-      notePartContentChanged();
-
-      // The segmentation is stored by now and only the reload is left. A
-      // failure here is a stale view of saved Segments, so it surfaces as an
-      // error banner and stops: the write is already finished, and there is
-      // nothing left for it to re-run.
-      setSegmentMessage(
-        statusMessage(segmentationMessage(await reloadAfterSegmentation())),
-      );
-    } catch (err) {
-      // The jobs panel already reports a user cancellation.
-      if (isAbortError(err)) return;
-      const refusal = submissionRefusalExplanation(err);
-      if (refusal) {
-        setSubmissionRefusal(refusal);
-        return;
-      }
-      setPairingError(
-        err instanceof Error ? err.message : "Auto segment failed.",
-      );
-    } finally {
-      setSegmentRunCount((count) => Math.max(0, count - 1));
-    }
+    notePartContentChanged();
+    setLineError(null);
+    if (isRegionEdit(edit)) return;
+    if (edit.kind !== "points") await syncServerOrders();
+    await refreshPairing(projectId, documentId, partId);
   }
 
   return {
-    selectedLineId,
-    setSelectedLineId,
-    selectedLineSnapshot,
-    setSelectedLineSnapshot,
-    saveMessage,
-    setSaveMessage,
-    mutationError,
-    segmenting,
-    segmentMessage,
-    moveSelectedBaseline,
-    saveSelectedLine,
-    resetSelectedLine,
+    selectedLineId: baseline.selectedLineId,
+    setSelectedLineId: baseline.setSelectedLineId,
+    selectedLineSnapshot: baseline.selectedLineSnapshot,
+    setSelectedLineSnapshot: baseline.setSelectedLineSnapshot,
+    saveMessage: baseline.saveMessage,
+    setSaveMessage: baseline.setSaveMessage,
+    mutationError: baseline.mutationError,
+    segmenting: autoSegment.segmenting,
+    segmentMessage: autoSegment.segmentMessage,
+    moveSelectedBaseline: baseline.moveSelectedBaseline,
+    saveSelectedLine: baseline.saveSelectedLine,
+    resetSelectedLine: baseline.resetSelectedLine,
     replaceWithManualLine,
     updateSegmentPoints,
-    moveSelectedSegmentRight,
     deleteSelectedSegment,
-    undoEdit,
-    redoEdit,
+    undoEdit: () => replayEdit("undo"),
+    redoEdit: () => replayEdit("redo"),
     recordRegionEdit: recordEdit,
-    canUndo: undoStackRef.current.length > 0,
-    canRedo: redoStackRef.current.length > 0,
-    editUndoRevision,
-    runAutoSegment,
+    canUndo: undo.canUndo,
+    canRedo: undo.canRedo,
+    editUndoRevision: undo.editUndoRevision,
+    runAutoSegment: autoSegment.runAutoSegment,
   };
 }

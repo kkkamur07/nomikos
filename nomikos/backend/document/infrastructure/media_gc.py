@@ -15,6 +15,7 @@ from backend.document.infrastructure.media_store import (
     get_media_store,
     persisted_thumbnail_keys,
 )
+from backend.document.infrastructure.media_store.keys import minted_pending_key
 from backend.document.infrastructure.orm_models import DocumentPart, MediaDeletionIntent
 from infrastructure.db import sync_system_session
 
@@ -104,8 +105,8 @@ def sweep_abandoned_part_uploads(*, batch_size: int = 50) -> int:
             ).scalars()
         )
         for part in parts:
-            minted_key = part.image_key.removeprefix("pending:")
-            if minted_key and minted_key != part.image_key:
+            minted_key = minted_pending_key(part.image_key)
+            if minted_key:
                 already_queued = session.execute(
                     select(MediaDeletionIntent.id).where(
                         MediaDeletionIntent.image_key == minted_key

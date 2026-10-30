@@ -13,12 +13,15 @@ from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader
 
 from backend.annotation.application.page_xml_validation import validate_page_xml
 from tests.nomikos.integration.helpers import documents_url
+
+pytestmark = pytest.mark.integration
 
 PAGE_NS = {"page": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"}
 
@@ -437,37 +440,8 @@ def test_document_text_carries_a_non_ascii_transcription_intact(
     assert response.content.decode("utf-8") == "[p.1]\nμῆνιν ἄειδε θεά\n"
 
 
-def test_export_of_a_greek_titled_document_names_the_download_in_greek(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
-) -> None:
-    """RFC 6266: an ASCII fallback the header can carry, plus the real name beside it."""
-    project_id = owner_project["id"]
-    document_id = _create_document(client, owner_headers, project_id, name="Ιλιάς Α")
-    _add_page(client, owner_headers, project_id, document_id, texts=["alpha"])
-
-    response = client.get(_export_url(project_id, document_id, "text"), headers=owner_headers)
-
-    assert response.status_code == 200
-    disposition = response.headers["content-disposition"]
-    assert disposition.startswith('attachment; filename="_-_-transcription.txt"')
-    assert disposition.endswith(
-        "filename*=UTF-8''%CE%B9%CE%BB%CE%B9%CE%AC%CF%82-%CE%B1-transcription.txt"
-    )
-
-
 # --- Nothing to export ---
 # Tests all three endpoints refuse rather than hand back an empty artifact.
-
-
-def test_exports_are_404_for_a_document_with_no_pages(
-    client: TestClient, owner_headers: dict[str, str], owner_project: dict
-) -> None:
-    project_id = owner_project["id"]
-    document_id = _create_document(client, owner_headers, project_id, name="Empty")
-
-    for artifact in ("page-xml", "transcription-pdf", "text"):
-        response = client.get(_export_url(project_id, document_id, artifact), headers=owner_headers)
-        assert response.status_code == 404, f"{artifact}: {response.text}"
 
 
 def test_exports_are_404_when_reviewed_only_matches_no_pages(

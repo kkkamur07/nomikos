@@ -20,7 +20,7 @@ from backend.ml.api.device_schemas import (
     PairingTokenRequest,
     PairingTokenResponse,
 )
-from backend.ml.application.device_service import DevicePairingService
+from backend.ml.application.pairing_service import DevicePairingService
 from backend.users.api.rate_limit import client_ip_for_request, throttle_device_pairing_starts
 from infrastructure.db import get_db
 

@@ -61,6 +61,19 @@ type DocumentWorkflowMenuProps = {
  * document, not on whichever page happens to be open in the editor. The page
  * editor keeps its own single-page versions of the same two jobs.
  */
+function selectWorkflowCounts(counts: DocumentWorkflowCounts | null): {
+  total: number;
+  unsegmented: number;
+  unpaired: number;
+} {
+  if (!counts) return { total: 0, unsegmented: 0, unpaired: 0 };
+  return {
+    total: counts.total,
+    unsegmented: counts.unsegmented,
+    unpaired: counts.unpaired,
+  };
+}
+
 export function DocumentWorkflowMenu({
   projectId,
   documentId,
@@ -139,9 +152,7 @@ export function DocumentWorkflowMenu({
     };
   }, [projectId, documentId]);
 
-  const total = counts?.total ?? 0;
-  const unsegmented = counts?.unsegmented ?? 0;
-  const unpaired = counts?.unpaired ?? 0;
+  const { total, unsegmented, unpaired } = selectWorkflowCounts(counts);
   const busy = disabled || running || counts === null;
   const selectedSegmentModelName =
     segmentModels.find((model) => model.id === selectedSegmentModelId)?.name ??

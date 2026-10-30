@@ -5,8 +5,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Callable
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -20,11 +21,6 @@ MAX_CURSOR_LENGTH = 1024
 class PageCursor(BaseModel):
     created_at: datetime
     id: UUID
-
-
-class PageResponse(BaseModel, Generic[T]):
-    items: list[T]
-    next_cursor: str | None = None
 
 
 def encode_cursor(created_at: datetime, row_id: UUID) -> str:
@@ -60,8 +56,8 @@ def paginate_rows(
     rows: list[T],
     *,
     limit: int,
-    created_at_getter,
-    id_getter,
+    created_at_getter: Callable[[T], datetime],
+    id_getter: Callable[[T], UUID],
 ) -> tuple[list[T], str | None]:
     """Slice *limit + 1* rows and emit next cursor when more pages exist."""
     has_more = len(rows) > limit

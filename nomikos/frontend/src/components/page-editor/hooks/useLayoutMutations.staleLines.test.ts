@@ -2,7 +2,11 @@ import { act, renderHook } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { LineResponse, PartLayoutResponse } from "../../../api/client";
+import type {
+  LineResponse,
+  PartLayoutResponse,
+  api,
+} from "../../../api/client";
 import { useLayoutMutations } from "./useLayoutMutations";
 
 const createPartLine = vi.fn();
@@ -10,8 +14,10 @@ const patchPartLine = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   api: {
-    createPartLine: (...args: unknown[]) => createPartLine(...args),
-    patchPartLine: (...args: unknown[]) => patchPartLine(...args),
+    createPartLine: (...args: Parameters<typeof api.createPartLine>) =>
+      createPartLine(...args),
+    patchPartLine: (...args: Parameters<typeof api.patchPartLine>) =>
+      patchPartLine(...args),
   },
 }));
 
@@ -30,9 +36,16 @@ function line(id: string, order: number, x: number): LineResponse {
       [x + 10, 10],
     ],
     source: "machine",
+    part_id: "part-1",
+    block_id: null,
+    baseline: null,
+    mask: null,
+    source_metadata: null,
+    kraken_ceiling: null,
     manual_geometry: false,
+    created_at: "2026-06-16T10:00:00Z",
     line_transcriptions: [],
-  } as unknown as LineResponse;
+  };
 }
 
 /** A promise the test resolves by hand, so an edit can land mid-request. */

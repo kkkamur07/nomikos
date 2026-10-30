@@ -15,11 +15,11 @@ export const PINCH_ZOOM_RATE = 0.01;
 /** The largest delta one event may contribute; driver flings exceed a notch. */
 export const MAX_WHEEL_DELTA = 250;
 /** Time constant, in ms, of the glide toward the target scale. */
-export const ZOOM_GLIDE_TAU_MS = 50;
+const ZOOM_GLIDE_TAU_MS = 50;
 /** Remaining log distance below which the glide snaps to its target. */
 const ZOOM_SETTLE = 0.0005;
 
-export function clampScale(scale: number, min: number, max: number): number {
+function clampScale(scale: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, scale));
 }
 
@@ -78,5 +78,42 @@ export function zoomAnchoredPosition(
   return {
     x: cursor.x - (cursor.x - position.x) * ratio,
     y: cursor.y - (cursor.y - position.y) * ratio,
+  };
+}
+
+/**
+ * The transform that fits the whole folio into the visible canvas.
+ *
+ * Scales to the pane and keeps `reservedBottom` (the island's own strip) out
+ * of the usable area, because the last line of a folio matters as much as the
+ * first and must not land under the toolbar. Null when either size is unknown.
+ */
+export function fitTransform(
+  view: { width: number; height: number },
+  canvas: { width: number; height: number },
+  limits: {
+    padding: number;
+    reservedBottom: number;
+    minScale: number;
+    maxScale: number;
+  },
+): { x: number; y: number; scale: number } | null {
+  if (!view.width || !view.height || !canvas.width || !canvas.height) {
+    return null;
+  }
+  const usableWidth = Math.max(1, view.width - limits.padding * 2);
+  const usableHeight = Math.max(
+    1,
+    view.height - limits.reservedBottom - limits.padding,
+  );
+  const scale = clampScale(
+    Math.min(usableWidth / canvas.width, usableHeight / canvas.height),
+    limits.minScale,
+    limits.maxScale,
+  );
+  return {
+    x: (view.width - canvas.width * scale) / 2,
+    y: (view.height - limits.reservedBottom - canvas.height * scale) / 2,
+    scale,
   };
 }

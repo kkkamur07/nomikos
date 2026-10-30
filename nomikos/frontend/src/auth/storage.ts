@@ -3,6 +3,8 @@ import { clearImageCache } from "../api/imageCache";
 import { queryClient } from "../api/queryClient";
 
 let accessToken: string | null = null;
+/** `sub` of the last token `setAccessToken` saw; `null` before the first. */
+let lastTokenSubject: string | null = null;
 
 /**
  * The browser session's CSRF token, as the server handed it back in the body.
@@ -16,7 +18,25 @@ let accessToken: string | null = null;
  * `localStorage`, for the same reason the access token is: a value that
  * survives the tab outlives the session it belongs to.
  */
+
 let csrfToken: string | null = null;
+/** The JWT `sub` without verifying: identity comparison only, never trust. */
+function tokenSubject(token: string): string | null {
+  try {
+    const encoded = token.split(".")[1];
+    if (!encoded) return null;
+    const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const json: unknown = JSON.parse(
+      atob(padded + "=".repeat((4 - (padded.length % 4)) % 4)),
+    );
+    if (json && typeof json === "object" && "sub" in json) {
+      return typeof json.sub === "string" ? json.sub : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export function getAccessToken(): string | null {
   return accessToken;
@@ -35,7 +55,6 @@ export function clearCsrfToken(): void {
 }
 
 export function setAccessToken(token: string): void {
-  accessToken = token;
   // Retained reads belong to whoever was signed in when they were made, so a
   // new session must not be able to see them. Reset rather than clear:
   // clear() destroys in-flight queries and strands their mounted observers in
@@ -43,13 +62,21 @@ export function setAccessToken(token: string): void {
   // whenever the AuthProvider's startup refresh settled while its reads were
   // still in flight). resetQueries() drops the data just the same, but
   // refetches every query something on screen is watching, now under the new
-  // session.
+  // session. A transparent refresh for the same user keeps its data: only a
+  // changed subject - or a token with no readable subject - resets.
+  const subject = tokenSubject(token);
+  const changed = subject === null || subject !== lastTokenSubject;
+  lastTokenSubject = subject;
+  accessToken = token;
   invalidateAuthGetCache();
-  void queryClient.resetQueries();
+  if (changed) {
+    void queryClient.resetQueries();
+  }
 }
 
 export function clearAccessToken(): void {
   accessToken = null;
+  lastTokenSubject = null;
   // Both credentials belong to the one session that just ended. Leaving the
   // CSRF token behind would let the next sign-in start by presenting the
   // previous session's token.

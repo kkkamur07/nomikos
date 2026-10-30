@@ -6,6 +6,8 @@ import {
   type DocumentWithPartsResponse,
   type ExecutionPreferenceResponse,
   type JobResponse,
+  type LineResponse,
+  type PartLayoutResponse,
 } from "../../api/client";
 import { BackgroundJobsProvider } from "../../context/BackgroundJobsContext";
 import { BackgroundJobsPanel } from "../../components/BackgroundJobsPanel";
@@ -59,6 +61,18 @@ vi.mock("../../api/client", async (importOriginal) => {
     getJob: vi.fn(),
   };
 
+  function jobChanged(last: JobResponse | null, job: JobResponse): boolean {
+    return (
+      !last || last.status !== job.status || last.updated_at !== job.updated_at
+    );
+  }
+
+  /** The finished job, a throw for a failed one, or null while it runs. */
+  function settledJob(job: JobResponse): JobResponse | null {
+    if (job.status === "failed") throw new Error(job.error ?? "Job failed.");
+    return job.status === "done" ? job : null;
+  }
+
   async function waitForJob(
     jobId: string,
     options?: { timeoutMs?: number; onUpdate?: (job: JobResponse) => void },
@@ -68,18 +82,10 @@ vi.mock("../../api/client", async (importOriginal) => {
     let lastJob: JobResponse | null = null;
     while (Date.now() < deadline) {
       const job = await mockedApi.getJob(jobId);
-      if (
-        !lastJob ||
-        lastJob.status !== job.status ||
-        lastJob.updated_at !== job.updated_at
-      ) {
-        options?.onUpdate?.(job);
-      }
+      if (jobChanged(lastJob, job)) options?.onUpdate?.(job);
       lastJob = job;
-      if (job.status === "done") return job;
-      if (job.status === "failed") {
-        throw new Error(job.error ?? "Job failed.");
-      }
+      const settled = settledJob(job);
+      if (settled) return settled;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     throw new Error("Job timed out.");
@@ -92,39 +98,7 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-export type MockedEditorApi = {
-  getDocument: ReturnType<typeof vi.fn>;
-  getPartLayout: ReturnType<typeof vi.fn>;
-  listPartLines: ReturnType<typeof vi.fn>;
-  listTranscriptions: ReturnType<typeof vi.fn>;
-  getPagePairing: ReturnType<typeof vi.fn>;
-  importPageTranscription: ReturnType<typeof vi.fn>;
-  pairTextLine: ReturnType<typeof vi.fn>;
-  updateGroundTruthLineText: ReturnType<typeof vi.fn>;
-  copyToGroundTruth: ReturnType<typeof vi.fn>;
-  updatePartReviewStatus: ReturnType<typeof vi.fn>;
-  replacePartLines: ReturnType<typeof vi.fn>;
-  createPartLine: ReturnType<typeof vi.fn>;
-  patchPartLine: ReturnType<typeof vi.fn>;
-  deletePartLine: ReturnType<typeof vi.fn>;
-  createPartBlock: ReturnType<typeof vi.fn>;
-  patchPartBlock: ReturnType<typeof vi.fn>;
-  deletePartBlock: ReturnType<typeof vi.fn>;
-  mergePartLines: ReturnType<typeof vi.fn>;
-  updateLineGeometry: ReturnType<typeof vi.fn>;
-  resetPartLayout: ReturnType<typeof vi.fn>;
-  generateTranscriptionPdf: ReturnType<typeof vi.fn>;
-  updateDocument: ReturnType<typeof vi.fn>;
-  listInferenceModels: ReturnType<typeof vi.fn>;
-  resolvePartModelBinding: ReturnType<typeof vi.fn>;
-  enqueueTranscribePart: ReturnType<typeof vi.fn>;
-  segmentPart: ReturnType<typeof vi.fn>;
-  getExecutionPreference: ReturnType<typeof vi.fn>;
-  setExecutionPreference: ReturnType<typeof vi.fn>;
-  getJob: ReturnType<typeof vi.fn>;
-};
-
-export const mockedApi = api as unknown as MockedEditorApi;
+export const mockedApi = vi.mocked(api);
 
 export const DOCUMENT: DocumentWithPartsResponse = {
   id: "doc-1",
@@ -180,7 +154,7 @@ export function documentWithPages(count: number): DocumentWithPartsResponse {
  * carries neither, and adding them here would put baselines on the canvas of
  * every test that never asked for one.
  */
-export function line(overrides: Record<string, unknown> = {}) {
+export function line(overrides: Partial<LineResponse> = {}): LineResponse {
   return {
     id: "line-1",
     part_id: "part-1",
@@ -226,7 +200,7 @@ export function maskPoints() {
  * page out: machine geometry, carrying the baseline and mask the layout editor
  * moves. Pass `baseline`/`mask` as `{ points }` to drive the wrapped form.
  */
-export function layoutLine(overrides: Record<string, unknown> = {}) {
+export function layoutLine(overrides: Partial<LineResponse> = {}) {
   return line({
     kind: "polygon",
     points: maskPoints(),
@@ -245,7 +219,9 @@ export function layoutLine(overrides: Record<string, unknown> = {}) {
  * layout tests vary - `manual_geometry`, and whether the geometry arrives as a
  * bare point list or wrapped in `{ points }`.
  */
-export function layoutWith(overrides: Record<string, unknown> = {}) {
+export function layoutWith(
+  overrides: Partial<PartLayoutResponse["lines"][number]> = {},
+) {
   return {
     blocks: [],
     lines: [
@@ -312,7 +288,7 @@ export async function flushPageEditorEffects() {
  * a PUT changes it and every later GET reflects the change. Canned responses
  * would let a "setting" that never persisted still pass its own test.
  */
-export function seedExecutionPreference(preferLocalInference = false): void {
+function seedExecutionPreference(preferLocalInference = false): void {
   let stored = preferLocalInference;
   const current = (): ExecutionPreferenceResponse => ({
     prefer_local_inference: stored,
@@ -440,7 +416,7 @@ export function resetPageEditorApiMocks() {
     async (_projectId, _documentId, _partId, lineId, body) => {
       const existing = (
         (await mockedApi.listPartLines.mock.results.at(-1)?.value) as
-          Array<Record<string, unknown>> | undefined
+          LineResponse[] | undefined
       )?.find((line) => line.id === lineId) ?? {
         id: lineId,
         part_id: "part-1",
@@ -467,8 +443,8 @@ export function resetPageEditorApiMocks() {
   );
   mockedApi.replacePartLines.mockImplementation(
     async (_projectId, _documentId, _partId, body) =>
-      body.lines.map((line: Record<string, unknown>, index: number) => ({
-        id: (line.id as string | undefined) ?? `line-${index + 1}`,
+      body.lines.map((line, index) => ({
+        id: line.id ?? `line-${index + 1}`,
         part_id: "part-1",
         block_id: line.block_id ?? null,
         order: line.order,

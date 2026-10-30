@@ -2,8 +2,9 @@
 
 The other half - the sync claim/sweep/transition machinery that runs on
 ``sync_system_session()`` from the worker loop and the on-read stale sweep -
-lives in ``job_claim_engine``. Different session types, different lifecycles,
-different callers; the sync half exists per ADR 0005.
+lives in ``job_claim_engine``, ``job_sweeps`` and ``job_terminal``. Different
+session types, different lifecycles, different callers; the sync half exists
+per ADR 0005.
 """
 
 from __future__ import annotations
@@ -18,9 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import infrastructure.models  # noqa: F401 - register all ORM mappers
 from backend.core.api.pagination import PageCursor
 from backend.document.infrastructure.orm_models import Document
-from backend.jobs.infrastructure.job_claim_engine import _apply_cancellation
+from backend.jobs.infrastructure.job_terminal import apply_cancellation
 from backend.jobs.infrastructure.notifications import notify_platform_job_status_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
+from infrastructure.db import rows_affected
 
 _TERMINAL_STATUSES = (JobStatus.done, JobStatus.failed, JobStatus.cancelled)
 
@@ -101,18 +103,25 @@ class JobRepository:
         # little ahead of this host's would otherwise report a negative age.
         return max((datetime.now(UTC) - oldest_created_at).total_seconds(), 0.0)
 
-    async def delete_terminal_jobs_for_project(self, project_id: uuid.UUID) -> int:
-        """Delete finished jobs of a project; pending/running/waiting rows are kept."""
+    async def delete_terminal_jobs_for_project(
+        self, project_id: uuid.UUID, *, user_id: uuid.UUID
+    ) -> int:
+        """Delete *user_id*'s finished jobs of a project; active rows are kept.
+
+        Scoped to the caller: project membership lets someone read the project's
+        history, not erase another member's.
+        """
         terminal_ids = (
             select(Job.id)
             .join(Document, Job.document_id == Document.id)
             .where(Document.project_id == project_id)
+            .where(Job.user_id == user_id)
             .where(Job.status.in_(_TERMINAL_STATUSES))
             .scalar_subquery()
         )
         result = await self._session.execute(delete(Job).where(Job.id.in_(terminal_ids)))
         await self._session.commit()
-        return result.rowcount or 0
+        return rows_affected(result)
 
 
 async def cancel_job_async(session: AsyncSession, job_id: uuid.UUID) -> Job | None:
@@ -127,7 +136,7 @@ async def cancel_job_async(session: AsyncSession, job_id: uuid.UUID) -> Job | No
     ).scalar_one_or_none()
     if job is None:
         return None
-    _apply_cancellation(job, now)
+    apply_cancellation(job, now)
     await session.commit()
     await session.refresh(job)
     # pg_notify uses a sync DB session - keep it off the event loop.

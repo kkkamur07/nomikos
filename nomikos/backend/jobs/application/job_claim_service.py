@@ -61,18 +61,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urljoin
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 
 from backend.document.infrastructure.media_store import get_media_store
 from backend.jobs.application.inference_dispatcher import (
     PageRunRequest,
-    build_page_run_request,
-    page_image_key_for_job,
+    build_page_run,
 )
-from backend.jobs.infrastructure.job_claim_engine import (
-    AGENT_CLAIM_PREFIX,
-    AGENT_CLAIMED_JOB_TYPES,
-)
+from backend.jobs.infrastructure.job_claim_engine import AGENT_CLAIMED_JOB_TYPES
+from backend.jobs.infrastructure.job_sql import AGENT_CLAIM_PREFIX
 from backend.jobs.infrastructure.notifications import notify_platform_job_status_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
 from backend.ml.application.agent_credentials import InferenceAgent
@@ -118,7 +115,7 @@ class ClaimedPage:
     page_image_expires_at: datetime
 
 
-def _claimable_job_query(agent: InferenceAgent):
+def _claimable_job_query(agent: InferenceAgent) -> Select[tuple[Job]]:
     query = (
         select(Job)
         .where(Job.status == JobStatus.pending)
@@ -182,21 +179,21 @@ def claim_one_page(
 
     page_image_expires_at = now + timedelta(seconds=page_image_ttl_seconds)
     try:
-        request = build_page_run_request(detached_job)
+        run = build_page_run(detached_job)
         page_image_url = urljoin(
             base_url,
-            get_media_store().signed_object_url(
-                page_image_key_for_job(detached_job), expires_at=page_image_expires_at
-            ),
+            get_media_store().signed_object_url(run.image_key, expires_at=page_image_expires_at),
         )
     except Exception:
         # The page is already claimed, so leaving it would park a job on an agent
         # that was never given anything to run, until the sweep failed it minutes
         # later. Fail it now, with the same allowlisted text rule as everywhere
-        # else - the exception detail is logged, never stored.
+        # else - the exception detail is logged, never stored. The agent gets an
+        # empty claim rather than a 500, so it keeps polling instead of backing
+        # off over a page that is already settled.
         logger.exception("could not build the claim payload for job %s", job_id)
         _fail_unbuildable_page(job_id, agent)
-        raise
+        return None
 
     logger.info(
         "job_claimed job_id=%s device_id=%s target=%s service_worker=%s inference_job_id=%s",
@@ -212,14 +209,14 @@ def claim_one_page(
         job_type=job_type,
         execution_target=execution_target,
         lease_expires_at=now + timedelta(seconds=lease_seconds),
-        request=request,
+        request=run.request,
         page_image_url=page_image_url,
         page_image_expires_at=page_image_expires_at,
     )
 
 
 def _fail_unbuildable_page(job_id: uuid.UUID, agent: InferenceAgent) -> None:
-    from backend.jobs.infrastructure.job_claim_engine import mark_job_failed
+    from backend.jobs.infrastructure.job_terminal import mark_job_failed
 
     mark_job_failed(
         job_id, UNBUILDABLE_PAYLOAD_ERROR, claimed_by=agent_claim_owner(agent.device_id)

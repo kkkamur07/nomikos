@@ -22,13 +22,13 @@ import type {
 } from "../api/client";
 
 /** Reads after a preposition: "Running **on your computer**". */
-export const INFERENCE_HOST_PHRASE: Record<ExecutionTarget, string> = {
+const INFERENCE_HOST_PHRASE: Record<ExecutionTarget, string> = {
   local: "on your computer",
   cloud: "in the cloud",
 };
 
 /** Reads as a subject: "**Your computer** had no capacity…". */
-export const INFERENCE_HOST_NOUN: Record<ExecutionTarget, string> = {
+const INFERENCE_HOST_NOUN: Record<ExecutionTarget, string> = {
   local: "your computer",
   cloud: "the cloud",
 };

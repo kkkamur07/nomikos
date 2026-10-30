@@ -50,6 +50,8 @@ def _line(run_id: uuid.UUID | None, external_id: str | None):
         order=0,
         kind=LineGeometryKind.polygon,
         points=[[0, 0], [10, 0], [10, 5], [0, 5]],
+        baseline={"points": [[0, 5], [10, 5]]},
+        mask={"points": [[0, 0], [10, 0], [10, 5], [0, 5]]},
         source=LineSource.kraken,
         source_metadata={},
         kraken_ceiling=None,

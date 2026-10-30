@@ -74,58 +74,65 @@ class CalamariCheckpointMetadata:
     lstm_layers: int = DEFAULT_LSTM_LAYERS
 
 
-def load_calamari_checkpoint(
-    checkpoint_path: Path,
-) -> tuple[CalamariTorchModel, CalamariCheckpointMetadata]:
-    """Load and materialize a tensor-only Calamari checkpoint."""
+def _read_checkpoint_doc(checkpoint_path: Path) -> Mapping:
     try:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     except Exception as error:
         raise CalamariCheckpointUnreadableError(
             f"unable to safely load Calamari checkpoint: {checkpoint_path}"
         ) from error
-
     if not isinstance(checkpoint, Mapping) or checkpoint.get("format") != "calamari-pytorch-v1":
         raise CalamariCheckpointMetadataError("unsupported Calamari checkpoint format")
-    classes = checkpoint.get("classes")
-    line_height = checkpoint.get("line_height", 48)
-    charset = checkpoint.get("charset")
-    state_dict = checkpoint.get("state_dict")
+    return checkpoint
+
+
+def _require_classes(doc: Mapping) -> int:
+    classes = doc.get("classes")
+    if not isinstance(classes, int) or isinstance(classes, bool) or classes < 2:
+        raise CalamariCheckpointMetadataError("invalid Calamari checkpoint metadata")
+    return classes
+
+
+def _require_line_height(doc: Mapping) -> int:
+    line_height = doc.get("line_height", 48)
+    if not isinstance(line_height, int) or isinstance(line_height, bool) or line_height < 1:
+        raise CalamariCheckpointMetadataError("invalid Calamari checkpoint metadata")
+    return line_height
+
+
+def _require_charset(doc: Mapping, classes: int) -> tuple[str, ...]:
+    charset = doc.get("charset")
     if (
-        not isinstance(classes, int)
-        or isinstance(classes, bool)
-        or classes < 2
-        or not isinstance(line_height, int)
-        or isinstance(line_height, bool)
-        or line_height < 1
-        or not isinstance(charset, list)
+        not isinstance(charset, list)
         or len(charset) != classes
         or not all(isinstance(character, str) for character in charset)
     ):
         raise CalamariCheckpointMetadataError("invalid Calamari checkpoint metadata")
-    if (
-        not isinstance(state_dict, Mapping)
-        or not state_dict
-        or not all(
-            isinstance(name, str) and isinstance(value, Tensor)
-            for name, value in state_dict.items()
-        )
-    ):
-        raise CalamariCheckpointStateDictError("invalid Calamari checkpoint state dictionary")
+    return tuple(charset)
 
-    temperature = checkpoint.get("temperature", -1.0)
+
+def _require_temperature(doc: Mapping) -> float:
+    temperature = doc.get("temperature", -1.0)
     if (
         not isinstance(temperature, (int, float))
         or isinstance(temperature, bool)
         or not math.isfinite(float(temperature))
     ):
         raise CalamariCheckpointMetadataError("invalid Calamari checkpoint temperature")
-    blank_index = checkpoint.get("blank_index", 0)
+    return float(temperature)
+
+
+def _require_blank_index(doc: Mapping) -> int:
+    blank_index = doc.get("blank_index", 0)
     if not isinstance(blank_index, int) or isinstance(blank_index, bool) or blank_index != 0:
         raise CalamariCheckpointMetadataError(
             "only blank-index zero is supported by the Calamari runtime"
         )
-    lstm_layers = checkpoint.get("lstm_layers", DEFAULT_LSTM_LAYERS)
+    return blank_index
+
+
+def _require_lstm_layers(doc: Mapping) -> int:
+    lstm_layers = doc.get("lstm_layers", DEFAULT_LSTM_LAYERS)
     if (
         not isinstance(lstm_layers, int)
         or isinstance(lstm_layers, bool)
@@ -136,15 +143,38 @@ def load_calamari_checkpoint(
         # to have. Reporting this as a state-dict defect would send a
         # deployment looking at the wrong half of the export.
         raise CalamariCheckpointMetadataError("invalid Calamari checkpoint lstm_layers")
+    return lstm_layers
 
-    metadata = CalamariCheckpointMetadata(
+
+def _metadata_from_doc(doc: Mapping) -> CalamariCheckpointMetadata:
+    classes = _require_classes(doc)
+    return CalamariCheckpointMetadata(
         classes=classes,
-        line_height=line_height,
-        charset=tuple(charset),
-        blank_index=blank_index,
-        temperature=float(temperature),
-        lstm_layers=lstm_layers,
+        line_height=_require_line_height(doc),
+        charset=_require_charset(doc, classes),
+        blank_index=_require_blank_index(doc),
+        temperature=_require_temperature(doc),
+        lstm_layers=_require_lstm_layers(doc),
     )
+
+
+def _state_dict_from_doc(doc: Mapping) -> Mapping:
+    state_dict = doc.get("state_dict")
+    if (
+        not isinstance(state_dict, Mapping)
+        or not state_dict
+        or not all(
+            isinstance(name, str) and isinstance(value, Tensor)
+            for name, value in state_dict.items()
+        )
+    ):
+        raise CalamariCheckpointStateDictError("invalid Calamari checkpoint state dictionary")
+    return state_dict
+
+
+def _materialize_model(
+    metadata: CalamariCheckpointMetadata, state_dict: Mapping
+) -> CalamariTorchModel:
     # ``default_model_config`` is the single definition of this topology. The
     # loader used to carry a private copy of it, which had drifted (a dropout
     # rate of 0.5 against 0.3) and knew only the single-BiLSTM stack, so every
@@ -162,7 +192,7 @@ def load_calamari_checkpoint(
     model.eval()
     # Materialize LazyBiLSTM and LazyLinear before loading the state dict.  The
     # time width is deliberately arbitrary; weights do not depend on it.
-    dummy = torch.zeros((1, 8, line_height, 1), dtype=torch.float32)
+    dummy = torch.zeros((1, 8, metadata.line_height, 1), dtype=torch.float32)
     # ``inference_mode`` would create inference tensors for the Lazy* parameters,
     # which cannot later receive a state-dict copy on recent Torch versions.
     with torch.no_grad():
@@ -176,6 +206,16 @@ def load_calamari_checkpoint(
     # Second ``eval()``: materializing the lazy modules above ran a forward
     # pass, and dropout must be off for every inference call that follows.
     model.eval()
+    return model
+
+
+def load_calamari_checkpoint(
+    checkpoint_path: Path,
+) -> tuple[CalamariTorchModel, CalamariCheckpointMetadata]:
+    """Load and materialize a tensor-only Calamari checkpoint."""
+    doc = _read_checkpoint_doc(checkpoint_path)
+    metadata = _metadata_from_doc(doc)
+    model = _materialize_model(metadata, _state_dict_from_doc(doc))
     return model, metadata
 
 

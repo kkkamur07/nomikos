@@ -1,10 +1,11 @@
-import { act, render } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EnqueueJobResponse, JobResponse } from "../api/client";
 import type * as ClientModule from "../api/client";
 import { waitForJob } from "../api/client";
+import { JobWaitTimeoutError } from "../utils/jobSubscription";
 import type { BackgroundJobsContextValue } from "./BackgroundJobsContext";
 import {
   BackgroundJobsProvider,
@@ -61,16 +62,16 @@ function probe(): () => BackgroundJobsContextValue {
   return () => current;
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  vi.resetAllMocks();
-});
-
 describe("BackgroundJobsProvider all-terminal auto-dismiss", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.resetAllMocks();
+  });
+
   it("clears the collapsed pill 8 s after every job goes terminal", async () => {
     mockWaitForJob.mockResolvedValue(doneResponse());
     const get = probe();
@@ -131,5 +132,62 @@ describe("BackgroundJobsProvider all-terminal auto-dismiss", () => {
       vi.advanceTimersByTime(9_000);
     });
     expect(get().jobs).toHaveLength(1);
+  });
+});
+
+function TrackButton() {
+  const { jobs, trackAndWait } = useBackgroundJobs();
+  return (
+    <>
+      <button
+        onClick={() =>
+          void trackAndWait(ENQUEUED, {
+            label: "Segment",
+            kind: "segment",
+          }).catch(() => {})
+        }
+      >
+        track
+      </button>
+      <output data-testid="jobs">
+        {jobs.map((job) => `${job.status}:${job.progressLabel}`).join(",")}
+      </output>
+    </>
+  );
+}
+
+describe("trackAndWait client timeout", () => {
+  beforeEach(() => {
+    vi.mocked(waitForJob).mockReset();
+  });
+
+  it("keeps the job active with a lost-contact label instead of failing it", async () => {
+    vi.mocked(waitForJob).mockRejectedValue(new JobWaitTimeoutError());
+    render(
+      <BackgroundJobsProvider>
+        <TrackButton />
+      </BackgroundJobsProvider>,
+    );
+
+    screen.getByRole("button", { name: "track" }).click();
+    await waitFor(() =>
+      expect(screen.getByTestId("jobs")).toHaveTextContent(
+        "pending:Waiting for the server",
+      ),
+    );
+  });
+
+  it("marks a genuinely failed wait as failed", async () => {
+    vi.mocked(waitForJob).mockRejectedValue(new Error("Job failed."));
+    render(
+      <BackgroundJobsProvider>
+        <TrackButton />
+      </BackgroundJobsProvider>,
+    );
+
+    screen.getByRole("button", { name: "track" }).click();
+    await waitFor(() =>
+      expect(screen.getByTestId("jobs")).toHaveTextContent("failed:Failed"),
+    );
   });
 });

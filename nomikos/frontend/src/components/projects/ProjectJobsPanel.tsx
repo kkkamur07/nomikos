@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Popconfirm } from "antd";
-import { api, type DocumentResponse, type JobResponse } from "../../api/client";
+import {
+  api,
+  type DocumentResponse,
+  type JobResponse,
+  type JobStatus,
+} from "../../api/client";
 import { ApiError } from "../../api/errors";
 import { useJobPolling } from "../../hooks/useJobPolling";
 import { toast } from "../ui/toast";
@@ -22,19 +27,15 @@ type ProjectJobsPanelProps = {
 
 const VISIBLE_JOB_LIMIT = 8;
 
+const JOB_TYPE_LABELS: Record<string, string> = {
+  segment: "Segmentation",
+  transcribe: "Transcription",
+  binarize: "Binarize",
+  pipeline: "Pipeline",
+};
+
 function formatJobType(type: JobResponse["type"]): string {
-  switch (type) {
-    case "segment":
-      return "Segmentation";
-    case "transcribe":
-      return "Transcription";
-    case "binarize":
-      return "Binarize";
-    case "pipeline":
-      return "Pipeline";
-    default:
-      return type;
-  }
+  return JOB_TYPE_LABELS[type] ?? type;
 }
 
 function formatWhen(iso: string): string {
@@ -52,38 +53,75 @@ function executionClass(job: JobResponse): string {
     : "project-jobs-panel__host--cloud";
 }
 
-function statusClass(status: JobResponse["status"]): string {
-  if (status === "failed") return "project-jobs-panel__status--failed";
-  if (status === "cancelled") return "project-jobs-panel__status--cancelled";
-  if (status === "done") return "project-jobs-panel__status--done";
-  if (status === "pending" || status === "waiting")
-    return "project-jobs-panel__status--pending";
-  return "project-jobs-panel__status--active";
+const STATUS_CLASSES: Record<JobStatus, string> = {
+  pending: "project-jobs-panel__status--pending",
+  waiting: "project-jobs-panel__status--pending",
+  running: "project-jobs-panel__status--active",
+  done: "project-jobs-panel__status--done",
+  failed: "project-jobs-panel__status--failed",
+  cancelled: "project-jobs-panel__status--cancelled",
+};
+
+function statusClass(status: JobStatus): string {
+  return STATUS_CLASSES[status] ?? "project-jobs-panel__status--active";
 }
 
-export function ProjectJobsPanel({
-  projectId,
-  documents,
-}: ProjectJobsPanelProps) {
+function mergeJobPage(
+  current: JobResponse[],
+  page: { items: JobResponse[] },
+  isFirstPage: boolean,
+): JobResponse[] {
+  const next = isFirstPage ? page.items : [...current, ...page.items];
+  return Array.from(new Map(next.map((job) => [job.id, job])).values()).sort(
+    (left, right) =>
+      new Date(right.created_at).getTime() -
+      new Date(left.created_at).getTime(),
+  );
+}
+
+function loadErrorMessage(err: unknown): string {
+  return err instanceof ApiError ? err.message : "Failed to load jobs";
+}
+
+function jobsSummary(
+  loading: boolean,
+  activeCount: number,
+  total: number,
+): string {
+  if (loading) return "Loading…";
+  if (activeCount > 0) return `${activeCount} running`;
+  if (total > 0) return `${total} recent`;
+  return "No jobs yet";
+}
+
+function useProjectJobs(projectId: string): {
+  jobs: JobResponse[];
+  loading: boolean;
+  loadingMore: boolean;
+  nextCursor: string | null;
+  error: string | null;
+  activeCount: number;
+  clearing: boolean;
+  loadMore: () => void;
+  clearHistory: () => void;
+} {
   const [jobs, setJobs] = useState<JobResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [clearing, setClearing] = useState(false);
   const loadMoreControllerRef = useRef<AbortController | null>(null);
 
-  const documentNames = useMemo(
-    () => new Map(documents.map((document) => [document.id, document.name])),
-    [documents],
-  );
+  const setPageLoading = (isFirstPage: boolean, value: boolean) => {
+    if (isFirstPage) setLoading(value);
+    else setLoadingMore(value);
+  };
 
   const load = useCallback(
     async (cursor: string | null, signal: AbortSignal) => {
       const isFirstPage = cursor === null;
-      if (isFirstPage) setLoading(true);
-      else setLoadingMore(true);
+      setPageLoading(isFirstPage, true);
       setError(null);
       try {
         const page = await api.listProjectJobsPage(projectId, {
@@ -92,22 +130,14 @@ export function ProjectJobsPanel({
           signal,
         });
         if (signal.aborted) return;
-        setJobs((current) => {
-          const next = isFirstPage ? page.items : [...current, ...page.items];
-          return Array.from(new Map(next.map((job) => [job.id, job])).values());
-        });
+        setJobs((current) => mergeJobPage(current, page, isFirstPage));
         setNextCursor(page.next_cursor);
       } catch (err) {
         if (signal.aborted) return;
-        const message =
-          err instanceof ApiError ? err.message : "Failed to load jobs";
-        setError(message);
+        setError(loadErrorMessage(err));
         if (isFirstPage) setJobs([]);
       } finally {
-        if (!signal.aborted) {
-          if (isFirstPage) setLoading(false);
-          else setLoadingMore(false);
-        }
+        if (!signal.aborted) setPageLoading(isFirstPage, false);
       }
     },
     [projectId],
@@ -143,25 +173,17 @@ export function ProjectJobsPanel({
     });
   });
 
-  const activeCount = jobs.filter(
-    (job) => !isTerminalJobStatus(job.status),
-  ).length;
-
-  useEffect(() => {
-    if (activeCount > 0) {
-      setExpanded(true);
-    }
-  }, [activeCount]);
-
-  const summary = loading
-    ? "Loading…"
-    : activeCount > 0
-      ? `${activeCount} running`
-      : jobs.length > 0
-        ? `${jobs.length} recent`
-        : "No jobs yet";
-
-  const finishedCount = jobs.length - activeCount;
+  const loadMore = () => {
+    if (!nextCursor || loadingMore) return;
+    const controller = new AbortController();
+    loadMoreControllerRef.current?.abort();
+    loadMoreControllerRef.current = controller;
+    void load(nextCursor, controller.signal).finally(() => {
+      if (loadMoreControllerRef.current === controller) {
+        loadMoreControllerRef.current = null;
+      }
+    });
+  };
 
   const clearHistory = async () => {
     if (clearing) return;
@@ -185,17 +207,199 @@ export function ProjectJobsPanel({
     }
   };
 
-  const loadMore = () => {
-    if (!nextCursor || loadingMore) return;
-    const controller = new AbortController();
-    loadMoreControllerRef.current?.abort();
-    loadMoreControllerRef.current = controller;
-    void load(nextCursor, controller.signal).finally(() => {
-      if (loadMoreControllerRef.current === controller) {
-        loadMoreControllerRef.current = null;
-      }
-    });
+  return {
+    jobs,
+    loading,
+    loadingMore,
+    nextCursor,
+    error,
+    activeCount: jobs.filter((job) => !isTerminalJobStatus(job.status)).length,
+    clearing,
+    loadMore,
+    clearHistory: () => void clearHistory(),
   };
+}
+
+function documentDisplayName(
+  job: JobResponse,
+  documentNames: Map<string, string>,
+): string {
+  if (!job.document_id) return "-";
+  return documentNames.get(job.document_id) ?? job.document_id.slice(0, 8);
+}
+
+function JobRow({
+  job,
+  projectId,
+  documentName,
+}: {
+  job: JobResponse;
+  projectId: string;
+  documentName: string;
+}): React.ReactNode {
+  return (
+    <tr key={job.id}>
+      <td>
+        <span className="row-title">{formatJobType(job.type)}</span>
+        <span className="row-sub">{job.id.slice(0, 8)}</span>
+      </td>
+      <td>
+        <span className={`project-jobs-panel__host ${executionClass(job)}`}>
+          {INFERENCE_HOST_LABEL[job.execution_target]}
+        </span>
+        {/* The host is stated in full on the row itself, not
+            only as a badge: a substituted host has to be
+            readable long after the submission that caused it. */}
+        <span className="row-sub">
+          {executionAnnouncement(jobExecution(job))}
+        </span>
+      </td>
+      <td className="col-muted">
+        {job.document_id ? (
+          <Link href={`/projects/${projectId}/documents/${job.document_id}`}>
+            {documentName}
+          </Link>
+        ) : (
+          documentName
+        )}
+      </td>
+      <td>
+        <span
+          className={`project-jobs-panel__status ${statusClass(job.status)}`}
+        >
+          {jobStatusLabel(job)}
+        </span>
+        {job.error && (
+          <span className="row-sub" title={job.error}>
+            {job.error}
+          </span>
+        )}
+      </td>
+      <td className="col-muted">{formatWhen(job.created_at)}</td>
+    </tr>
+  );
+}
+
+function ClearHistoryButton({
+  finishedCount,
+  clearing,
+  onClear,
+}: {
+  finishedCount: number;
+  clearing: boolean;
+  onClear: () => void;
+}): React.ReactNode {
+  if (finishedCount === 0) return null;
+  return (
+    <Popconfirm
+      title="Clear job history?"
+      description="Only finished jobs (done, failed and cancelled) are removed. Jobs that are still running stay in the list."
+      okText="Clear history"
+      cancelText="Keep"
+      okButtonProps={{ loading: clearing }}
+      onConfirm={onClear}
+    >
+      <button
+        type="button"
+        className="btn btn-outline btn-sm project-jobs-panel__clear"
+        disabled={clearing}
+      >
+        {clearing ? "Clearing…" : "Clear history"}
+      </button>
+    </Popconfirm>
+  );
+}
+
+function JobsPanelBody({
+  projectId,
+  jobs,
+  documentNames,
+  loading,
+  error,
+  expanded,
+  nextCursor,
+  loadingMore,
+  loadMore,
+}: {
+  projectId: string;
+  jobs: JobResponse[];
+  documentNames: Map<string, string>;
+  loading: boolean;
+  error: string | null;
+  expanded: boolean;
+  nextCursor: string | null;
+  loadingMore: boolean;
+  loadMore: () => void;
+}): React.ReactNode {
+  if (!expanded || loading || error || jobs.length === 0) return null;
+  return (
+    <div className="project-jobs-panel__body" id="project-jobs-panel-body">
+      <div className="data-panel">
+        <table className="data-list" aria-label="Project jobs">
+          <thead>
+            <tr>
+              <th scope="col">Job</th>
+              <th scope="col">Host</th>
+              <th scope="col">Document</th>
+              <th scope="col">Status</th>
+              <th scope="col">Started</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((job) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                projectId={projectId}
+                documentName={documentDisplayName(job, documentNames)}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {nextCursor && (
+        <div className="project-jobs-panel__more">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={loadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading jobs…" : "Load more jobs"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ProjectJobsPanel({
+  projectId,
+  documents,
+}: ProjectJobsPanelProps) {
+  const {
+    jobs,
+    loading,
+    loadingMore,
+    nextCursor,
+    error,
+    activeCount,
+    clearing,
+    loadMore,
+    clearHistory,
+  } = useProjectJobs(projectId);
+  const [expanded, setExpanded] = useState(false);
+
+  const documentNames = useMemo(
+    () => new Map(documents.map((document) => [document.id, document.name])),
+    [documents],
+  );
+
+  useEffect(() => {
+    if (activeCount > 0) {
+      setExpanded(true);
+    }
+  }, [activeCount]);
 
   if (!loading && !error && jobs.length === 0) {
     return (
@@ -234,30 +438,19 @@ export function ProjectJobsPanel({
             >
               Jobs
             </span>
-            <span className="project-jobs-panel__summary">{summary}</span>
+            <span className="project-jobs-panel__summary">
+              {jobsSummary(loading, activeCount, jobs.length)}
+            </span>
           </span>
           <span className="project-jobs-panel__chevron" aria-hidden="true">
             {expanded ? "▴" : "▾"}
           </span>
         </button>
-        {finishedCount > 0 && (
-          <Popconfirm
-            title="Clear job history?"
-            description="Only finished jobs (done, failed and cancelled) are removed. Jobs that are still running stay in the list."
-            okText="Clear history"
-            cancelText="Keep"
-            okButtonProps={{ loading: clearing }}
-            onConfirm={() => clearHistory()}
-          >
-            <button
-              type="button"
-              className="btn btn-outline btn-sm project-jobs-panel__clear"
-              disabled={clearing}
-            >
-              {clearing ? "Clearing…" : "Clear history"}
-            </button>
-          </Popconfirm>
-        )}
+        <ClearHistoryButton
+          finishedCount={jobs.length - activeCount}
+          clearing={clearing}
+          onClear={clearHistory}
+        />
       </div>
 
       {error && (
@@ -267,92 +460,17 @@ export function ProjectJobsPanel({
         </div>
       )}
 
-      {expanded && !loading && !error && jobs.length > 0 && (
-        <div className="project-jobs-panel__body" id="project-jobs-panel-body">
-          <div className="data-panel">
-            <table className="data-list" aria-label="Project jobs">
-              <thead>
-                <tr>
-                  <th scope="col">Job</th>
-                  <th scope="col">Host</th>
-                  <th scope="col">Document</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Started</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => {
-                  const documentName = job.document_id
-                    ? (documentNames.get(job.document_id) ??
-                      job.document_id.slice(0, 8))
-                    : "-";
-                  return (
-                    <tr key={job.id}>
-                      <td>
-                        <span className="row-title">
-                          {formatJobType(job.type)}
-                        </span>
-                        <span className="row-sub">{job.id.slice(0, 8)}</span>
-                      </td>
-                      <td>
-                        <span
-                          className={`project-jobs-panel__host ${executionClass(job)}`}
-                        >
-                          {INFERENCE_HOST_LABEL[job.execution_target]}
-                        </span>
-                        {/* The host is stated in full on the row itself, not
-                            only as a badge: a substituted host has to be
-                            readable long after the submission that caused it. */}
-                        <span className="row-sub">
-                          {executionAnnouncement(jobExecution(job))}
-                        </span>
-                      </td>
-                      <td className="col-muted">
-                        {job.document_id ? (
-                          <Link
-                            href={`/projects/${projectId}/documents/${job.document_id}`}
-                          >
-                            {documentName}
-                          </Link>
-                        ) : (
-                          documentName
-                        )}
-                      </td>
-                      <td>
-                        <span
-                          className={`project-jobs-panel__status ${statusClass(job.status)}`}
-                        >
-                          {jobStatusLabel(job)}
-                        </span>
-                        {job.error && (
-                          <span className="row-sub" title={job.error}>
-                            {job.error}
-                          </span>
-                        )}
-                      </td>
-                      <td className="col-muted">
-                        {formatWhen(job.created_at)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {nextCursor && (
-            <div className="project-jobs-panel__more">
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={loadMore}
-                disabled={loadingMore}
-              >
-                {loadingMore ? "Loading jobs…" : "Load more jobs"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+      <JobsPanelBody
+        projectId={projectId}
+        jobs={jobs}
+        documentNames={documentNames}
+        loading={loading}
+        error={error}
+        expanded={expanded}
+        nextCursor={nextCursor}
+        loadingMore={loadingMore}
+        loadMore={loadMore}
+      />
     </section>
   );
 }

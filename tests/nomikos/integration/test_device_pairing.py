@@ -22,30 +22,15 @@ Requires migration ``003_helper_devices``.
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from backend.ml.application.device_auth import DEVICE_TOKEN_HEADER
 from infrastructure.db import sync_engine
+from tests.nomikos.integration.helpers import pair_device_over_http
 
 pytestmark = pytest.mark.integration
-
-
-def _register(client: TestClient) -> dict[str, str]:
-    suffix = uuid.uuid4().hex[:8]
-    response = client.post(
-        "/auth/register",
-        json={
-            "email": f"device-{suffix}@test.kalamos",
-            "username": f"device_{suffix}",
-            "password": "test-pass-123",
-        },
-    )
-    assert response.status_code == 201, response.text
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 def _start_pairing(client: TestClient, name: str = "Researcher laptop") -> tuple[dict, str]:
@@ -88,18 +73,8 @@ def _collect(client: TestClient, pairing_id: str, device_code: str) -> dict:
     return response.json()
 
 
-def _pair_device(client: TestClient, headers: dict, name: str = "Researcher laptop") -> dict:
-    started, verification_token = _start_pairing(client, name)
-    _approve(client, headers, started["pairing_id"], verification_token)
-    approved = _collect(client, started["pairing_id"], started["device_code"])
-    assert approved["status"] == "approved", approved
-    approved["_pairing"] = started
-    approved["_verification_token"] = verification_token
-    return approved
-
-
-def test_mint_redeem_then_authenticate(client: TestClient) -> None:
-    headers = _register(client)
+def test_mint_redeem_then_authenticate(client: TestClient, owner_headers: dict[str, str]) -> None:
+    headers = owner_headers
     started, verification_token = _start_pairing(client)
 
     pending = _collect(client, started["pairing_id"], started["device_code"])
@@ -142,11 +117,10 @@ def test_mint_redeem_then_authenticate(client: TestClient) -> None:
     assert entries[0]["token_prefix"].startswith("nmd1.")
 
 
-def test_device_token_cannot_reach_another_users_devices(client: TestClient) -> None:
-    owner_headers = _register(client)
-    outsider_headers = _register(client)
-
-    approved = _pair_device(client, owner_headers, "Owner laptop")
+def test_device_token_cannot_reach_another_users_devices(
+    client: TestClient, owner_headers: dict[str, str], outsider_headers: dict[str, str]
+) -> None:
+    approved = pair_device_over_http(client, owner_headers, name="Owner laptop")
     token = approved["device_token"]
     device_id = approved["device_id"]
 
@@ -170,8 +144,10 @@ def test_device_token_cannot_reach_another_users_devices(client: TestClient) -> 
     ]
 
 
-def test_expired_pairing_cannot_be_approved(client: TestClient) -> None:
-    headers = _register(client)
+def test_expired_pairing_cannot_be_approved(
+    client: TestClient, owner_headers: dict[str, str]
+) -> None:
+    headers = owner_headers
     started, verification_token = _start_pairing(client)
 
     with sync_engine.begin() as connection:
@@ -223,11 +199,13 @@ def test_pairing_routes_require_authentication(client: TestClient) -> None:
     assert client.post("/device/v1/token/renew").status_code == 401
 
 
-def test_raw_secrets_are_absent_from_the_database(client: TestClient) -> None:
-    headers = _register(client)
-    approved = _pair_device(client, headers)
-    started = approved["_pairing"]
-    verification_token = approved["_verification_token"]
+def test_raw_secrets_are_absent_from_the_database(
+    client: TestClient, owner_headers: dict[str, str]
+) -> None:
+    headers = owner_headers
+    approved = pair_device_over_http(client, headers)
+    started = approved["pairing"]
+    verification_token = approved["verification_token"]
     secret = approved["device_token"].split(".", 2)[2]
 
     with sync_engine.begin() as connection:
@@ -260,11 +238,11 @@ def test_raw_secrets_are_absent_from_the_database(client: TestClient) -> None:
         assert leaked not in listed
 
 
-def test_finished_pairings_are_deleted(client: TestClient) -> None:
+def test_finished_pairings_are_deleted(client: TestClient, owner_headers: dict[str, str]) -> None:
     """Unauthenticated writes with no cleanup grow forever. Also proves the grant."""
-    headers = _register(client)
-    approved = _pair_device(client, headers, "Sweepable laptop")
-    consumed_id = approved["_pairing"]["pairing_id"]
+    headers = owner_headers
+    approved = pair_device_over_http(client, headers, name="Sweepable laptop")
+    consumed_id = approved["pairing"]["pairing_id"]
 
     with sync_engine.begin() as connection:
         connection.execute(

@@ -16,9 +16,9 @@ from backend.annotation.application.processing import apply_step
 from backend.document.application.document_service import DocumentService
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.document.infrastructure.media_store import MediaStore, get_media_store
+from backend.document.infrastructure.media_store.encoding import bounded_image
 from backend.document.infrastructure.orm_models import (
     Line,
-    PageTranscriptionLine,
     TranscriptionKind,
 )
 from backend.users.infrastructure.orm_models import User
@@ -89,13 +89,14 @@ class AnnotationExportService:
         # The segment number is the line's position in reading order, the number every
         # other surface shows, not ``order + 1``: a page written before orders were kept
         # dense can carry gaps and duplicates (ADR 0008).
+        order_by_line = {text_line.paired_line_id: text_line.order for text_line in text_lines}
         lines = await self._documents.list_part_lines(session, part.id)
         for segment_number, line in enumerate(lines, start=1):
             text = self._ground_truth_text(line)
             if text is None:
                 unpaired_segments.append(segment_number)
                 continue
-            text_order = self._paired_text_order(text_lines, line.id)
+            text_order = order_by_line.get(line.id)
             if text_order is not None:
                 paired_text_orders.add(text_order)
             segment = {"points": line.points, "kind": line.kind.value}
@@ -154,10 +155,8 @@ class AnnotationExportService:
 
     def _load_page_image(self, image_key: str) -> Image.Image:
         raw = self._media.read(image_key)
-        pil = Image.open(BytesIO(raw))
-        rgb = pil.convert("RGB")
-        pil.close()
-        return rgb
+        with bounded_image(raw) as pil:
+            return pil.convert("RGB")
 
     def _page_stem(self, image_key: str) -> str:
         return Path(image_key).stem
@@ -172,14 +171,6 @@ class AnnotationExportService:
                 return transcription.text.strip()
         return None
 
-    def _paired_text_order(
-        self, text_lines: list[PageTranscriptionLine], line_id: UUID
-    ) -> int | None:
-        for text_line in text_lines:
-            if text_line.paired_line_id == line_id:
-                return text_line.order
-        return None
-
     def _processed_image_base64(
         self,
         source_image: Image.Image,
@@ -190,14 +181,16 @@ class AnnotationExportService:
         for step in steps:
             image = apply_step(image, segment, step)
         buf = BytesIO()
-        save_kwargs: dict[str, object] = {
-            "format": "JPEG",
-            "quality": 100,
-            "subsampling": 0,
-            "optimize": False,
-        }
         dpi = source_image.info.get("dpi")
         if isinstance(dpi, tuple) and len(dpi) >= 2:
-            save_kwargs["dpi"] = (int(round(dpi[0])), int(round(dpi[1])))
-        image.save(buf, **save_kwargs)
+            image.save(
+                buf,
+                format="JPEG",
+                quality=100,
+                subsampling=0,
+                optimize=False,
+                dpi=(int(round(dpi[0])), int(round(dpi[1]))),
+            )
+        else:
+            image.save(buf, format="JPEG", quality=100, subsampling=0, optimize=False)
         return base64.b64encode(buf.getvalue()).decode("ascii")

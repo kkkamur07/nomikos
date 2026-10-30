@@ -8,27 +8,12 @@ from pydantic_settings import BaseSettings
 
 from backend.core.settings._cache import settings_cache
 from backend.core.settings._env import REPO_ROOT, env_settings_config
-
-_PLACEHOLDER_SECRET_VALUES = {
-    "change-me",
-    "change-me-in-production",
-    "replace-me",
-    "replace-with-a-secret",
-}
+from backend.core.settings.secrets import is_placeholder_secret
 
 
 def _default_inference_registry_path() -> Path:
     app_root = Path(os.environ.get("NOMIKOS_APP_ROOT", REPO_ROOT.parent))
     return app_root / "nomikos_inference" / "registry.yaml"
-
-
-def _is_placeholder_secret(value: str | None) -> bool:
-    normalized = (value or "").strip().casefold()
-    return (
-        not normalized
-        or normalized in _PLACEHOLDER_SECRET_VALUES
-        or normalized.startswith("replace-with-")
-    )
 
 
 class MLSettings(BaseSettings):
@@ -52,7 +37,7 @@ class MLSettings(BaseSettings):
         if self.environment.casefold() != "production":
             return self
 
-        if self.inference_webhook_secret is not None and _is_placeholder_secret(
+        if self.inference_webhook_secret is not None and is_placeholder_secret(
             self.inference_webhook_secret
         ):
             raise ValueError(
@@ -64,7 +49,7 @@ class MLSettings(BaseSettings):
         """Fail closed when an API process accepts inference completion callbacks."""
         if self.environment.casefold() != "production":
             return
-        if _is_placeholder_secret(self.inference_webhook_secret):
+        if is_placeholder_secret(self.inference_webhook_secret):
             raise ValueError(
                 "INFERENCE_WEBHOOK_SECRET must be set to a non-placeholder secret in production"
             )
@@ -73,6 +58,3 @@ class MLSettings(BaseSettings):
 @settings_cache
 def get_inference_settings() -> MLSettings:
     return MLSettings()
-
-
-get_ml_settings = get_inference_settings

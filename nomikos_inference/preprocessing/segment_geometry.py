@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import NotRequired, TypedDict
 
 import numpy as np
 
@@ -102,11 +102,25 @@ def clamp_polygon_vertices(
     return result
 
 
+class BllaSimplificationMetrics(TypedDict):
+    """Metrics ``simplify_blla_boundary`` reports alongside the cleaned ring.
+
+    The spacing/epsilon entries are only present when the boundary had at
+    least four points and was actually run through the simplifier.
+    """
+
+    simplification_status: str
+    raw_point_count: int
+    simplified_point_count: int
+    min_vertex_spacing: NotRequired[float]
+    epsilon: NotRequired[float]
+
+
 def simplify_blla_boundary(
     points: list[list[float]],
     *,
     min_distance: float = MIN_VERTEX_SPACING_PX,
-) -> tuple[list[list[float]], dict[str, Any]]:
+) -> tuple[list[list[float]], BllaSimplificationMetrics]:
     """Lightweight Douglas-Peucker + spacing cleanup for raw BLLA boundaries."""
     if len(points) < 4:
         return points, {

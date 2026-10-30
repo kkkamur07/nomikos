@@ -8,7 +8,7 @@
  * has transcribed yet, so the row states the reasons and asks for a second
  * click before it will delete anything.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import type {
   SegmentHealthResponse,
@@ -37,12 +37,199 @@ type PageEditorSegmentHealthPanelProps = {
 };
 
 /** Short, stable label for a line, so a row can name one without a full uuid. */
-export function shortLineId(lineId: string): string {
+function shortLineId(lineId: string): string {
   return lineId.slice(0, 8);
 }
 
-export function percent(value: number): string {
+function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+type RowsProps = {
+  report: SegmentHealthResponse;
+  pending: string | null;
+  onApply: (action: SegmentHealthAction) => void;
+  onHighlight?: (lineIds: string[]) => void;
+};
+
+function HealthDialog({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="pe-dropdown pe-dropdown--segment-health"
+      role="dialog"
+      aria-label="Segment health"
+    >
+      {children}
+    </div>
+  );
+}
+
+function SpanningRows({ report, pending, onApply, onHighlight }: RowsProps) {
+  if (report.spanning.length === 0) return null;
+  return (
+    <>
+      <div className="pe-dd-section">Across two columns</div>
+      {report.spanning.map((split: SegmentSplitResponse) => (
+        <div
+          key={`split-${split.line_id}`}
+          className="pe-dd-row"
+          onMouseEnter={() => onHighlight?.([split.line_id])}
+        >
+          <span className="pe-dd-check__label">
+            Segment {shortLineId(split.line_id)} spans the gutter. Cut into{" "}
+            {split.piece_count} pieces.
+          </span>
+          <button
+            type="button"
+            className="pe-dd-btn"
+            disabled={pending === split.line_id}
+            onClick={() => onApply({ kind: "split", lineId: split.line_id })}
+          >
+            {pending === split.line_id ? "Cutting…" : "Cut at the gutter"}
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function FragmentRows({ report, pending, onApply, onHighlight }: RowsProps) {
+  if (report.fragments.length === 0) return null;
+  return (
+    <>
+      <div className="pe-dd-section">Broken into pieces</div>
+      {report.fragments.map((merge: SegmentMergeResponse) => (
+        <div
+          key={`merge-${merge.fragment_id}`}
+          className="pe-dd-row"
+          onMouseEnter={() =>
+            onHighlight?.([merge.primary_id, merge.fragment_id])
+          }
+        >
+          <span className="pe-dd-check__label">
+            {shortLineId(merge.fragment_id)} is a piece of{" "}
+            {shortLineId(merge.primary_id)}. Merging keeps{" "}
+            {shortLineId(merge.primary_id)}, so its transcription survives.
+          </span>
+          <button
+            type="button"
+            className="pe-dd-btn"
+            disabled={pending === merge.fragment_id}
+            onClick={() =>
+              onApply({
+                kind: "merge",
+                primaryId: merge.primary_id,
+                fragmentId: merge.fragment_id,
+              })
+            }
+          >
+            {pending === merge.fragment_id ? "Merging…" : "Merge"}
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function OverlapRows({ report, pending, onApply, onHighlight }: RowsProps) {
+  if (report.overlaps.length === 0) return null;
+  return (
+    <>
+      <div className="pe-dd-section">Grown into each other</div>
+      {report.overlaps.map((overlap: SegmentOverlapResponse) => (
+        <div
+          key={`trim-${overlap.upper_id}-${overlap.lower_id}`}
+          className="pe-dd-row"
+          onMouseEnter={() =>
+            onHighlight?.([overlap.upper_id, overlap.lower_id])
+          }
+        >
+          <span className="pe-dd-check__label">
+            {shortLineId(overlap.upper_id)} and {shortLineId(overlap.lower_id)}{" "}
+            share {percent(overlap.ratio)} of the smaller mask.
+            {overlap.duplicate
+              ? " These are one line drawn twice; delete one rather than trimming both."
+              : ` Trimming costs ${percent(overlap.upper_loss)} and ${percent(
+                  overlap.lower_loss,
+                )} of the two outlines.`}
+          </span>
+          {/* A duplicate pair gets no button: a cut midway between the two
+              baselines halves one line rather than separating two. */}
+          {overlap.duplicate ? null : (
+            <button
+              type="button"
+              className="pe-dd-btn"
+              disabled={pending === overlap.upper_id}
+              onClick={() =>
+                onApply({
+                  kind: "trim",
+                  upperId: overlap.upper_id,
+                  lowerId: overlap.lower_id,
+                })
+              }
+            >
+              {pending === overlap.upper_id ? "Trimming…" : "Trim apart"}
+            </button>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function SuspectRows({
+  report,
+  pending,
+  onApply,
+  onHighlight,
+  armedSuspect,
+  setArmedSuspect,
+}: RowsProps & {
+  armedSuspect: string | null;
+  setArmedSuspect: (lineId: string | null) => void;
+}) {
+  if (report.suspects.length === 0) return null;
+  return (
+    <>
+      <div className="pe-dd-section">Might be noise</div>
+      <p className="pe-dd-hint">
+        Flagged, never deleted automatically. Some of this is real ink nobody
+        has transcribed yet.
+      </p>
+      {report.suspects.map((suspect: SegmentSuspectResponse) => (
+        <div
+          key={`suspect-${suspect.line_id}`}
+          className="pe-dd-row"
+          onMouseEnter={() => onHighlight?.([suspect.line_id])}
+        >
+          <span className="pe-dd-check__label">
+            {shortLineId(suspect.line_id)}: {suspect.reasons.join("; ")}.
+          </span>
+          {armedSuspect === suspect.line_id ? (
+            <button
+              type="button"
+              className="pe-dd-btn pe-dd-btn--danger"
+              disabled={pending === suspect.line_id}
+              onClick={() => {
+                setArmedSuspect(null);
+                onApply({ kind: "delete", lineId: suspect.line_id });
+              }}
+            >
+              {pending === suspect.line_id ? "Deleting…" : "Really delete it"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="pe-dd-btn"
+              onClick={() => setArmedSuspect(suspect.line_id)}
+            >
+              Delete…
+            </button>
+          )}
+        </div>
+      ))}
+    </>
+  );
 }
 
 export function PageEditorSegmentHealthPanel({
@@ -61,13 +248,9 @@ export function PageEditorSegmentHealthPanel({
 
   if (loading && !report) {
     return (
-      <div
-        className="pe-dropdown pe-dropdown--segment-health"
-        role="dialog"
-        aria-label="Segment health"
-      >
+      <HealthDialog>
         <div className="pe-dd-section">Checking the page…</div>
-      </div>
+      </HealthDialog>
     );
   }
 
@@ -77,11 +260,7 @@ export function PageEditorSegmentHealthPanel({
   // refusal: the finding the reviewer clicked is usually gone from it.
   if (error && !report) {
     return (
-      <div
-        className="pe-dropdown pe-dropdown--segment-health"
-        role="dialog"
-        aria-label="Segment health"
-      >
+      <HealthDialog>
         <div className="pe-dd-section">Segment health</div>
         <p className="pe-dd-hint" role="alert">
           {error}
@@ -89,7 +268,7 @@ export function PageEditorSegmentHealthPanel({
         <button type="button" className="pe-dd-btn" onClick={onRefresh}>
           Try again
         </button>
-      </div>
+      </HealthDialog>
     );
   }
 
@@ -97,14 +276,9 @@ export function PageEditorSegmentHealthPanel({
     return null;
   }
 
-  const hasFindings = report.finding_count > 0;
-
+  const rows = { report, pending, onApply, onHighlight };
   return (
-    <div
-      className="pe-dropdown pe-dropdown--segment-health"
-      role="dialog"
-      aria-label="Segment health"
-    >
+    <HealthDialog>
       <div className="pe-dd-section">
         Segment health
         {report.measured_page ? null : (
@@ -124,162 +298,20 @@ export function PageEditorSegmentHealthPanel({
         </p>
       ) : null}
 
-      {!hasFindings ? (
+      {report.finding_count > 0 ? null : (
         <p className="pe-dd-hint">
           Nothing systematic found across {report.considered_count} segments.
         </p>
-      ) : null}
+      )}
 
-      {report.spanning.length > 0 ? (
-        <>
-          <div className="pe-dd-section">Across two columns</div>
-          {report.spanning.map((split: SegmentSplitResponse) => (
-            <div
-              key={`split-${split.line_id}`}
-              className="pe-dd-row"
-              onMouseEnter={() => onHighlight?.([split.line_id])}
-            >
-              <span className="pe-dd-check__label">
-                Segment {shortLineId(split.line_id)} spans the gutter. Cut into{" "}
-                {split.piece_count} pieces.
-              </span>
-              <button
-                type="button"
-                className="pe-dd-btn"
-                disabled={pending === split.line_id}
-                onClick={() =>
-                  onApply({ kind: "split", lineId: split.line_id })
-                }
-              >
-                {pending === split.line_id ? "Cutting…" : "Cut at the gutter"}
-              </button>
-            </div>
-          ))}
-        </>
-      ) : null}
-
-      {report.fragments.length > 0 ? (
-        <>
-          <div className="pe-dd-section">Broken into pieces</div>
-          {report.fragments.map((merge: SegmentMergeResponse) => (
-            <div
-              key={`merge-${merge.fragment_id}`}
-              className="pe-dd-row"
-              onMouseEnter={() =>
-                onHighlight?.([merge.primary_id, merge.fragment_id])
-              }
-            >
-              <span className="pe-dd-check__label">
-                {shortLineId(merge.fragment_id)} is a piece of{" "}
-                {shortLineId(merge.primary_id)}. Merging keeps{" "}
-                {shortLineId(merge.primary_id)}, so its transcription survives.
-              </span>
-              <button
-                type="button"
-                className="pe-dd-btn"
-                disabled={pending === merge.fragment_id}
-                onClick={() =>
-                  onApply({
-                    kind: "merge",
-                    primaryId: merge.primary_id,
-                    fragmentId: merge.fragment_id,
-                  })
-                }
-              >
-                {pending === merge.fragment_id ? "Merging…" : "Merge"}
-              </button>
-            </div>
-          ))}
-        </>
-      ) : null}
-
-      {report.overlaps.length > 0 ? (
-        <>
-          <div className="pe-dd-section">Grown into each other</div>
-          {report.overlaps.map((overlap: SegmentOverlapResponse) => (
-            <div
-              key={`trim-${overlap.upper_id}-${overlap.lower_id}`}
-              className="pe-dd-row"
-              onMouseEnter={() =>
-                onHighlight?.([overlap.upper_id, overlap.lower_id])
-              }
-            >
-              <span className="pe-dd-check__label">
-                {shortLineId(overlap.upper_id)} and{" "}
-                {shortLineId(overlap.lower_id)} share {percent(overlap.ratio)}{" "}
-                of the smaller mask.
-                {overlap.duplicate
-                  ? " These are one line drawn twice; delete one rather than trimming both."
-                  : ` Trimming costs ${percent(overlap.upper_loss)} and ${percent(
-                      overlap.lower_loss,
-                    )} of the two outlines.`}
-              </span>
-              {/* A duplicate pair gets no button: a cut midway between the two
-                  baselines halves one line rather than separating two. */}
-              {overlap.duplicate ? null : (
-                <button
-                  type="button"
-                  className="pe-dd-btn"
-                  disabled={pending === overlap.upper_id}
-                  onClick={() =>
-                    onApply({
-                      kind: "trim",
-                      upperId: overlap.upper_id,
-                      lowerId: overlap.lower_id,
-                    })
-                  }
-                >
-                  {pending === overlap.upper_id ? "Trimming…" : "Trim apart"}
-                </button>
-              )}
-            </div>
-          ))}
-        </>
-      ) : null}
-
-      {report.suspects.length > 0 ? (
-        <>
-          <div className="pe-dd-section">Might be noise</div>
-          <p className="pe-dd-hint">
-            Flagged, never deleted automatically. Some of this is real ink
-            nobody has transcribed yet.
-          </p>
-          {report.suspects.map((suspect: SegmentSuspectResponse) => (
-            <div
-              key={`suspect-${suspect.line_id}`}
-              className="pe-dd-row"
-              onMouseEnter={() => onHighlight?.([suspect.line_id])}
-            >
-              <span className="pe-dd-check__label">
-                {shortLineId(suspect.line_id)}: {suspect.reasons.join("; ")}.
-              </span>
-              {armedSuspect === suspect.line_id ? (
-                <button
-                  type="button"
-                  className="pe-dd-btn pe-dd-btn--danger"
-                  disabled={pending === suspect.line_id}
-                  onClick={() => {
-                    setArmedSuspect(null);
-                    onApply({ kind: "delete", lineId: suspect.line_id });
-                  }}
-                >
-                  {pending === suspect.line_id
-                    ? "Deleting…"
-                    : "Really delete it"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="pe-dd-btn"
-                  onClick={() => setArmedSuspect(suspect.line_id)}
-                >
-                  Delete…
-                </button>
-              )}
-            </div>
-          ))}
-        </>
-      ) : null}
-    </div>
+      <SpanningRows {...rows} />
+      <FragmentRows {...rows} />
+      <OverlapRows {...rows} />
+      <SuspectRows
+        {...rows}
+        armedSuspect={armedSuspect}
+        setArmedSuspect={setArmedSuspect}
+      />
+    </HealthDialog>
   );
 }

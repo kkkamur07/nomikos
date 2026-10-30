@@ -31,6 +31,18 @@ type DocumentLiveSharingControlsProps = {
  * renders this; the wider, panel-shaped variant this component used to grow
  * when `compact` was false went with it.
  */
+function shareLinkUrls(
+  projectId: string,
+  documentId: string,
+  publicShareToken: string | null,
+): { publicPath: string | null; publicUrl: string | null } {
+  if (!publicShareToken) return { publicPath: null, publicUrl: null };
+  return {
+    publicPath: publicDocumentPath(projectId, documentId, publicShareToken),
+    publicUrl: publicDocumentUrl(projectId, documentId, publicShareToken),
+  };
+}
+
 export function DocumentLiveSharingControls({
   projectId,
   documentId,
@@ -42,12 +54,11 @@ export function DocumentLiveSharingControls({
   const [publishing, setPublishing] = useState(false);
   const isPublished = workflow === "published";
   const isArchived = workflow === "archived";
-  const publicPath = publicShareToken
-    ? publicDocumentPath(projectId, documentId, publicShareToken)
-    : null;
-  const publicUrl = publicShareToken
-    ? publicDocumentUrl(projectId, documentId, publicShareToken)
-    : null;
+  const { publicPath, publicUrl } = shareLinkUrls(
+    projectId,
+    documentId,
+    publicShareToken,
+  );
   const busy = disabled || publishing;
 
   async function handlePublishToggle() {
@@ -87,46 +98,75 @@ export function DocumentLiveSharingControls({
     }
   }
 
+  function toggleLabel(publishing: boolean, isPublished: boolean): string {
+    if (publishing) return "Updating…";
+    return isPublished ? "Unpublish document" : "Publish document";
+  }
+
+  function PublicLinkBlock({
+    documentId,
+    publicUrl,
+    publicPath,
+    busy,
+    onCopy,
+  }: {
+    documentId: string;
+    publicUrl: string;
+    publicPath: string;
+    busy: boolean;
+    onCopy: () => void;
+  }): React.ReactNode {
+    return (
+      <div className="pe-dd-share">
+        <label
+          className="entity-panel__label"
+          htmlFor={`public-url-${documentId}`}
+        >
+          Public page
+        </label>
+        <input
+          id={`public-url-${documentId}`}
+          className="pe-dd-share__url"
+          type="text"
+          readOnly
+          value={publicUrl}
+          aria-label="Public document URL"
+        />
+        <div className="pe-dd-share__actions">
+          <button
+            type="button"
+            className="btn btn-outline btn-xs"
+            disabled={busy}
+            onClick={onCopy}
+          >
+            Copy link
+          </button>
+          <Link
+            href={publicPath}
+            className="btn btn-ghost btn-xs"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open public view
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="entity-panel__meta">
         <WorkflowBadge workflow={workflow} />
       </div>
       {isPublished && publicUrl && publicPath && (
-        <div className="pe-dd-share">
-          <label
-            className="entity-panel__label"
-            htmlFor={`public-url-${documentId}`}
-          >
-            Public page
-          </label>
-          <input
-            id={`public-url-${documentId}`}
-            className="pe-dd-share__url"
-            type="text"
-            readOnly
-            value={publicUrl}
-            aria-label="Public document URL"
-          />
-          <div className="pe-dd-share__actions">
-            <button
-              type="button"
-              className="btn btn-outline btn-xs"
-              disabled={busy}
-              onClick={() => void handleCopyPublicLink()}
-            >
-              Copy link
-            </button>
-            <Link
-              href={publicPath}
-              className="btn btn-ghost btn-xs"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open public view
-            </Link>
-          </div>
-        </div>
+        <PublicLinkBlock
+          documentId={documentId}
+          publicUrl={publicUrl}
+          publicPath={publicPath}
+          busy={busy}
+          onCopy={() => void handleCopyPublicLink()}
+        />
       )}
       {/*
         A collaborator's document response never carries the token - only the
@@ -146,11 +186,7 @@ export function DocumentLiveSharingControls({
           disabled={busy}
           onClick={() => void handlePublishToggle()}
         >
-          {publishing
-            ? "Updating…"
-            : isPublished
-              ? "Unpublish document"
-              : "Publish document"}
+          {toggleLabel(publishing, isPublished)}
         </button>
       )}
     </>

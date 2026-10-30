@@ -5,9 +5,11 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.core.exceptions import ConflictError
 from backend.ml.infrastructure.orm_models import (
     InferenceModel,
     InferenceTask,
@@ -96,9 +98,17 @@ class MlRepository:
             document_part_id=document_part_id,
             overrides=overrides or {},
         )
-        session.add(binding)
-        await session.commit()
-        await session.refresh(binding)
+        try:
+            session.add(binding)
+            await session.commit()
+            await session.refresh(binding)
+        except IntegrityError as exc:
+            # The application-level duplicate check in
+            # ``InferenceModelService._require_no_existing_binding`` lost a
+            # concurrent create. This maps whatever the database rejects into
+            # the same 409 the pre-check raises.
+            await session.rollback()
+            raise ConflictError("A binding already exists for this scope and task") from exc
         return binding
 
     async def update_binding(

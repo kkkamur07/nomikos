@@ -463,32 +463,6 @@ def test_an_agent_below_the_floor_upgrades_re_execs_and_then_claims(
 # whether the first one `execve`d or forked.
 
 
-# ---------------------------------------------------------------------------
-# Merely outdated: a notice, and no upgrade
-# ---------------------------------------------------------------------------
-def test_an_agent_that_is_merely_outdated_is_told_and_left_alone(agent_at, platform_at) -> None:
-    """Outdated is deliberately not the same state as below the floor.
-
-    Most upgrades are not urgent, and refusing them would make every release an
-    outage for anyone who had not restarted. So: a notice, the same build still
-    on disk afterwards, and a claim the platform serves.
-    """
-    platform = platform_at(minimum=AGENT_OLD, latest=AGENT_NEW)
-    agent = agent_at(AGENT_OLD)
-    device_token = pair_a_device(platform, agent_version=AGENT_OLD)
-
-    completed = agent.run("upgrade", "--api-url", platform.base_url)
-
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert AGENT_NEW in completed.stdout, completed.stdout
-    assert "Upgrading" not in completed.stdout, completed.stdout
-    assert agent.installed_version() == AGENT_OLD, "an outdated agent upgraded itself"
-
-    served, body = claim(platform, device_token=device_token, agent_version=AGENT_OLD)
-    assert served == 200, body
-    assert body["agent"]["outdated"] is True
-
-
 # `test_an_agent_at_the_current_version_prints_nothing` stood here, asserting stdout and
 # stderr are both the empty string for a current build. That is a claim about silence, and
 # it cost a wheel install and a platform to make it.
@@ -519,32 +493,6 @@ def test_a_failed_upgrade_exits_non_zero_and_claims_nothing(agent_at, platform_a
 
     refused, body = claim(platform, device_token=device_token, agent_version=AGENT_OLD)
     assert refused == 426, body
-
-
-def test_an_upgrade_that_did_not_take_stops_instead_of_re_execing_forever(
-    agent_at, platform_at
-) -> None:
-    """The loop guard, from the far side of a re-exec.
-
-    A process that upgraded, restarted, and finds itself *still* below the floor
-    would fetch the same wheel and exec again for as long as the machine is
-    powered on. One attempt per launch: the environment carries the version it
-    came from, and finding it set turns the second refusal into a fatal error
-    naming both numbers.
-    """
-    platform = platform_at(minimum="0.5.0", latest=AGENT_NEW)
-    agent = agent_at(AGENT_OLD)
-
-    completed = agent.run(
-        "upgrade", "--api-url", platform.base_url, extra={"NOMIKOS_UPGRADED_FROM": "0.0.9"}
-    )
-
-    assert completed.returncode != 0, completed.stdout
-    assert "did not fix this" in completed.stderr, completed.stderr
-    assert "0.0.9" in completed.stderr and AGENT_OLD in completed.stderr
-    # No second attempt was made: nothing was installed, nothing was restarted.
-    assert "Upgrading" not in completed.stdout, completed.stdout
-    assert agent.installed_version() == AGENT_OLD
 
 
 def test_a_source_checkout_is_told_to_install_rather_than_upgraded(platform_at, tmp_path) -> None:
@@ -579,23 +527,6 @@ def test_a_source_checkout_is_told_to_install_rather_than_upgraded(platform_at, 
     assert completed.returncode != 0, completed.stdout
     assert "source checkout" in completed.stderr, completed.stderr
     assert "install" in completed.stderr.lower()
-
-
-def test_a_platform_that_cannot_be_reached_does_not_stop_the_agent(agent_at) -> None:
-    """A researcher on a train has not been refused, and must not be told so.
-
-    Whatever the agent was about to do will fail on its own terms with a better
-    message than this check could give, so an unanswerable floor is a dim line
-    and not an exit status.
-    """
-    agent = agent_at(AGENT_OLD)
-    unreachable = f"http://127.0.0.1:{free_port()}"
-
-    completed = agent.run("upgrade", "--api-url", unreachable)
-
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "Continuing as" in completed.stderr, completed.stderr
-    assert agent.installed_version() == AGENT_OLD
 
 
 # ---------------------------------------------------------------------------

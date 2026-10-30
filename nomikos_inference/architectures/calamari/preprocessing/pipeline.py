@@ -24,25 +24,10 @@ If the trainer's loader changes, this file changes with it, and
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 from PIL import Image
 
 from nomikos_inference.admission import open_image_bytes
-from nomikos_inference.architectures.calamari.preprocessing.conversion import (
-    load_line_image_grayscale,
-)
-
-
-def preprocess_line_image_to_calamari_tensor(
-    image_path: Path,
-    *,
-    line_height: int = 48,
-) -> np.ndarray:
-    """Return Calamari model input as ``batch x time x height x channel`` uint8."""
-    image = load_line_image_grayscale(image_path)
-    return preprocess_line_array_to_calamari_tensor(image, line_height=line_height)
 
 
 def preprocess_line_image_bytes_to_calamari_tensor(

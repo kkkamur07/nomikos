@@ -82,6 +82,69 @@ def test_registry_rejects_partial_hf_provenance():
         )
 
 
+def test_registry_rejects_hf_entry_with_neither_pin():
+    """An hf:// entry with neither pin must fail validation, not resolve time."""
+    with pytest.raises(ValueError, match="both hub_revision and artifact_sha256"):
+        RegistryVersionEntry(weights_source="hf://example/demo@stable")
+
+
+def _transcribe_entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "task": "transcribe",
+        "architecture": "calamari",
+        "device": "cpu",
+        "line_crop": "polygon-white",
+        "line_crop_padding": 12,
+        "versions": {
+            "stable": {
+                "weights_source": "hf://example/demo@stable",
+                "hub_revision": "a" * 40,
+                "artifact_sha256": "b" * 64,
+            }
+        },
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _transcribe_doc(**overrides: object) -> dict[str, object]:
+    return {"models": {"demo": _transcribe_entry(**overrides)}}
+
+
+def test_registry_rejects_transcribe_entry_without_crop() -> None:
+    from nomikos_inference.registry import RegistryDocument
+
+    entry = _transcribe_entry()
+    entry.pop("line_crop")
+    with pytest.raises(ValueError, match="must set line_crop"):
+        RegistryDocument.model_validate({"models": {"demo": entry}})
+
+
+def test_registry_rejects_transcribe_entry_without_padding() -> None:
+    from nomikos_inference.registry import RegistryDocument
+
+    entry = _transcribe_entry()
+    entry.pop("line_crop_padding")
+    with pytest.raises(ValueError, match="must set line_crop_padding"):
+        RegistryDocument.model_validate({"models": {"demo": entry}})
+
+
+def test_registry_rejects_negative_padding() -> None:
+    from nomikos_inference.registry import RegistryDocument
+
+    with pytest.raises(ValueError, match="negative line_crop_padding"):
+        RegistryDocument.model_validate(_transcribe_doc(line_crop_padding=-1))
+
+
+def test_registry_rejects_crop_on_segment_entry() -> None:
+    from nomikos_inference.registry import RegistryDocument
+
+    with pytest.raises(ValueError, match="must not set line_crop"):
+        RegistryDocument.model_validate(
+            _transcribe_doc(task="segment", architecture="blla", device="cpu")
+        )
+
+
 # `test_blla_rejects_digest_mismatch_before_runtime_load` stood here. The same ordering
 # claim -- digest before open, integrity failure rather than a parse error -- is
 # `test_architecture_contract.py::test_corrupt_artifact_is_a_service_error_not_a_client_error`,

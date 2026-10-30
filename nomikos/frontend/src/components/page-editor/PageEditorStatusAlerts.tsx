@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "../ui/toast";
 import type { StatusMessage } from "./statusMessage";
 
@@ -10,10 +10,20 @@ import type { StatusMessage } from "./statusMessage";
  * otherwise be one dependency that never changed. See `statusMessage`.
  */
 function useSuccessToast(message: StatusMessage | null) {
+  const messageRef = useRef(message);
+  messageRef.current = message;
+  const token = message?.at;
   useEffect(() => {
-    if (message) toast.success(message.text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the token is the identity of this message
-  }, [message?.at]);
+    if (token !== undefined && messageRef.current) {
+      toast.success(messageRef.current.text);
+    }
+  }, [token]);
+}
+
+function useErrorToast(text: string | null) {
+  useEffect(() => {
+    if (text) toast.error(text);
+  }, [text]);
 }
 
 type PageEditorStatusAlertsProps = {
@@ -49,62 +59,53 @@ function StatusItem({
   );
 }
 
-/** Success/completion feedback uses auto-dismiss toasts; only errors stay sticky. */
-export function PageEditorStatusAlerts({
-  submissionRefusal,
-  saveMessage,
-  transcriptionSaveMessage,
-  ocrMessage,
-  segmentMessage,
-  mutationError,
-  pairingError,
-  layoutError,
-  lineError,
-}: PageEditorStatusAlertsProps) {
-  useSuccessToast(saveMessage);
-  useSuccessToast(transcriptionSaveMessage);
-  useSuccessToast(ocrMessage);
-  useSuccessToast(segmentMessage);
-  useEffect(() => {
-    if (mutationError) toast.error(mutationError);
-  }, [mutationError]);
-  useEffect(() => {
-    if (pairingError) toast.error(pairingError);
-  }, [pairingError]);
-  useEffect(() => {
-    if (layoutError) toast.error(`Layout API unavailable: ${layoutError}`);
-  }, [layoutError]);
-  useEffect(() => {
-    if (lineError) toast.error(`Segment API unavailable: ${lineError}`);
-  }, [lineError]);
+type StickyAlert = {
+  kind: string;
+  text: string;
+  variant: "error" | "warning";
+};
 
-  const showSticky =
-    submissionRefusal ||
-    mutationError ||
-    pairingError ||
-    layoutError ||
-    lineError;
-  if (!showSticky) return null;
+function unavailable(api: string, error: string | null): string | null {
+  return error ? `${api} API unavailable: ${error}` : null;
+}
+
+/** The alerts that stay on screen, in the order they are shown. */
+function stickyAlerts(props: PageEditorStatusAlertsProps): StickyAlert[] {
+  const alerts: [string, string | null, StickyAlert["variant"]][] = [
+    ["refusal", props.submissionRefusal, "warning"],
+    ["mutation", props.mutationError, "error"],
+    ["pairing", props.pairingError, "warning"],
+    ["layout", unavailable("Layout", props.layoutError), "warning"],
+    ["line", unavailable("Segment", props.lineError), "warning"],
+  ];
+  return alerts.flatMap(([kind, text, variant]) =>
+    text ? [{ kind, text, variant }] : [],
+  );
+}
+
+/** Success/completion feedback uses auto-dismiss toasts; only errors stay sticky. */
+export function PageEditorStatusAlerts(props: PageEditorStatusAlertsProps) {
+  useSuccessToast(props.saveMessage);
+  useSuccessToast(props.transcriptionSaveMessage);
+  useSuccessToast(props.ocrMessage);
+  useSuccessToast(props.segmentMessage);
+  useErrorToast(props.mutationError);
+  useErrorToast(props.pairingError);
+  useErrorToast(unavailable("Layout", props.layoutError));
+  useErrorToast(unavailable("Segment", props.lineError));
+
+  const alerts = stickyAlerts(props);
+  if (alerts.length === 0) return null;
 
   return (
     <div className="pe-status-alerts">
-      {submissionRefusal && (
-        <StatusItem message={submissionRefusal} variant="warning" />
-      )}
-      {mutationError && <StatusItem message={mutationError} variant="error" />}
-      {pairingError && <StatusItem message={pairingError} variant="warning" />}
-      {layoutError && (
+      {alerts.map((alert) => (
         <StatusItem
-          message={`Layout API unavailable: ${layoutError}`}
-          variant="warning"
+          key={alert.kind}
+          message={alert.text}
+          variant={alert.variant}
         />
-      )}
-      {lineError && (
-        <StatusItem
-          message={`Segment API unavailable: ${lineError}`}
-          variant="warning"
-        />
-      )}
+      ))}
     </div>
   );
 }
@@ -112,11 +113,5 @@ export function PageEditorStatusAlerts({
 export function hasPageEditorStatusAlerts(
   props: PageEditorStatusAlertsProps,
 ): boolean {
-  return Boolean(
-    props.submissionRefusal ||
-    props.mutationError ||
-    props.pairingError ||
-    props.layoutError ||
-    props.lineError,
-  );
+  return stickyAlerts(props).length > 0;
 }

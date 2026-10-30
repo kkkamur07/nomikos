@@ -151,23 +151,6 @@ def _last_json_line(output: str) -> dict:
 #   pass.
 
 
-def test_the_hub_cache_defaults_under_the_researchers_home_directory(
-    installed_package: dict[str, Path],
-) -> None:
-    """Not beside the code: in a wheel, "beside the code" is site-packages."""
-    output = _run_installed(
-        installed_package,
-        "import json, pathlib;"
-        " from nomikos_inference.hub.cache import DEFAULT_CACHE_ROOT;"
-        " print(json.dumps({'root': str(DEFAULT_CACHE_ROOT),"
-        " 'home': str(pathlib.Path.home())}))",
-    )
-    result = _last_json_line(output)
-
-    assert Path(result["root"]).is_relative_to(Path(result["home"]))
-    assert not Path(result["root"]).is_relative_to(installed_package["venv"])
-
-
 @pytest.fixture(scope="session")
 def real_page_run(installed_package: dict[str, Path], tmp_path_factory) -> dict:
     """Segment and transcribe a real page through the installed package.

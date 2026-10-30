@@ -1,0 +1,118 @@
+/* ─── Pager: one page at a time, from the toolbar ───────────────── */
+.pe-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px;
+}
+.pe-pager__step {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.9375rem;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 3px;
+}
+.pe-pager__step:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.pe-pager__step:disabled {
+  color: var(--border);
+  cursor: default;
+}
+.pe-pager__step:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 1px;
+}
+.pe-pager__label {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  white-space: nowrap;
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1200px) {
+  .pe-pager__of {
+    display: none;
+  }
+}
+
+/* Linked hover from the text panel: brighten the segment without touching
+   the selection colours, which stay inline on the shape. */
+.pe-segment-shape.is-hovered {
+  filter: brightness(1.2);
+}
+
+/* The split pane stays mounted with the transcript closed (the canvas keeps
+   its zoom); the pane's own display: flex would otherwise beat [hidden]. */
+.pe-split-right[hidden],
+.pe-split-handle[hidden] {
+  display: none;
+}
+
+/* The merge bar rides just above the tool island, and only while a group of
+   segments is selected. Same surface treatment, so the two read as one
+   cluster rather than a stray toast over the page. */
+.pe-merge-bar {
+  position: absolute;
+  bottom: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  z-index: 5;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px rgba(26, 26, 26, 0.06),
+    0 4px 16px rgba(26, 26, 26, 0.13);
+  max-width: calc(100% - 24px);
+  font-size: 0.75rem;
+}
+.pe-merge-bar__count {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.pe-merge-bar__btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pe-merge-bar__btn--primary {
+  border-color: transparent;
+  background: var(--accent, #0d1f3c);
+  color: #fff;
+}
+.pe-merge-bar__btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.pe-merge-bar__error {
+  color: var(--red, #b40000);
+}
+
+/* One choice per conflicting segment, with its text on the same line as the
+   radio: the words are what is being chosen between, not the numbers. */
+.pe-merge-choice {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+}

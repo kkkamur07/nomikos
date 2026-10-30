@@ -31,6 +31,7 @@ delete, and each says so at the point it is written.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -102,9 +103,36 @@ class SegmentHealthService:
         part = await self._require_part(session, user, project_id, document_id, part_id)
         lines = await self._documents.list_part_lines(session, part_id)
         paired_ids = await self._documents.paired_line_ids(session, part_id)
-        segments = [self._to_segment(line, paired_ids) for line in lines]
-        usable = [segment for segment in segments if len(segment.points) >= 3]
+        return await self._compute_report(part, lines, paired_ids, part_id)
 
+    async def _compute_report(
+        self,
+        part: DocumentPart,
+        lines: list[Line],
+        paired_ids: set[UUID],
+        part_id: UUID,
+    ) -> SegmentHealthReport:
+        """The pure-geometry findings, derived off the event loop.
+
+        The finders are O(n²) over the page's lines; a large page costs seconds
+        of interpreter time, which would stall every other request on the worker.
+        """
+        return await asyncio.to_thread(
+            self._findings_report,
+            part,
+            [self._to_segment(line, paired_ids) for line in lines],
+            len(lines),
+            part_id,
+        )
+
+    def _findings_report(
+        self,
+        part: DocumentPart,
+        segments: list[Segment],
+        line_count: int,
+        part_id: UUID,
+    ) -> SegmentHealthReport:
+        usable = [segment for segment in segments if len(segment.points) >= 3]
         width, height, measured = self._page_size(part, usable)
         if not usable or width <= 0 or height <= 0:
             return SegmentHealthReport(
@@ -112,21 +140,20 @@ class SegmentHealthService:
                 page_width=width,
                 page_height=height,
                 measured_page=measured,
-                line_count=len(lines),
+                line_count=line_count,
                 considered_count=len(usable),
                 suspects=[],
                 spanning=[],
                 fragments=[],
                 overlaps=[],
             )
-
         stats = segment_health.page_stats(usable, width, height)
         return SegmentHealthReport(
             part_id=part_id,
             page_width=width,
             page_height=height,
             measured_page=measured,
-            line_count=len(lines),
+            line_count=line_count,
             considered_count=len(usable),
             suspects=segment_health.find_suspects(usable, stats),
             spanning=segment_health.find_spanning(usable, stats),
@@ -159,6 +186,7 @@ class SegmentHealthService:
         first_points, first_baseline = split.pieces[0]
         original.points = first_points
         original.baseline = {"points": first_baseline}
+        original.mask = {"points": first_points}
         original.manual_geometry = True
 
         fresh: list[Line] = []
@@ -168,7 +196,7 @@ class SegmentHealthService:
                     part_id=part_id,
                     block_id=original.block_id,
                     baseline={"points": baseline},
-                    mask=None,
+                    mask={"points": points},
                     kind=LineGeometryKind.polygon,
                     points=points,
                     source=original.source,
@@ -234,6 +262,7 @@ class SegmentHealthService:
 
         primary.points = merge.points
         primary.baseline = {"points": merge.baseline}
+        primary.mask = {"points": merge.points}
         primary.manual_geometry = True
         await session.delete(fragment)
         self._close_gap(lines, fragment)
@@ -279,6 +308,8 @@ class SegmentHealthService:
         lower = by_id[str(lower_id)]
         upper.points = trim.upper_points
         lower.points = trim.lower_points
+        upper.mask = {"points": trim.upper_points}
+        lower.mask = {"points": trim.lower_points}
         upper.manual_geometry = True
         lower.manual_geometry = True
         await session.commit()
@@ -345,11 +376,11 @@ class SegmentHealthService:
         would let any signed-in caller hold a row on a part they cannot read,
         just by naming its id.
         """
-        await self._require_part(session, user, project_id, document_id, part_id)
+        part = await self._require_part(session, user, project_id, document_id, part_id)
         await self._documents.lock_part(session, part_id)
-        report = await self.report(session, user, project_id, document_id, part_id)
         lines = await self._documents.list_part_lines(session, part_id)
         paired_ids = await self._documents.paired_line_ids(session, part_id)
+        report = await self._compute_report(part, lines, paired_ids, part_id)
         return report, lines, paired_ids
 
     def _to_segment(self, line: Line, paired_ids: set[UUID]) -> Segment:

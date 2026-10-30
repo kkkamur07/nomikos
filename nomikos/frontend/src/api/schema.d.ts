@@ -2087,10 +2087,7 @@ export interface components {
        * Format: uuid
        */
       part_id: string;
-      /** State */
-      state: {
-        [key: string]: unknown;
-      };
+      state: components["schemas"]["SnapshotState"];
     };
     /** AnnotationHistorySnapshotSummaryResponse */
     AnnotationHistorySnapshotSummaryResponse: {
@@ -3406,7 +3403,7 @@ export interface components {
     PairingStartRequest: {
       /** Capabilities */
       capabilities?: {
-        [key: string]: unknown;
+        [key: string]: string;
       };
       /** Device Name */
       device_name: string;
@@ -4081,6 +4078,46 @@ export interface components {
       identifier?: string | null;
       /** Username */
       username?: string | null;
+    };
+    /**
+     * SnapshotLineState
+     * @description One line as stored in a history snapshot's ``lines`` list.
+     */
+    SnapshotLineState: {
+      /** Approved Text */
+      approved_text: string | null;
+      /** Baseline */
+      baseline?: unknown;
+      /** Block Id */
+      block_id: string | null;
+      /** Id */
+      id: string;
+      /** Kind */
+      kind: string;
+      /** Kraken Ceiling */
+      kraken_ceiling: unknown;
+      /** Mask */
+      mask?: unknown;
+      /** Order */
+      order: number;
+      /** Points */
+      points: unknown;
+      /** Run External Id */
+      run_external_id?: string | null;
+      /** Segmentation Run Id */
+      segmentation_run_id?: string | null;
+      /** Source */
+      source: string;
+      /** Source Metadata */
+      source_metadata: unknown;
+    };
+    /**
+     * SnapshotState
+     * @description The restorable page state stored on a history snapshot row.
+     */
+    SnapshotState: {
+      /** Lines */
+      lines: components["schemas"]["SnapshotLineState"][];
     };
     /** TableStats */
     TableStats: {

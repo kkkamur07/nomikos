@@ -1,0 +1,353 @@
+import {
+  memo,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
+import type {
+  LayoutBlockResponse,
+  LinePoint,
+  LineResponse,
+} from "../../api/client";
+import { normalizeGeometryPoints, points } from "./canvasGeometry";
+import { regionName } from "./regions";
+
+/** Enter or Space on a focused shape does what a click does. */
+function activateWithKeyboard(
+  event: KeyboardEvent<SVGElement>,
+  activate: () => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  event.stopPropagation();
+  activate();
+}
+
+export type SegmentLook = {
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+};
+
+type SegmentShapeProps = {
+  line: LineResponse;
+  segmentNumber: number | undefined;
+  selected: boolean;
+  /** Picked for a group action. Reads as selected, but only the anchor edits. */
+  grouped: boolean;
+  paired: boolean;
+  /** The points drawn: the vertex edit in progress, or the stored outline. */
+  segmentPoints: LinePoint[];
+  look: SegmentLook;
+  hovered: boolean;
+  /** The stroke a hovered segment is drawn with at least. */
+  hoverStrokeWidth: number;
+  /** Selected with vertex editing on: a click may insert a vertex. */
+  editable: boolean;
+  onClick: (
+    lineId: string,
+    segmentPoints: LinePoint[],
+    event: MouseEvent<SVGPolygonElement>,
+  ) => void;
+  /** ``additive`` is Shift held: toggle the segment in the group. */
+  onActivate: (lineId: string, additive: boolean) => void;
+  onHover: (lineId: string | null) => void;
+};
+
+/**
+ * One segment polygon. Memoised on its own props, so a drag that moves the
+ * selected outline re-renders that one polygon, not every segment on the page.
+ */
+export const SegmentShape = memo(function SegmentShape({
+  line,
+  segmentNumber,
+  selected,
+  grouped,
+  paired,
+  segmentPoints,
+  look,
+  hovered,
+  hoverStrokeWidth,
+  editable,
+  onClick,
+  onActivate,
+  onHover,
+}: SegmentShapeProps) {
+  return (
+    <polygon
+      className={`pe-segment-shape${hovered ? " is-hovered" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`Segment ${segmentNumber}${paired ? ", paired" : ""}${grouped ? ", selected for merge" : ""}`}
+      aria-current={selected || grouped ? "true" : undefined}
+      onMouseEnter={() => onHover(line.id)}
+      onMouseLeave={() => onHover(null)}
+      onClick={(event) => onClick(line.id, segmentPoints, event)}
+      onKeyDown={(event) =>
+        activateWithKeyboard(event, () => onActivate(line.id, event.shiftKey))
+      }
+      points={points(segmentPoints)}
+      fill={look.fill}
+      stroke={look.stroke}
+      strokeWidth={
+        hovered
+          ? Math.max(look.strokeWidth, hoverStrokeWidth)
+          : look.strokeWidth
+      }
+      style={editable ? { pointerEvents: "all", cursor: "copy" } : undefined}
+    />
+  );
+});
+
+type RegionLayerProps = {
+  blocks: LayoutBlockResponse[];
+  selectedRegionId: string | null;
+  /** False while a drawing tool is armed, so the drag reaches the surface. */
+  selectable: boolean;
+  panOverride: boolean;
+  canvasMax: number;
+  stroke: (base: number) => number;
+  onSelectRegion?: (regionId: string) => void;
+};
+
+/** The regions (blocks), each with its name in the top-left corner. */
+export const RegionLayer = memo(function RegionLayer({
+  blocks,
+  selectedRegionId,
+  selectable,
+  panOverride,
+  canvasMax,
+  stroke,
+  onSelectRegion,
+}: RegionLayerProps) {
+  const labelSize = Math.max(14, canvasMax / 70);
+  return blocks.map((block) => {
+    const regionPoints = normalizeGeometryPoints(block.box);
+    const selected = block.id === selectedRegionId;
+    const name = regionName(block, blocks);
+    const labelX = regionPoints.length
+      ? Math.min(...regionPoints.map(([x]) => x))
+      : 0;
+    const labelY = regionPoints.length
+      ? Math.min(...regionPoints.map(([, y]) => y))
+      : 0;
+    return (
+      <g key={block.id}>
+        <polygon
+          role="button"
+          tabIndex={selectable ? 0 : -1}
+          aria-label={`Region ${name}`}
+          aria-current={selected ? "true" : undefined}
+          points={points(block.box)}
+          fill={
+            selected ? "rgba(37, 99, 235, 0.08)" : "rgba(216, 199, 161, 0.08)"
+          }
+          stroke={selected ? "#2563eb" : "#b8a06a"}
+          strokeWidth={stroke(selected ? 2.2 : 1.4)}
+          strokeDasharray={`${stroke(8)},${stroke(4)}`}
+          style={selectable ? { cursor: "pointer" } : undefined}
+          onClick={(event) => {
+            if (!selectable || panOverride) return;
+            event.stopPropagation();
+            onSelectRegion?.(block.id);
+          }}
+          onKeyDown={(event) =>
+            activateWithKeyboard(event, () => onSelectRegion?.(block.id))
+          }
+        />
+        <text
+          aria-hidden="true"
+          x={labelX + labelSize * 0.4}
+          y={labelY + labelSize * 1.2}
+          fontSize={labelSize}
+          fontWeight={600}
+          fill={selected ? "#1d4ed8" : "#7a6531"}
+          stroke="rgba(255, 255, 255, 0.9)"
+          strokeWidth={labelSize / 6}
+          paintOrder="stroke"
+          style={{ pointerEvents: "none", userSelect: "none" }}
+        >
+          {name}
+        </text>
+      </g>
+    );
+  });
+});
+
+type BaselineLayerProps = {
+  orderedLines: LineResponse[];
+  suppressSegmentId: string | null;
+  manualStroke: number;
+  machineStroke: number;
+  onSelectLine: (lineId: string) => void;
+};
+
+/** The baselines, drawn once per change of the lines or the zoom. */
+export const BaselineLayer = memo(function BaselineLayer({
+  orderedLines,
+  suppressSegmentId,
+  manualStroke,
+  machineStroke,
+  onSelectLine,
+}: BaselineLayerProps) {
+  return orderedLines.map((line) => {
+    if (line.id === suppressSegmentId) return null;
+    const baseline = normalizeGeometryPoints(line.baseline);
+    if (baseline.length < 2) return null;
+    const manual = Boolean(line.manual_geometry);
+    return (
+      <polyline
+        key={`baseline-${line.id}`}
+        role="button"
+        tabIndex={0}
+        aria-label={`Line ${line.id} baseline`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelectLine(line.id);
+        }}
+        onKeyDown={(event) =>
+          activateWithKeyboard(event, () => onSelectLine(line.id))
+        }
+        points={baseline.map(([x, y]) => `${x},${y}`).join(" ")}
+        fill="none"
+        stroke={manual ? "#059669" : "#0d9488"}
+        strokeLinecap="round"
+        strokeWidth={manual ? manualStroke : machineStroke}
+        strokeDasharray={
+          manual ? undefined : `${machineStroke * 2.5},${machineStroke * 1.25}`
+        }
+        style={{ pointerEvents: "stroke" }}
+      />
+    );
+  });
+});
+
+type DraftPolygonLayerProps = {
+  draftPolygon: LinePoint[];
+  cursor: LinePoint | null;
+  stroke: (base: number) => number;
+  handleRadius: number;
+};
+
+/** The polygon being drawn: its sides, the rubber band to the pointer, its vertices. */
+export function DraftPolygonLayer({
+  draftPolygon,
+  cursor,
+  stroke,
+  handleRadius,
+}: DraftPolygonLayerProps) {
+  const last = draftPolygon[draftPolygon.length - 1];
+  return (
+    <>
+      {draftPolygon.slice(1).map(([x, y], index) => (
+        <line
+          key={`draft-segment-${index + 1}`}
+          x1={draftPolygon[index][0]}
+          y1={draftPolygon[index][1]}
+          x2={x}
+          y2={y}
+          stroke="rgba(13, 31, 60, 0.85)"
+          strokeWidth={stroke(2)}
+          strokeLinecap="round"
+        />
+      ))}
+      {cursor && (
+        <line
+          aria-hidden="true"
+          x1={last[0]}
+          y1={last[1]}
+          x2={cursor[0]}
+          y2={cursor[1]}
+          stroke="rgba(13, 31, 60, 0.65)"
+          strokeWidth={stroke(1.8)}
+          strokeDasharray={`${stroke(6)},${stroke(3)}`}
+          strokeLinecap="round"
+        />
+      )}
+      {cursor && draftPolygon.length >= 2 && (
+        <line
+          aria-hidden="true"
+          x1={cursor[0]}
+          y1={cursor[1]}
+          x2={draftPolygon[0][0]}
+          y2={draftPolygon[0][1]}
+          stroke="rgba(4, 120, 87, 0.65)"
+          strokeWidth={stroke(1.4)}
+          strokeDasharray={`${stroke(5)},${stroke(3)}`}
+          strokeLinecap="round"
+        />
+      )}
+      {draftPolygon.map(([x, y], index) => (
+        <circle
+          key={`draft-vertex-${index}`}
+          cx={x}
+          cy={y}
+          r={handleRadius}
+          fill="#fff"
+          stroke="rgba(13, 31, 60, 0.85)"
+          strokeWidth={stroke(0.8)}
+        />
+      ))}
+    </>
+  );
+}
+
+type VertexHandlesProps = {
+  segmentId: string;
+  vertexPoints: LinePoint[];
+  selectedVertexIndex: number | null;
+  dragging: boolean;
+  stroke: (base: number) => number;
+  handleRadius: (base: number) => number;
+  onPointerDown: (
+    vertexIndex: number,
+    event: PointerEvent<SVGCircleElement>,
+  ) => void;
+  onSelectVertex: (vertexIndex: number) => void;
+};
+
+/**
+ * The selected segment's vertex handles. Enter and Space select a vertex, the
+ * same as a click; Delete removes the selected one.
+ */
+export function VertexHandles({
+  segmentId,
+  vertexPoints,
+  selectedVertexIndex,
+  dragging,
+  stroke,
+  handleRadius,
+  onPointerDown,
+  onSelectVertex,
+}: VertexHandlesProps) {
+  return vertexPoints.map(([x, y], index) => {
+    const selectedVertex = selectedVertexIndex === index;
+    return (
+      <circle
+        key={`segment-vertex-${segmentId}-${index}`}
+        className="pe-vertex-handle"
+        cx={x}
+        cy={y}
+        r={handleRadius(selectedVertex ? 3.1 : 2.4)}
+        fill={selectedVertex ? "var(--red, #b40000)" : "#fff"}
+        stroke="var(--red, #b40000)"
+        strokeWidth={stroke(selectedVertex ? 1.2 : 0.9)}
+        style={{
+          cursor: dragging ? "grabbing" : "pointer",
+          pointerEvents: "all",
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={`Segment vertex ${index + 1}${selectedVertex ? ", selected" : ""} · drag to move · Delete to remove`}
+        aria-current={selectedVertex ? "true" : undefined}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          onPointerDown(index, event);
+        }}
+        onKeyDown={(event) =>
+          activateWithKeyboard(event, () => onSelectVertex(index))
+        }
+      />
+    );
+  });
+}

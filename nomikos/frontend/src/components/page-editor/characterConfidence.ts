@@ -27,20 +27,6 @@ export function confidenceTierLabel(confidence: number): string {
   return "low";
 }
 
-export function confidenceHighlightColor(confidence: number): string {
-  if (confidence > 0.9) return "#059669";
-  if (confidence > 0.7) return "#d97706";
-  if (confidence > 0.5) return "#d97706";
-  return "#dc2626";
-}
-
-export function confidenceLabelColor(confidence: number): string {
-  if (confidence > 0.9) return "#059669";
-  if (confidence > 0.7) return "#d97706";
-  if (confidence > 0.5) return "#d97706";
-  return "#dc2626";
-}
-
 export function formatConfidencePercent(confidence: number): string {
   return `${(confidence * 100).toFixed(1)}%`;
 }

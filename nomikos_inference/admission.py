@@ -7,22 +7,20 @@ import math
 import warnings
 from collections.abc import Mapping
 from io import BytesIO
-from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
 CLIENT_INPUT_ERROR = "Invalid inference request"
-REQUEST_LIMIT_ERROR = "Request exceeds configured limits"
 
 # Upper bounds for the BLLA segmentation knobs. They cannot live in the platform
 # API alone: ``run_model`` is reached from both sides of a **claim** - the
 # platform's own submission path and an **inference agent** running the model on
 # a laptop - so the seam that bounds a value has to sit next to the runtime, not
 # next to one caller. Each bound is the value at which the parameter stops
-# meaning anything, and the lower bound is 0 because the runtime already treats
-# non-positive values as "use the default".
+# meaning anything. The lower bound is exclusive: non-positive values are
+# rejected, and an absent key means "use the default".
 SEGMENT_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     # Decoder emission gate. The decoder requires a threshold strictly between
     # zero and one, and the runtime clamps to 0.99, so the admission ceiling
@@ -35,9 +33,6 @@ SEGMENT_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
 class AdmissionSettings(BaseSettings):
     """Environment-configurable, process-local inference admission limits."""
 
-    inference_max_request_body_bytes: int = Field(
-        default=160 * 1024 * 1024, ge=1024, alias="INFERENCE_MAX_REQUEST_BODY_BYTES"
-    )
     inference_max_encoded_image_bytes: int = Field(
         default=160 * 1024 * 1024, ge=1024, alias="INFERENCE_MAX_ENCODED_IMAGE_BYTES"
     )
@@ -76,9 +71,6 @@ class AdmissionSettings(BaseSettings):
         ge=1024,
         alias="INFERENCE_MAX_JOB_PAYLOAD_BYTES",
     )
-    inference_rate_limit_per_minute: int = Field(
-        default=60, ge=1, alias="INFERENCE_RATE_LIMIT_PER_MINUTE"
-    )
 
 
 def allowed_image_formats(settings: AdmissionSettings) -> frozenset[str]:
@@ -92,7 +84,7 @@ def allowed_image_formats(settings: AdmissionSettings) -> frozenset[str]:
     return formats
 
 
-def validate_encoded_image(value: Any, settings: AdmissionSettings) -> bytes:
+def validate_encoded_image(value: object, settings: AdmissionSettings) -> bytes:
     """Reject oversized base64 before allocating decoded image bytes."""
     if isinstance(value, bytes):
         if len(value) > settings.inference_max_decoded_image_bytes:
@@ -163,38 +155,44 @@ def open_image_bytes(image_bytes: bytes) -> Image.Image:
         raise ValueError(CLIENT_INPUT_ERROR) from exc
 
 
-def _validate_param_structure(value: Any, settings: AdmissionSettings) -> int:
-    item_count = 0
+def _validate_param_leaf(current: object) -> None:
+    # Two ways a leaf fails, both of them "this cannot be serialised":
+    # a type the wire format does not carry, or a float JSON cannot
+    # represent (NaN, +-Infinity).
+    unsupported_type = not isinstance(current, str | int | float | bool | type(None))
+    non_finite_float = isinstance(current, float) and not math.isfinite(current)
+    if unsupported_type or non_finite_float:
+        raise ValueError(CLIENT_INPUT_ERROR)
 
-    def visit(current: Any, depth: int) -> None:
-        nonlocal item_count
+
+def _enqueue_param_children(current: object, depth: int, pending: list[tuple[object, int]]) -> None:
+    if isinstance(current, Mapping):
+        for key, nested in current.items():
+            if not isinstance(key, str):
+                raise ValueError(CLIENT_INPUT_ERROR)
+            pending.append((nested, depth + 1))
+    elif isinstance(current, list):
+        for nested in current:
+            pending.append((nested, depth + 1))
+    else:
+        _validate_param_leaf(current)
+
+
+def _validate_param_structure(value: object, settings: AdmissionSettings) -> int:
+    item_count = 0
+    pending: list[tuple[object, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
         if depth > settings.inference_max_params_depth:
             raise ValueError(CLIENT_INPUT_ERROR)
         item_count += 1
         if item_count > settings.inference_max_params_items:
             raise ValueError(CLIENT_INPUT_ERROR)
-        if isinstance(current, Mapping):
-            for key, nested in current.items():
-                if not isinstance(key, str):
-                    raise ValueError(CLIENT_INPUT_ERROR)
-                visit(nested, depth + 1)
-        elif isinstance(current, list):
-            for nested in current:
-                visit(nested, depth + 1)
-        else:
-            # Two ways a leaf fails, both of them "this cannot be serialised":
-            # a type the wire format does not carry, or a float JSON cannot
-            # represent (NaN, +-Infinity).
-            unsupported_type = not isinstance(current, str | int | float | bool | type(None))
-            non_finite_float = isinstance(current, float) and not math.isfinite(current)
-            if unsupported_type or non_finite_float:
-                raise ValueError(CLIENT_INPUT_ERROR)
-
-    visit(value, 0)
+        _enqueue_param_children(current, depth, pending)
     return item_count
 
 
-def serialized_params_size(params: dict[str, Any], settings: AdmissionSettings) -> int:
+def serialized_params_size(params: Mapping[str, object], settings: AdmissionSettings) -> int:
     _validate_param_structure(params, settings)
     try:
         size = len(
@@ -212,7 +210,7 @@ def serialized_params_size(params: dict[str, Any], settings: AdmissionSettings) 
     return size
 
 
-def validate_transcribe_params(params: dict[str, Any], settings: AdmissionSettings) -> None:
+def validate_transcribe_params(params: Mapping[str, object], settings: AdmissionSettings) -> None:
     """Bound line-region input before the runner crops and fans out work."""
     lines = params.get("lines")
     if lines is None:
@@ -230,7 +228,7 @@ def validate_transcribe_params(params: dict[str, Any], settings: AdmissionSettin
 
 
 def _validate_bounded_param(
-    params: dict[str, Any],
+    params: Mapping[str, object],
     key: str,
     *,
     maximum: float,
@@ -238,8 +236,11 @@ def _validate_bounded_param(
 ) -> None:
     if key not in params:
         return
+    raw = params[key]
+    if not isinstance(raw, (str, int, float)):
+        return
     try:
-        parsed = float(params[key])
+        parsed = float(raw)
     except (TypeError, ValueError):
         # Unparseable values already fall back to the runtime default (see
         # ``blla_runtime._positive_float_param``); only the numeric range is this
@@ -249,21 +250,21 @@ def _validate_bounded_param(
         raise ValueError(CLIENT_INPUT_ERROR)
 
 
-def validate_segment_params(params: dict[str, Any], settings: AdmissionSettings) -> None:
+def validate_segment_params(params: Mapping[str, object]) -> None:
     """Bound the BLLA segmentation knobs before they reach the decoder."""
     for key, (minimum, maximum) in SEGMENT_PARAM_BOUNDS.items():
         _validate_bounded_param(params, key, minimum=minimum, maximum=maximum)
 
 
-def validate_request_params(params: dict[str, Any], settings: AdmissionSettings) -> int:
+def validate_request_params(params: Mapping[str, object], settings: AdmissionSettings) -> int:
     size = serialized_params_size(params, settings)
     validate_transcribe_params(params, settings)
-    validate_segment_params(params, settings)
+    validate_segment_params(params)
     return size
 
 
 def validate_job_payload(
-    image_bytes: bytes, params: dict[str, Any], settings: AdmissionSettings
+    image_bytes: bytes, params: Mapping[str, object], settings: AdmissionSettings
 ) -> None:
     params_size = validate_request_params(params, settings)
     if len(image_bytes) + params_size > settings.inference_max_job_payload_bytes:

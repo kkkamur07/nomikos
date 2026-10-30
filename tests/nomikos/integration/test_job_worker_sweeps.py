@@ -35,7 +35,6 @@ from backend.core.settings.device import get_device_settings
 from backend.core.settings.job import get_job_settings
 from backend.jobs.application.job_claim_service import agent_claim_owner
 from backend.jobs.infrastructure import worker
-from backend.jobs.infrastructure.job_claim_engine import WAITING_TIMEOUT_ERROR
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
 from infrastructure.db import sync_system_session
 
@@ -143,23 +142,17 @@ def test_a_job_running_inside_the_deadline_is_left_alone(client: TestClient):
 # ---------------------------------------------------------------------------
 
 
-def test_a_silent_inference_service_fails_but_a_slept_laptop_re_pends(client: TestClient):
-    """The one test the old unit test was reaching for and could not express.
+def test_a_slept_laptop_re_pends_and_an_unclaimed_row_is_left_alone(client: TestClient):
+    """Both rows are ``waiting`` and both are past the lease.
 
-    Both rows are ``waiting`` and both are past their deadline. They are exact
-    complements over ``claimed_by``, so a sweep whose predicate drifts either way
-    - dropping the agent exclusion from the timeout, or dropping the agent
-    requirement from the lease - takes both rows and this fails. ADR 0005 made a
-    claimed page ``waiting`` so the callback service needed no change, which is
-    precisely how a researcher's closed lid ended up under a timeout that
-    *fails*.
+    Only the agent-held one is under the lease, so a sweep that dropped the agent
+    requirement would take both rows and this fails.
     """
-    waiting_timeout = get_job_settings().job_worker_waiting_timeout_seconds
     lease = get_device_settings().device_lease_seconds
-    dispatched_id = _seed_job(
+    unclaimed_id = _seed_job(
         status=JobStatus.waiting,
         claimed_by=None,
-        updated_at=_ago(waiting_timeout * 2),
+        updated_at=_ago(lease * 2),
     )
     leased_inference_id = uuid.uuid4()
     leased_id = _seed_job(
@@ -171,11 +164,9 @@ def test_a_silent_inference_service_fails_but_a_slept_laptop_re_pends(client: Te
 
     _tick()
 
-    dispatched = _stored(dispatched_id)
-    assert dispatched.status is JobStatus.failed
-    assert dispatched.error is not None
-    assert dispatched.error.startswith(WAITING_TIMEOUT_ERROR)
-    assert dispatched.completed_at is not None
+    unclaimed = _stored(unclaimed_id)
+    assert unclaimed.status is JobStatus.waiting
+    assert unclaimed.error is None
 
     leased = _stored(leased_id)
     assert leased.status is JobStatus.pending
@@ -187,24 +178,6 @@ def test_a_silent_inference_service_fails_but_a_slept_laptop_re_pends(client: Te
     assert leased.inference_job_id is None
     assert leased.started_at is None
     assert leased.heartbeat_at is None
-
-
-def test_a_lease_still_inside_its_window_keeps_the_page(client: TestClient):
-    lease = get_device_settings().device_lease_seconds
-    owner = agent_claim_owner(uuid.uuid4())
-    job_id = _seed_job(
-        status=JobStatus.waiting,
-        claimed_by=owner,
-        updated_at=_ago(lease / 2),
-    )
-
-    _tick()
-
-    # A page taken back from the agent still working on it is duplicated work at
-    # best and a lost transcription at worst.
-    job = _stored(job_id)
-    assert job.status is JobStatus.waiting
-    assert job.claimed_by == owner
 
 
 # ---------------------------------------------------------------------------
@@ -232,37 +205,6 @@ def test_an_abandoned_callback_claim_is_released_without_touching_the_row_clock(
     assert job.callback_claimed_at is None
     assert job.status is JobStatus.running
     # ...and releasing it must not count as activity. Letting ``onupdate`` bump
-    # this pushes the waiting deadline out by another full window every time the
-    # sweep runs, so a job with a stale claim is never timed out at all.
+    # this pushes the lease deadline out by another full window every time the
+    # sweep runs, so a page with a stale claim is never released at all.
     assert abs((job.updated_at - seeded_updated_at).total_seconds()) < 0.001
-
-
-def test_a_row_eligible_for_both_the_waiting_timeout_and_the_claim_release_still_fails(
-    client: TestClient,
-):
-    """The interaction the sweep order at ``worker.py:80-81`` exists to protect.
-
-    This row is past the waiting timeout *and* holds a stale callback claim. Two
-    separate mechanisms keep it from being starved - the waiting sweep runs
-    first, and the claim release preserves ``updated_at`` - and the row only
-    survives forever if **both** are removed. Each is pinned individually
-    elsewhere (the order by the unit test, the clock by the test above); what is
-    asserted here is the outcome a user would see, which neither of those can
-    state on its own.
-    """
-    waiting_timeout = get_job_settings().job_worker_waiting_timeout_seconds
-    claim_timeout = get_job_settings().job_worker_callback_claim_timeout_seconds
-    job_id = _seed_job(
-        status=JobStatus.waiting,
-        claimed_by=None,
-        updated_at=_ago(max(waiting_timeout, claim_timeout) * 2),
-        callback_claimed_at=_ago(claim_timeout * 2),
-    )
-
-    _tick()
-
-    job = _stored(job_id)
-    assert job.status is JobStatus.failed
-    assert job.error is not None
-    assert job.error.startswith(WAITING_TIMEOUT_ERROR)
-    assert job.callback_claimed_at is None

@@ -10,13 +10,13 @@ from pydantic.json_schema import SkipJsonSchema
 class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=512)
     slug: str = Field(min_length=1, max_length=512)
-    guidelines: str | None = None
+    guidelines: str | None = Field(default=None, max_length=10000)
 
 
 class ProjectUpdateRequest(BaseModel):
     name: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=512)
     slug: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=512)
-    guidelines: str | None = None
+    guidelines: str | None = Field(default=None, max_length=10000)
 
     @field_validator("name", "slug", mode="before")
     @classmethod

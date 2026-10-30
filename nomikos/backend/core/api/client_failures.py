@@ -24,10 +24,6 @@ CLIENT_FAILURE_GLOBAL_RATE_LIMIT = 300
 CLIENT_FAILURE_RATE_WINDOW_SECONDS = 60
 
 
-def clear_client_failure_rate_limit_state() -> None:
-    """No-op - state lives in Postgres and is cleared by database truncation in tests."""
-
-
 def _sanitize_log_field(value: str, *, max_len: int) -> str:
     cleaned = _CONTROL_CHARS.sub(" ", value).replace("\r", " ").replace("\n", " ")
     return cleaned.strip()[:max_len]

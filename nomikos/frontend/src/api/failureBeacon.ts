@@ -1,7 +1,7 @@
 import { API_BASE_URL } from "./client";
 import { errorRef, userFacingMessage } from "./userFacingError";
 
-export type ClientFailurePayload = {
+type ClientFailurePayload = {
   message: string;
   ref?: string | null;
   path?: string;

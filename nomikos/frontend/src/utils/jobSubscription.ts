@@ -1,13 +1,13 @@
-import { fetchWithAuthRecovery, type JobResponse } from "../api/client";
+import { fetchWithAuthRecovery } from "../api/http";
+import type { JobResponse } from "../api/types";
 
-export const JOB_NO_EVENT_TIMEOUT_MS = 12_000;
+const JOB_NO_EVENT_TIMEOUT_MS = 12_000;
 
 type GetJob = (jobId: string) => Promise<JobResponse>;
 type JobListener = (job: JobResponse) => void;
 
-export type JobSubscriptionOptions = {
+type JobSubscriptionOptions = {
   eventsUrl: string;
-  token?: string | null;
   getJob: GetJob;
   onUpdate: JobListener;
   intervalMs: number;
@@ -17,7 +17,6 @@ export type JobSubscriptionOptions = {
 type JobSubscriptionOwner = {
   jobId: string;
   eventsUrl: string;
-  token?: string | null;
   getJob: GetJob;
   intervalMs: number;
   noEventTimeoutMs: number;
@@ -109,6 +108,48 @@ function touchHeartbeat(owner: JobSubscriptionOwner): void {
   );
 }
 
+async function openEventStream(
+  owner: JobSubscriptionOwner,
+  controller: AbortController,
+): Promise<ReadableStreamDefaultReader<Uint8Array> | null> {
+  // The Authorization header always carries the current token:
+  // `fetchWithAuthRecovery` sets it from storage on every attempt and
+  // refreshes it after a 401, so a token captured at subscribe time would
+  // only ever be older than what is sent.
+  const response = await fetchWithAuthRecovery(owner.eventsUrl, {
+    headers: new Headers({ Accept: "text/event-stream" }),
+    signal: controller.signal,
+    credentials: "include",
+  });
+  if (!response.ok || !response.body) {
+    startPolling(owner);
+    return null;
+  }
+  return response.body.getReader();
+}
+
+async function pumpEventStream(
+  owner: JobSubscriptionOwner,
+  controller: AbortController,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (!owner.stopped && !controller.signal.aborted) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    touchHeartbeat(owner);
+    buffer += decoder.decode(value, { stream: true });
+    const parsed = parseSseChunk(buffer);
+    buffer = parsed.remainder;
+    for (const event of parsed.events) {
+      emit(owner, JSON.parse(event) as JobResponse);
+      if (owner.stopped) return;
+    }
+  }
+  if (!owner.stopped && !controller.signal.aborted) startPolling(owner);
+}
+
 async function startSse(owner: JobSubscriptionOwner): Promise<void> {
   if (typeof fetch === "undefined" || typeof ReadableStream === "undefined") {
     startPolling(owner);
@@ -120,36 +161,10 @@ async function startSse(owner: JobSubscriptionOwner): Promise<void> {
   touchHeartbeat(owner);
 
   try {
-    const headers = new Headers({ Accept: "text/event-stream" });
-    if (owner.token) headers.set("Authorization", `Bearer ${owner.token}`);
-    const response = await fetchWithAuthRecovery(owner.eventsUrl, {
-      headers,
-      signal: controller.signal,
-      credentials: "include",
-    });
-    if (!response.ok || !response.body) {
-      startPolling(owner);
-      return;
-    }
-
+    const reader = await openEventStream(owner, controller);
+    if (!reader) return;
     touchHeartbeat(owner);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (!owner.stopped && !controller.signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      touchHeartbeat(owner);
-      buffer += decoder.decode(value, { stream: true });
-      const parsed = parseSseChunk(buffer);
-      buffer = parsed.remainder;
-      for (const event of parsed.events) {
-        emit(owner, JSON.parse(event) as JobResponse);
-        if (owner.stopped) return;
-      }
-    }
-
-    if (!owner.stopped && !controller.signal.aborted) startPolling(owner);
+    await pumpEventStream(owner, controller, reader);
   } catch (error) {
     const aborted =
       error instanceof DOMException && error.name === "AbortError";
@@ -171,7 +186,6 @@ export function subscribeToJob(
     owner = {
       jobId,
       eventsUrl: options.eventsUrl,
-      token: options.token,
       getJob: options.getJob,
       intervalMs: options.intervalMs,
       noEventTimeoutMs: options.noEventTimeoutMs ?? JOB_NO_EVENT_TIMEOUT_MS,
@@ -194,6 +208,18 @@ export function subscribeToJob(
   };
 }
 
+/**
+ * The client stopped waiting, not the server: the job may still be running,
+ * so callers must not report it as failed. Lets `trackAndWait` tell the two
+ * apart without matching on the message text.
+ */
+export class JobWaitTimeoutError extends Error {
+  constructor() {
+    super("Job timed out.");
+    this.name = "JobWaitTimeoutError";
+  }
+}
+
 export function waitForSubscribedJob(
   jobId: string,
   options: Omit<JobSubscriptionOptions, "onUpdate"> & {
@@ -204,7 +230,7 @@ export function waitForSubscribedJob(
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       unsubscribe();
-      reject(new Error("Job timed out."));
+      reject(new JobWaitTimeoutError());
     }, options.timeoutMs ?? 120_000);
 
     const unsubscribe = subscribeToJob(jobId, {

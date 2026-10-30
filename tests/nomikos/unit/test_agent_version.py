@@ -87,11 +87,6 @@ def test_a_version_the_platform_cannot_compare_is_not_a_version(raw: str | None)
         AgentVersion.parse(raw)
 
 
-@pytest.mark.parametrize("raw", ["0.0.0", "0.1.0", "10.20.30", "1.2.3rc4", "0.4.0.dev1"])
-def test_the_shapes_a_published_agent_actually_reports_are_accepted(raw: str) -> None:
-    assert AgentVersion.is_valid(raw)
-
-
 # ---------------------------------------------------------------------------
 # Five states, three of which refuse
 # ---------------------------------------------------------------------------

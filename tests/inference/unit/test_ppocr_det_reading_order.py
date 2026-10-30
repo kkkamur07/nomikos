@@ -368,3 +368,18 @@ def test_plain_builder_empty_page_yields_no_blocks() -> None:
 
     assert response.blocks == []
     assert response.lines == []
+
+
+def test_ten_thousand_stacked_lines_lay_out_in_seconds() -> None:
+    """The admitted ``max_candidates`` ceiling: the all-pairs union took 28 s."""
+    import time
+
+    quads = [_quad(0, float(i), 100, float(i + 1)) for i in range(10000)]
+
+    started = time.perf_counter()
+    layout = layout_lines(quads)
+    elapsed = time.perf_counter() - started
+
+    assert len(layout.columns) == 1
+    assert layout.columns[0].sequence == tuple(range(10000))
+    assert elapsed < 5.0

@@ -628,17 +628,22 @@ class _Buckets:
         self.limit = limit
         self.counts: dict[str, int] = {}
 
-    async def check(self, keys, *, limit, window_seconds, detail) -> None:
+    async def consume(self, keys, *, limit, window_seconds, detail) -> None:
         if any(self.counts.get(key, 0) >= self.limit for key in keys):
             raise HTTPException(status_code=429, detail=detail)
+        await self.charge(keys, window_seconds=window_seconds)
 
     async def charge(self, keys, *, window_seconds) -> None:
         for key in keys:
             self.counts[key] = self.counts.get(key, 0) + 1
 
-    async def consume(self, keys, *, limit, window_seconds, detail) -> None:
-        await self.check(keys, limit=limit, window_seconds=window_seconds, detail=detail)
-        await self.charge(keys, window_seconds=window_seconds)
+    async def refund(self, keys, *, window_seconds) -> None:
+        for key in keys:
+            remaining = self.counts.get(key, 0) - 1
+            if remaining <= 0:
+                self.counts.pop(key, None)
+            else:
+                self.counts[key] = remaining
 
 
 VALID_PASSWORD = "correct-horse-battery-staple"
@@ -655,8 +660,7 @@ def _login_client(monkeypatch) -> tuple[TestClient, _Buckets]:
     """Mount the real throttle on a route that fails the way `/auth/login` fails."""
     buckets = _Buckets(get_auth_settings().auth_rate_limit_requests)
     monkeypatch.setattr(rate_limit, "consume_rate_limit", buckets.consume)
-    monkeypatch.setattr(rate_limit, "check_rate_limit", buckets.check)
-    monkeypatch.setattr(rate_limit, "charge_rate_limit", buckets.charge)
+    monkeypatch.setattr(rate_limit, "refund_rate_limit", buckets.refund)
 
     app = FastAPI()
 
@@ -681,14 +685,15 @@ def _login(client: TestClient, password: str):
 
 
 def test_a_stranger_cannot_lock_an_account_out_by_guessing_its_password(monkeypatch) -> None:
-    """Regression: the account bucket used to be charged before the handler ran.
+    """Regression: successes must not spend account budget, failures must.
 
-    It is keyed on the email the request names, which is public. Charging it on
-    every attempt meant an anonymous caller posting garbage passwords held the
-    owner at HTTP 429 for as long as they cared to - and with TRUST_PEER_IP=false
-    there is no IP dimension to spread that across. The bucket still has to cap
-    guessing, so the owner's own attempts must survive an exhausted bucket only
-    while they succeed.
+    The bucket is keyed on the email the request names, which is public. It is
+    charged up front under the account lock - otherwise a parallel burst slips
+    the cap - and refunded when the attempt succeeds. Posting garbage passwords
+    still spends the budget, and with TRUST_PEER_IP=false there is no IP
+    dimension to spread that across. The bucket still has to cap guessing, so
+    the owner's own attempts must survive an exhausted bucket only while they
+    succeed.
     """
     monkeypatch.setenv("TRUST_PEER_IP", "false")
     monkeypatch.setenv("BEHIND_PROXY", "false")
@@ -769,17 +774,17 @@ async def test_attributable_attempt_never_touches_the_shared_bucket(monkeypatch)
     monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
     _clear_platform_settings()
     digest = hashlib.sha256(b"victim@example.com").hexdigest()
-    checked: list[tuple[list[str], int]] = []
-    consumed: list[list[str]] = []
-
-    async def _record_check(keys, *, limit, window_seconds, detail):
-        checked.append((list(keys), limit))
+    consumed: list[tuple[list[str], int]] = []
+    refunded: list[list[str]] = []
 
     async def _record_consume(keys, *, limit, window_seconds, detail):
-        consumed.append(list(keys))
+        consumed.append((list(keys), limit))
 
-    monkeypatch.setattr(rate_limit, "check_rate_limit", _record_check)
+    async def _record_refund(keys, *, window_seconds):
+        refunded.append(list(keys))
+
     monkeypatch.setattr(rate_limit, "consume_rate_limit", _record_consume)
+    monkeypatch.setattr(rate_limit, "refund_rate_limit", _record_refund)
     await _drain(
         rate_limit.throttle_auth_attempts(
             _request(
@@ -790,10 +795,12 @@ async def test_attributable_attempt_never_touches_the_shared_bucket(monkeypatch)
         )
     )
 
-    assert checked == [
+    # The account bucket is charged up front (under its lock) and refunded on
+    # success; the coarse shared bucket is never touched by a real login.
+    assert consumed == [
         ([f"account:{digest}:/auth/login"], get_auth_settings().auth_rate_limit_requests)
     ]
-    assert consumed == []
+    assert refunded == [[f"account:{digest}:/auth/login"]]
 
 
 # --- Device pairing carries its own limiter ---
@@ -849,7 +856,7 @@ async def test_pairing_throttle_charges_a_per_client_bucket_when_it_can(monkeypa
     )
 
     assert calls == [
-        (["device-pairing:203.0.113.7"], rate_limit.DEVICE_PAIRING_RATE_LIMIT_REQUESTS)
+        (["device-pairing:203.0.113.7"], get_auth_settings().device_pairing_rate_limit_requests)
     ]
 
 
@@ -990,3 +997,78 @@ async def test_orphaned_project_cannot_be_published_by_a_collaborator() -> None:
         await service.update_document(
             None, collaborator, project.id, document.id, workflow=DocumentWorkflow.published
         )
+
+
+async def test_session_rotation_is_capped_per_client(monkeypatch) -> None:
+    """Refresh and logout have their own per-IP budget, not the password one."""
+    from backend.users.api import auth as auth_module
+    from backend.users.api.auth import _throttle_session_use
+
+    monkeypatch.setenv("TRUST_PEER_IP", "true")
+    monkeypatch.setenv("BEHIND_PROXY", "false")
+    monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
+    _clear_platform_settings()
+    calls: list[tuple[list[str], int]] = []
+
+    async def _record(keys, *, limit, window_seconds, detail):
+        calls.append((list(keys), limit))
+
+    monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
+    await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
+
+    assert calls == [
+        (["session:203.0.113.7"], get_auth_settings().session_rotation_rate_limit_requests)
+    ]
+    assert get_auth_settings().session_rotation_rate_limit_requests == 120
+
+
+async def test_session_rotation_ignores_the_password_guessing_budget(monkeypatch) -> None:
+    """AUTH_RATE_LIMIT_REQUESTS=1 still leaves refresh untouched."""
+    from backend.users.api import auth as auth_module
+    from backend.users.api.auth import _throttle_session_use
+
+    monkeypatch.setenv("TRUST_PEER_IP", "true")
+    monkeypatch.setenv("BEHIND_PROXY", "false")
+    monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
+    monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", "1")
+    _clear_platform_settings()
+    calls: list[tuple[list[str], int]] = []
+
+    async def _record(keys, *, limit, window_seconds, detail):
+        calls.append((list(keys), limit))
+
+    monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
+    await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
+    await _throttle_session_use(_request(peer="203.0.113.7", path="/auth/refresh"))
+
+    assert get_auth_settings().auth_rate_limit_requests == 1
+    assert calls == [(["session:203.0.113.7"], 120), (["session:203.0.113.7"], 120)]
+
+
+async def test_session_rotation_without_an_address_uses_the_shared_bucket(monkeypatch) -> None:
+    from backend.users.api import auth as auth_module
+    from backend.users.api.auth import _throttle_session_use
+
+    monkeypatch.setenv("TRUST_PEER_IP", "false")
+    monkeypatch.setenv("BEHIND_PROXY", "false")
+    monkeypatch.setenv("JWT_SECRET", STRONG_SECRET)
+    _clear_platform_settings()
+    calls: list[tuple[list[str], int]] = []
+
+    async def _record(keys, *, limit, window_seconds, detail):
+        calls.append((list(keys), limit))
+
+    monkeypatch.setattr(auth_module, "consume_rate_limit", _record)
+    await _throttle_session_use(_request(peer="10.0.0.1", path="/auth/logout"))
+
+    assert calls == [(["session:unattributable"], rate_limit.UNATTRIBUTABLE_AUTH_RATE_LIMIT)]
+
+
+def test_refresh_and_logout_mount_the_session_throttle() -> None:
+    from backend.core.app import create_app
+    from backend.users.api.auth import _throttle_session_use
+
+    for path in ("/auth/refresh", "/auth/logout"):
+        dependencies = _dependency_calls(_route(create_app(), path, "POST").dependant)
+
+        assert _throttle_session_use in dependencies

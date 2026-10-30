@@ -14,6 +14,7 @@ do not, since they exist to hand geometry back to the model.
 
 from __future__ import annotations
 
+from typing import TypeVar, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -57,8 +58,10 @@ _SCRIPT_SAMPLE_LINES = 200
 # order) files the line without claiming a human drew it.
 _GEOMETRY_PATCH_FIELDS = frozenset({"points", "baseline", "mask"})
 
+_T = TypeVar("_T")
 
-def _preserved(data: dict, field: str, prior: Line | None, default: object) -> object:
+
+def _preserved(data: dict, field: str, prior: Line | None, default: _T) -> _T:
     """Read an optional field from a bulk-replace payload.
 
     ``model_dump(exclude_unset=True)`` strips any field the client did not send,
@@ -67,9 +70,9 @@ def _preserved(data: dict, field: str, prior: Line | None, default: object) -> o
     for rows that do not exist yet.
     """
     if field in data:
-        return data[field]
+        return cast(_T, data[field])
     if prior is not None:
-        return getattr(prior, field)
+        return cast(_T, getattr(prior, field))
     return default
 
 
@@ -84,6 +87,58 @@ def _sorted_blocks(blocks: list[Block]) -> list[Block]:
     # no created_at yet and is the newest, so a stable sort on order puts it last of its
     # order, where the repository will list it once committed.
     return sorted(blocks, key=lambda block: block.order)
+
+
+def _unique_requested_ids(lines: list[dict]) -> list[UUID]:
+    requested_ids = [line["id"] for line in lines if line.get("id") is not None]
+    if len(set(requested_ids)) != len(requested_ids):
+        raise ValidationError("Line ids must be unique")
+    return requested_ids
+
+
+def _upsert_line(
+    session: AsyncSession, part_id: UUID, data: dict, existing_by_id: dict[UUID, Line]
+) -> Line:
+    """Write one bulk-replace payload row onto its existing line, or a new one."""
+    line_id = data.get("id")
+    prior = existing_by_id.get(line_id) if line_id is not None else None
+    if prior is None:
+        # An id up front, because the reading order is keyed by line id before the flush.
+        line = Line(id=line_id or uuid4(), part_id=part_id, baseline={}, mask=None)
+        session.add(line)
+    else:
+        line = prior
+    # ``order`` and ``points`` are required by the request schema, so they are
+    # always present. ``kind`` and ``source`` are optional and carry schema
+    # defaults, which ``exclude_unset`` strips from an omitting client's payload -
+    # so an absent key means "leave it alone", exactly as it does for
+    # ``block_id``, ``source_metadata`` and ``kraken_ceiling`` below. Falling back
+    # to the schema default instead flipped every pre-existing Kraken line on the
+    # page to ``source=manual`` while keeping its ``kraken_ceiling``: a row that
+    # claims a human drew it and that a model measured it. The editor sends the
+    # whole page on every save, so redrawing one line rewrote the provenance of
+    # all of them.
+    points = data["points"]
+    line.order = data["order"]
+    line.kind = _preserved(data, "kind", prior, LineGeometryKind.polygon)
+    line.points = points
+    line.baseline, line.mask = resolve_line_baseline_and_mask(
+        points=points,
+        payload_baseline=data.get("baseline"),
+        payload_mask=data.get("mask"),
+        existing_baseline=prior.baseline if prior is not None else None,
+        existing_mask=prior.mask if prior is not None else None,
+    )
+    source = _preserved(data, "source", prior, LineSource.manual)
+    line.source = source
+    # Absent means keep: an existing line already carries its value, a new one
+    # keeps the column default.
+    for field in ("block_id", "source_metadata", "kraken_ceiling"):
+        if field in data:
+            setattr(line, field, data[field])
+    source_value = source.value if hasattr(source, "value") else source
+    line.manual_geometry = source_value == "manual"
+    return line
 
 
 class LayoutService:
@@ -303,8 +358,9 @@ class LayoutService:
         await self._documents.lock_part(session, part_id)
         part = context.part
         line = await self._line_or_404(session, part.id, line_id)
-        if "block_id" in updates and updates["block_id"] is not None:
-            await self._block_or_404(session, part.id, updates["block_id"])
+        block_id = updates.get("block_id")
+        if block_id is not None:
+            await self._block_or_404(session, part.id, cast(UUID, block_id))
         # ``updates`` already went through ``exclude_unset``: every key present was sent by
         # the client. Applying it verbatim is what lets a client clear a nullable field
         # (``block_id``/``mask``); the request schema rejects nulls for the rest.
@@ -421,73 +477,22 @@ class LayoutService:
         part = context.part
         ground_truth = await self._ground_truth.layer_for(session, context.document)
 
-        requested_ids = [line["id"] for line in lines if line.get("id") is not None]
-        if len(set(requested_ids)) != len(requested_ids):
-            raise ValidationError("Line ids must be unique")
-
+        # Validate the whole payload before the first write.
+        requested_ids = _unique_requested_ids(lines)
         existing = await self._documents.list_part_lines(session, part.id)
         existing_by_id = {line.id: line for line in existing}
-        if not allow_new_ids:
-            new_supplied_ids = [
-                line_id for line_id in requested_ids if line_id not in existing_by_id
-            ]
-            if new_supplied_ids:
-                raise ValidationError("New line ids are server-generated")
+        if not allow_new_ids and any(line_id not in existing_by_id for line_id in requested_ids):
+            raise ValidationError("New line ids are server-generated")
+        await self._require_blocks_in_part(session, part.id, lines)
+
         requested_id_set = set(requested_ids)
         for line in existing:
             if line.id not in requested_id_set:
                 await session.delete(line)
-
         written: list[Line] = []
         for data in lines:
-            line_id = data.get("id")
-            prior = existing_by_id.get(line_id) if line_id is not None else None
-            line = prior
-            if line is None:
-                line = Line(id=line_id or uuid4(), part_id=part.id, baseline={}, mask=None)
-                session.add(line)
+            line = _upsert_line(session, part.id, data, existing_by_id)
             written.append(line)
-
-            points = data["points"]
-            if "block_id" in data:
-                block_id = data["block_id"]
-                if block_id is not None:
-                    await self._block_or_404(session, part.id, block_id)
-                line.block_id = block_id
-            elif prior is not None:
-                line.block_id = prior.block_id
-            # ``order`` and ``points`` are required by the request schema, so they are
-            # always present. ``kind`` and ``source`` are optional and carry schema
-            # defaults, which ``exclude_unset`` strips from an omitting client's payload -
-            # so an absent key means "leave it alone", exactly as it does for
-            # ``block_id``, ``source_metadata`` and ``kraken_ceiling`` below. Falling back
-            # to the schema default instead flipped every pre-existing Kraken line on the
-            # page to ``source=manual`` while keeping its ``kraken_ceiling``: a row that
-            # claims a human drew it and that a model measured it. The editor sends the
-            # whole page on every save, so redrawing one line rewrote the provenance of
-            # all of them.
-            line.order = data["order"]
-            line.kind = _preserved(data, "kind", prior, LineGeometryKind.polygon)
-            line.points = points
-            line.baseline, line.mask = resolve_line_baseline_and_mask(
-                points=points,
-                payload_baseline=data.get("baseline"),
-                payload_mask=data.get("mask"),
-                existing_baseline=prior.baseline if prior is not None else None,
-                existing_mask=prior.mask if prior is not None else None,
-            )
-            source = _preserved(data, "source", prior, LineSource.manual)
-            line.source = source
-            if "source_metadata" in data:
-                line.source_metadata = data["source_metadata"]
-            elif prior is not None:
-                line.source_metadata = prior.source_metadata
-            if "kraken_ceiling" in data:
-                line.kraken_ceiling = data["kraken_ceiling"]
-            elif prior is not None:
-                line.kraken_ceiling = prior.kraken_ceiling
-            source_value = source.value if hasattr(source, "value") else source
-            line.manual_geometry = source_value == "manual"
             # A row that existed keeps its origin columns untouched, because they are
             # not in ``LineUpsertRequest`` at all. ``source_metadata`` is, which is
             # why the link does not live there: the editor posts the whole page on
@@ -500,7 +505,6 @@ class LayoutService:
             if restore_origin and data.get("segmentation_run_id") is not None:
                 line.segmentation_run_id = data["segmentation_run_id"]
                 line.run_external_id = data.get("run_external_id")
-
             await self._ground_truth.write(session, line, ground_truth, data.get("approved_text"))
 
         # The client's orders say the sequence; the server makes it dense. The sort is
@@ -534,6 +538,19 @@ class LayoutService:
         lines = await self._documents.list_part_lines(session, part_id)
         blocks = _sorted_blocks(await self._documents.list_part_blocks(session, part_id))
         _apply_reading_order(lines, block_ranks(blocks))
+
+    async def _require_blocks_in_part(
+        self, session: AsyncSession, part_id: UUID, lines: list[dict]
+    ) -> None:
+        """404 when any line names a block outside this part, with one block query."""
+        block_ids = {line["block_id"] for line in lines if line.get("block_id") is not None}
+        if not block_ids:
+            return
+        part_block_ids = {
+            block.id for block in await self._documents.list_part_blocks(session, part_id)
+        }
+        if block_ids - part_block_ids:
+            raise NotFoundError("Block not found")
 
     async def _block_or_404(self, session: AsyncSession, part_id: UUID, block_id: UUID) -> Block:
         block = await self._documents.get_block_in_part(session, part_id, block_id)

@@ -169,23 +169,53 @@ def dataset_staging_dir(
     return root / "datasets" / ref.dataset_slug
 
 
-def validate_dataset_staging(staging_dir: Path) -> None:
+def _require_dataset_layout(staging_dir: Path) -> tuple[Path, Path]:
     if not staging_dir.is_dir():
         raise ValueError(f"dataset staging directory not found: {staging_dir}")
-
     images_dir = staging_dir / "images"
     labels_path = staging_dir / "labels.csv"
     if not images_dir.is_dir():
         raise ValueError(f"dataset staging directory missing images/: {staging_dir}")
     if not labels_path.is_file():
         raise ValueError(f"dataset staging directory missing labels.csv: {staging_dir}")
+    return images_dir, labels_path
 
+
+def _collect_staged_images(images_dir: Path, staging_dir: Path) -> set[str]:
     image_paths = {
         path.relative_to(staging_dir).as_posix() for path in images_dir.rglob("*") if path.is_file()
     }
     if not image_paths:
         raise ValueError(f"dataset images/ directory is empty: {images_dir}")
+    return image_paths
 
+
+def _check_label_row(
+    row: dict[str, str | None],
+    row_number: int,
+    image_paths: set[str],
+    labelled_paths: set[str],
+) -> None:
+    image = (row.get("image") or "").strip()
+    transcription = (row.get("transcription") or "").strip()
+    if not image:
+        raise ValueError(f"dataset labels.csv row {row_number} has no image path")
+    if not transcription:
+        raise ValueError(f"dataset labels.csv row {row_number} has no transcription")
+    image_path = PurePosixPath(image)
+    if image_path.is_absolute() or ".." in image_path.parts or image_path.parts[:1] != ("images",):
+        raise ValueError(
+            f"dataset labels.csv row {row_number} image must be a relative images/ path"
+        )
+    normalized_image = image_path.as_posix()
+    if normalized_image not in image_paths:
+        raise ValueError(f"dataset labels.csv row {row_number} references missing crop: {image}")
+    if normalized_image in labelled_paths:
+        raise ValueError(f"dataset labels.csv contains duplicate crop pairing: {normalized_image}")
+    labelled_paths.add(normalized_image)
+
+
+def _read_labelled_paths(labels_path: Path, image_paths: set[str]) -> set[str]:
     labelled_paths: set[str] = set()
     with labels_path.open(encoding="utf-8", newline="") as labels_file:
         reader = csv.DictReader(labels_file)
@@ -193,36 +223,15 @@ def validate_dataset_staging(staging_dir: Path) -> None:
             raise ValueError(
                 f"dataset labels.csv must contain image,transcription columns: {labels_path}"
             )
-
         for row_number, row in enumerate(reader, start=2):
-            image = (row.get("image") or "").strip()
-            transcription = (row.get("transcription") or "").strip()
-            if not image:
-                raise ValueError(f"dataset labels.csv row {row_number} has no image path")
-            if not transcription:
-                raise ValueError(f"dataset labels.csv row {row_number} has no transcription")
+            _check_label_row(row, row_number, image_paths, labelled_paths)
+    return labelled_paths
 
-            image_path = PurePosixPath(image)
-            if (
-                image_path.is_absolute()
-                or ".." in image_path.parts
-                or image_path.parts[:1] != ("images",)
-            ):
-                raise ValueError(
-                    f"dataset labels.csv row {row_number} image must be a relative images/ path"
-                )
 
-            normalized_image = image_path.as_posix()
-            if normalized_image not in image_paths:
-                raise ValueError(
-                    f"dataset labels.csv row {row_number} references missing crop: {image}"
-                )
-            if normalized_image in labelled_paths:
-                raise ValueError(
-                    f"dataset labels.csv contains duplicate crop pairing: {normalized_image}"
-                )
-            labelled_paths.add(normalized_image)
-
+def validate_dataset_staging(staging_dir: Path) -> None:
+    images_dir, labels_path = _require_dataset_layout(staging_dir)
+    image_paths = _collect_staged_images(images_dir, staging_dir)
+    labelled_paths = _read_labelled_paths(labels_path, image_paths)
     unpaired_images = image_paths - labelled_paths
     if unpaired_images:
         unpaired = ", ".join(sorted(unpaired_images))

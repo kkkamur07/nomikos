@@ -34,6 +34,36 @@ type DevicesPageData = {
 type DevicesError =
   { kind: "unavailable" } | { kind: "failed"; message: string };
 
+function devicesQueryKey(
+  signedIn: boolean,
+  includeRevoked: boolean,
+): readonly [string, boolean] | null {
+  // `includeRevoked` is part of the identity of the read: the two variants are
+  // different lists, and sharing a cache entry would show one for the other.
+  return signedIn ? ["devices-page", includeRevoked] : null;
+}
+
+function DevicesErrorBanner({
+  error,
+}: {
+  error: DevicesError;
+}): React.ReactNode {
+  if (error.kind === "unavailable") {
+    return (
+      <div className="notice-banner" role="alert">
+        <strong>Device pairing is off on this deployment</strong>
+        Nothing can be paired until an administrator enables it.
+      </div>
+    );
+  }
+  return (
+    <div className="notice-banner" role="alert">
+      <strong>Devices unavailable</strong>
+      {error.message}
+    </div>
+  );
+}
+
 export function DevicesPage() {
   const router = useRouter();
   const [includeRevoked, setIncludeRevoked] = useState(false);
@@ -46,13 +76,13 @@ export function DevicesPage() {
     if (!signedIn) navigateToLogin(router);
   }, [signedIn, router]);
 
-  const { data, loading, error, refetch } = useServerQuery<
+  const { data, loading, error } = useServerQuery<
     DevicesPageData,
     DevicesError
   >({
     // `includeRevoked` is part of the identity of the read: the two variants are
     // different lists, and sharing a cache entry would show one for the other.
-    key: signedIn ? ["devices-page", includeRevoked] : null,
+    key: devicesQueryKey(signedIn, includeRevoked),
     tags: [resourceTags.currentUser, resourceTags.devices],
     read: async () => {
       const [me, devices] = await Promise.all([
@@ -83,8 +113,8 @@ export function DevicesPage() {
     try {
       await devicesApi.revokeDevice(deviceId);
       toast.success("Device revoked");
-      invalidateAfter.deviceListChanged();
-      await refetch();
+      // Invalidation refetches the mounted list; no second refetch needed.
+      await invalidateAfter.deviceListChanged();
     } catch (err) {
       toast.error(userFacingMessage(err, "Failed to revoke that device"));
     } finally {
@@ -112,18 +142,7 @@ export function DevicesPage() {
         </label>
       }
     >
-      {error?.kind === "unavailable" && (
-        <div className="notice-banner" role="alert">
-          <strong>Device pairing is off on this deployment</strong>
-          Nothing can be paired until an administrator enables it.
-        </div>
-      )}
-      {error?.kind === "failed" && (
-        <div className="notice-banner" role="alert">
-          <strong>Devices unavailable</strong>
-          {error.message}
-        </div>
-      )}
+      {error && <DevicesErrorBanner error={error} />}
 
       <p className="section-label" id="devices-label">
         Paired devices

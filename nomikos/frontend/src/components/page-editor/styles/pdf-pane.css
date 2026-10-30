@@ -1,0 +1,119 @@
+/* ─── PDF pane - collapsible + resizable ────────────────────────── */
+.pe-pdf-wrap {
+  display: flex;
+  flex-shrink: 0;
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+.pe-pdf-wrap--collapsed {
+  width: 0 !important;
+  border-left: none;
+  overflow: hidden;
+}
+.pe-pdf-wrap--collapsed .pe-pdf-resizer,
+.pe-pdf-wrap--collapsed .pe-pdf-pane {
+  display: none;
+}
+
+.pe-pdf-resizer {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 6;
+}
+.pe-pdf-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: 0 auto;
+  width: 1px;
+  background: var(--border-2);
+  transition: background 0.1s;
+}
+.pe-pdf-resizer:hover::after,
+.pe-pdf-resizer.is-dragging::after {
+  background: var(--navy);
+  width: 2px;
+}
+
+.pe-pdf-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pe-pdf-pane__header {
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.pe-pdf-pane__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.pe-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.pe-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.pe-icon-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.pe-icon-btn:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+.pe-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pe-pdf-pane__body {
+  flex: 1;
+  overflow: auto;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: 0.8125rem;
+  flex-direction: column;
+  gap: 6px;
+}
+.pe-pdf-pane__mock {
+  width: 85%;
+  max-width: 220px;
+  aspect-ratio: 3 / 4;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  color: var(--text-4);
+}

@@ -7,7 +7,7 @@ import hashlib
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import PlainTextResponse
 
-from backend.core.settings.ml import get_ml_settings
+from backend.core.settings.ml import get_inference_settings
 from nomikos_inference.registry import load_registry
 
 router = APIRouter(tags=["ml"])
@@ -20,7 +20,7 @@ def _registry_etag(content: str) -> str:
 @router.get("/inference/v1/registry")
 def get_inference_registry(request: Request) -> Response:
     """Serve registry.yaml for installed helpers to sync at startup."""
-    registry_path = get_ml_settings().inference_registry_path
+    registry_path = get_inference_settings().inference_registry_path
     content = registry_path.read_text(encoding="utf-8")
     # Fail fast on deploy if the on-disk registry is invalid.
     load_registry(registry_path)

@@ -17,7 +17,7 @@ from backend.core.settings.device import DeviceSettings, get_device_settings
 from backend.core.settings.email import EmailSettings, get_email_settings
 from backend.core.settings.infrastructure import InfrastructureSettings, get_infrastructure_settings
 from backend.core.settings.job import JobSettings, get_job_settings
-from backend.core.settings.ml import MLSettings, get_inference_settings, get_ml_settings
+from backend.core.settings.ml import MLSettings, get_inference_settings
 from backend.core.settings.storage import StorageSettings, get_storage_settings
 
 __all__ = [
@@ -36,7 +36,6 @@ __all__ = [
     "get_job_settings",
     "get_email_settings",
     "get_inference_settings",
-    "get_ml_settings",
     "get_storage_settings",
     "reset_settings_caches",
 ]

@@ -1,11 +1,8 @@
 """Platform-owned Processing pipeline for exported line images."""
 
-from collections.abc import Callable
-
 from PIL import Image, ImageDraw
 
 SUPPORTED_STEPS = {"rectify"}
-StepCallback = Callable[[str], None]
 
 
 def _clamp(value: float, low: int, high: int) -> float:
@@ -49,21 +46,4 @@ def rectify(page_image: Image.Image, segment: dict) -> Image.Image:
 def apply_step(image: Image.Image, segment: dict, step: str) -> Image.Image:
     if step not in SUPPORTED_STEPS:
         raise ValueError(f"Unsupported processing step: {step}")
-    if step == "rectify":
-        return rectify(image, segment)
-    raise ValueError(f"Unsupported processing step: {step}")
-
-
-def process(
-    image: Image.Image,
-    segment: dict,
-    steps: list[str],
-    *,
-    on_step: StepCallback | None = None,
-) -> Image.Image:
-    result = image
-    for step in steps:
-        if on_step is not None:
-            on_step(step)
-        result = apply_step(result, segment, step)
-    return result
+    return rectify(image, segment)

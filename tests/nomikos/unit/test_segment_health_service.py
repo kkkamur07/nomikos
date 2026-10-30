@@ -232,7 +232,9 @@ class TestApplySplit:
         lines = _two_column_page()
         service, _repo, part = _service(lines)
 
-        with pytest.raises(ValidationError, match="no longer offered"):
+        with pytest.raises(
+            ValidationError, match="^This segment is no longer offered a column split$"
+        ):
             await service.apply_split(
                 _Session(), object(), uuid.uuid4(), uuid.uuid4(), part.id, lines[0].id
             )
@@ -287,7 +289,7 @@ class TestApplyDelete:
         service, _repo, part = _service(lines)
         session = _Session()
 
-        with pytest.raises(ValidationError, match="not flagged"):
+        with pytest.raises(ValidationError, match="^This segment is not flagged as a suspect$"):
             await service.apply_delete(
                 session, object(), uuid.uuid4(), uuid.uuid4(), part.id, lines[0].id
             )

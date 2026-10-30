@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import logging
 import os
-import re
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,10 +21,10 @@ from nomikos_inference.hub.manifest import (
     manifest_matches_expected,
     save_manifest,
 )
+from nomikos_inference.hub.pins import COMMIT_SHA_PATTERN, SHA256_PATTERN
 from nomikos_inference.hub.uri import parse_hf_weights_uri
 
-_COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
-_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+logger = logging.getLogger(__name__)
 
 # The **Hub cache** lives under the researcher's home directory, not beside the
 # code, because this module ships inside the published `nomikos-inference`
@@ -75,11 +75,11 @@ def _validate_provenance(
     signature rather than needing its own ``assert`` calls, which `python -O`
     strips (and would silently allow an unpinned download).
     """
-    if not hub_revision or not _COMMIT_SHA_PATTERN.fullmatch(hub_revision):
+    if not hub_revision or not COMMIT_SHA_PATTERN.fullmatch(hub_revision):
         raise ValueError(
             "hf weights source requires an immutable 40-character lowercase Hub commit in hub_revision"
         )
-    if not artifact_sha256 or not _SHA256_PATTERN.fullmatch(artifact_sha256):
+    if not artifact_sha256 or not SHA256_PATTERN.fullmatch(artifact_sha256):
         raise ValueError("hf weights source requires a 64-character lowercase artifact_sha256")
     return hub_revision, artifact_sha256
 
@@ -121,6 +121,66 @@ def _snapshot_download(
         raise ValueError(_hub_error_message(exc, repo_id=repo_id, revision=revision)) from exc
 
 
+def _try_cached_artifact(
+    cache_dir: Path,
+    repo_id: str,
+    hub_revision: str,
+    artifact_sha256: str,
+    architecture: str | None,
+) -> Path | None:
+    """A verified cached artifact, or ``None`` (with a warning) on any failure."""
+    manifest = load_manifest(cache_dir)
+    if manifest is None or not manifest_matches_expected(
+        manifest,
+        repo_id=repo_id,
+        hub_revision=hub_revision,
+        artifact_sha256=artifact_sha256,
+    ):
+        return None
+    try:
+        artifact = find_hub_artifact(cache_dir, architecture=architecture)
+        if str(artifact.relative_to(cache_dir)) != manifest.artifact_path:
+            raise ValueError("cached Hub artifact path does not match its manifest")
+        verify_artifact_sha256(artifact, artifact_sha256)
+        return artifact
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning(
+            "cached Hub artifact failed verification, re-downloading: %s",
+            exc,
+        )
+        return None
+
+
+def _download_artifact(
+    cache_dir: Path,
+    client: HubClient,
+    repo_id: str,
+    hub_revision: str,
+    artifact_sha256: str,
+    architecture: str | None,
+) -> Path:
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    try:
+        _snapshot_download(client, repo_id, hub_revision, cache_dir)
+        artifact = find_hub_artifact(cache_dir, architecture=architecture)
+        verify_artifact_sha256(artifact, artifact_sha256)
+        save_manifest(
+            cache_dir,
+            HubCacheManifest(
+                repo_id=repo_id,
+                hub_revision=hub_revision,
+                artifact_path=str(artifact.relative_to(cache_dir)),
+                artifact_sha256=artifact_sha256,
+            ),
+        )
+        return artifact
+    except Exception:
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        raise
+
+
 def resolve_hf_weights_source(
     uri: str,
     *,
@@ -150,41 +210,11 @@ def resolve_hf_weights_source(
     # Held across the whole check-then-download so a concurrent resolve of the
     # same model cannot rmtree the snapshot this one is verifying or writing.
     with _cache_lock(cache_dir):
-        manifest = load_manifest(cache_dir)
-
-        if manifest is not None and manifest_matches_expected(
-            manifest,
-            repo_id=parsed.repo_id,
-            hub_revision=hub_revision,
-            artifact_sha256=artifact_sha256,
-        ):
-            try:
-                artifact = find_hub_artifact(cache_dir, architecture=architecture)
-                if str(artifact.relative_to(cache_dir)) != manifest.artifact_path:
-                    raise ValueError("cached Hub artifact path does not match its manifest")
-                verify_artifact_sha256(artifact, artifact_sha256)
-                return artifact
-            except (FileNotFoundError, ValueError):
-                pass
-
-        if cache_dir.exists():
-            shutil.rmtree(cache_dir)
-
-        try:
-            _snapshot_download(client, parsed.repo_id, hub_revision, cache_dir)
-            artifact = find_hub_artifact(cache_dir, architecture=architecture)
-            verify_artifact_sha256(artifact, artifact_sha256)
-            save_manifest(
-                cache_dir,
-                HubCacheManifest(
-                    repo_id=parsed.repo_id,
-                    hub_revision=hub_revision,
-                    artifact_path=str(artifact.relative_to(cache_dir)),
-                    artifact_sha256=artifact_sha256,
-                ),
-            )
-            return artifact
-        except Exception:
-            if cache_dir.exists():
-                shutil.rmtree(cache_dir)
-            raise
+        cached = _try_cached_artifact(
+            cache_dir, parsed.repo_id, hub_revision, artifact_sha256, architecture
+        )
+        if cached is not None:
+            return cached
+        return _download_artifact(
+            cache_dir, client, parsed.repo_id, hub_revision, artifact_sha256, architecture
+        )

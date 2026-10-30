@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from backend.core.exceptions import ConflictError, NotFoundError
 from backend.document.application.segment_merge_service import SegmentMergeService
@@ -32,7 +32,11 @@ from nomikos_inference.contracts.common import InferenceJobStatus
 from nomikos_inference.contracts.common import InferenceTask as WireInferenceTask
 from nomikos_inference.contracts.jobs import JobCallbackRequest
 from nomikos_inference.contracts.segment import SegmentRunResponse
-from nomikos_inference.contracts.transcribe import TranscribeBatchRunResponse
+from nomikos_inference.contracts.transcribe import (
+    TranscribeBatchLineResult,
+    TranscribeBatchRunResponse,
+    TranscribeRunResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +48,7 @@ CALLBACK_PROCESSING_ERROR = "Callback processing failed"
 # ``job.error`` is Text (unbounded), so this cap is not a column constraint. It
 # exists because the string is rendered whole in a toast and a traceback-length
 # message there is unreadable. The ``INFERENCE_FAILURE_ERROR`` prefix stays
-# stable so callers can still recognise the class of failure, same contract as
-# ``job_claim_engine.WAITING_TIMEOUT_ERROR``.
+# stable so callers can still recognise the class of failure.
 _MAX_PUBLIC_ERROR_CHARS = 200
 
 # Ordered: URLs are swallowed whole before the path rule can nibble at their
@@ -131,7 +134,9 @@ def _merge_context(job: Job, callback: JobCallbackRequest) -> _MergeContext:
     )
 
 
-def _apply_segment_merge(session, context: _MergeContext, callback: JobCallbackRequest) -> dict:
+def _apply_segment_merge(
+    session: Session, context: _MergeContext, callback: JobCallbackRequest
+) -> dict:
     if context.document_part_id is None:
         raise ValueError("Segment job is missing its target document part")
     canonical = to_canonical_segment(_segment_output(callback))
@@ -157,8 +162,74 @@ def _apply_segment_merge(session, context: _MergeContext, callback: JobCallbackR
     }
 
 
+def _parse_line_id(
+    result: TranscribeBatchLineResult, allowed_line_ids: frozenset[uuid.UUID] | None
+) -> uuid.UUID:
+    if result.line_id is None:
+        raise TranscribeJobHandlerError("Transcribe callback line is missing line_id")
+    try:
+        line_id = uuid.UUID(result.line_id)
+    except ValueError as exc:
+        raise TranscribeJobHandlerError("Transcribe callback line_id is invalid") from exc
+    # A compromised or buggy agent holding this job could report lines the
+    # job never selected. The part check in ``_split_by_outcome`` stops
+    # cross-part writes; this stops cross-line writes within the part when the
+    # job was line-scoped.
+    if allowed_line_ids is not None and line_id not in allowed_line_ids:
+        raise TranscribeJobHandlerError("Transcribe callback line is outside the job's scope")
+    return line_id
+
+
+def _parse_line_results(
+    output: TranscribeBatchRunResponse, allowed_line_ids: frozenset[uuid.UUID] | None
+) -> list[tuple[TranscribeBatchLineResult, uuid.UUID]]:
+    """Validate ids and enforce the job's own line scope, in line order."""
+    return [
+        (result, _parse_line_id(result, allowed_line_ids))
+        for result in sorted(output.lines, key=lambda item: item.line_index)
+    ]
+
+
+def _load_lines(session: Session, line_ids: list[uuid.UUID]) -> dict[uuid.UUID, Line]:
+    """Every line in one query instead of one SELECT per line.
+
+    A 50-line page was 50 sequential round trips under the locked job row.
+    """
+    if not line_ids:
+        return {}
+    lines = session.execute(select(Line).where(Line.id.in_(line_ids))).scalars().all()
+    return {line.id: line for line in lines}
+
+
+def _split_by_outcome(
+    parsed: list[tuple[TranscribeBatchLineResult, uuid.UUID]],
+    lines_by_id: dict[uuid.UUID, Line],
+    part_id: uuid.UUID,
+) -> tuple[list[tuple[Line, TranscribeRunResponse]], list[int]]:
+    """Pair each successful result with its line; collect the failed line indexes.
+
+    A batch can be a partial success: the inference service isolates per-line
+    failures instead of discarding the whole page, and sends those lines with
+    ``error`` set and ``output`` absent. Merging one would pass ``None`` where
+    the merge service dereferences ``.text``. Skip them, but count them, since a
+    page that silently transcribed 12 of 40 lines and reported plain success
+    would be worse than a total failure.
+    """
+    lines_with_output: list[tuple[Line, TranscribeRunResponse]] = []
+    failed_line_indexes: list[int] = []
+    for result, line_id in parsed:
+        line = lines_by_id.get(line_id)
+        if line is None or line.part_id != part_id:
+            raise TranscribeJobHandlerError("Document line not found")
+        if result.output is None:
+            failed_line_indexes.append(result.line_index)
+        else:
+            lines_with_output.append((line, result.output))
+    return lines_with_output, failed_line_indexes
+
+
 def _apply_transcribe_merge_sync(
-    session,
+    session: Session,
     *,
     context: _MergeContext,
     output: TranscribeBatchRunResponse,
@@ -178,55 +249,11 @@ def _apply_transcribe_merge_sync(
         part_id=context.document_part_id,
     )
 
-    # First pass: validate ids and enforce the job's own line scope, collecting
-    # the ids so every line is fetched in one query instead of one SELECT per
-    # line (a 50-line page was 50 sequential round trips under the locked job row).
-    parsed: list[tuple[object, uuid.UUID]] = []
-    for result in sorted(output.lines, key=lambda item: item.line_index):
-        if result.line_id is None:
-            raise TranscribeJobHandlerError("Transcribe callback line is missing line_id")
-        try:
-            line_id = uuid.UUID(result.line_id)
-        except ValueError as exc:
-            raise TranscribeJobHandlerError("Transcribe callback line_id is invalid") from exc
-        # A compromised or buggy agent holding this job could report lines the
-        # job never selected. The part check below stops cross-part writes; this
-        # stops cross-line writes within the part when the job was line-scoped.
-        if context.allowed_line_ids is not None and line_id not in context.allowed_line_ids:
-            raise TranscribeJobHandlerError("Transcribe callback line is outside the job's scope")
-        parsed.append((result, line_id))
-
-    lines_by_id = (
-        {
-            line.id: line
-            for line in session.execute(
-                select(Line).where(Line.id.in_([line_id for _, line_id in parsed]))
-            )
-            .scalars()
-            .all()
-        }
-        if parsed
-        else {}
+    parsed = _parse_line_results(output, context.allowed_line_ids)
+    lines_by_id = _load_lines(session, [line_id for _, line_id in parsed])
+    lines_with_output, failed_line_indexes = _split_by_outcome(
+        parsed, lines_by_id, context.document_part_id
     )
-
-    lines_with_output = []
-    failed_line_indexes: list[int] = []
-    for result, line_id in parsed:
-        line = lines_by_id.get(line_id)
-        if line is None or line.part_id != context.document_part_id:
-            raise TranscribeJobHandlerError("Document line not found")
-        # A batch can be a partial success: the inference service isolates
-        # per-line failures instead of discarding the whole page, and sends
-        # those lines with ``error`` set and ``output`` absent. Merging one
-        # would pass ``None`` where the merge service dereferences ``.text``.
-        # Skip them, but count them, since a page that silently transcribed
-        # 12 of 40 lines and reported plain success would be worse than a
-        # total failure.
-        if result.output is None:
-            failed_line_indexes.append(result.line_index)
-            continue
-        lines_with_output.append((line, result.output))
-
     if not lines_with_output:
         raise TranscribeJobHandlerError("Transcribe callback contained no successful lines")
 
@@ -250,7 +277,9 @@ def _apply_transcribe_merge_sync(
     return summary
 
 
-def _merge_into_session(session, context: _MergeContext, callback: JobCallbackRequest) -> dict:
+def _merge_into_session(
+    session: Session, context: _MergeContext, callback: JobCallbackRequest
+) -> dict:
     """Stage the document writes for this callback. Never commits; see ``_merge_and_finalize``."""
     if context.job_type == JobType.segment:
         return _apply_segment_merge(session, context, callback)
@@ -317,11 +346,7 @@ def _assert_callback_matches_job(job: Job, callback: JobCallbackRequest) -> None
         raise ConflictError(f"job {job.id} does not recognize callback inference_job_id")
 
 
-def _mark_done_from_callback_sync(
-    job: Job,
-    callback: JobCallbackRequest,
-    result: dict,
-) -> None:
+def _mark_done_from_callback_sync(job: Job, result: dict) -> None:
     now = datetime.now(UTC)
     job.status = JobStatus.done
     job.result = result
@@ -435,7 +460,7 @@ def _merge_and_finalize(context: _MergeContext, callback: JobCallbackRequest) ->
             raise ConflictError(f"job {job.id} is not processing this inference callback")
 
         result = _merge_into_session(session, context, callback)
-        _mark_done_from_callback_sync(job, callback, result)
+        _mark_done_from_callback_sync(job, result)
         session.commit()
     return True
 
@@ -463,9 +488,6 @@ def _apply_callback_locked(callback: JobCallbackRequest) -> bool:
 
 
 class JobCallbackService:
-    def __init__(self, _session: AsyncSession) -> None:
-        pass
-
     async def apply_callback(self, callback: JobCallbackRequest) -> bool:
         """Apply callback. Returns False when the Product job was already terminal."""
         # Everything below the seam is sync: ``sync_system_session`` round-trips

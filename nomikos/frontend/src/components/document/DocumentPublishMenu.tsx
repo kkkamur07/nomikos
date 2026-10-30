@@ -115,6 +115,133 @@ export function DocumentPublishMenu({
     }
   }
 
+  function PublishConfirmStep({
+    working,
+    totalPageCount,
+    reviewedPageCount,
+    publishedPageCount,
+    onCancel,
+    onConfirm,
+  }: {
+    working: boolean;
+    totalPageCount: number;
+    reviewedPageCount: number;
+    publishedPageCount: number;
+    onCancel: () => void;
+    onConfirm: () => void;
+  }): React.ReactNode {
+    return (
+      <ActionMenuConfirm
+        busy={working}
+        question={`Publish ${publishConfirmSummary(totalPageCount, reviewedPageCount)}.`}
+        detail={`${publishedPageCount} of ${totalPageCount} pages are set to show. Anyone holding the secret link can read them.`}
+        confirmLabel={working ? "Publishing…" : "Publish document"}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />
+    );
+  }
+
+  function RotateConfirmStep({
+    working,
+    onCancel,
+    onConfirm,
+  }: {
+    working: boolean;
+    onCancel: () => void;
+    onConfirm: () => void;
+  }): React.ReactNode {
+    return (
+      <ActionMenuConfirm
+        destructive
+        busy={working}
+        question="Rotate the secret link?"
+        detail="Every link already sent stops working. Anyone still reading through the old one loses access with no warning."
+        confirmLabel={working ? "Rotating…" : "Yes, rotate the link"}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />
+    );
+  }
+
+  function PublishMenuItems({
+    isPublished,
+    isArchived,
+    busy,
+    totalPageCount,
+    publishedPageCount,
+    publicUrl,
+    publicShareToken,
+    onPublish,
+    onUnpublish,
+    onCopyLink,
+    onRotate,
+  }: {
+    isPublished: boolean;
+    isArchived: boolean;
+    busy: boolean;
+    totalPageCount: number;
+    publishedPageCount: number;
+    publicUrl: string | null;
+    publicShareToken: string | null;
+    onPublish: () => void;
+    onUnpublish: () => void;
+    onCopyLink: () => void;
+    onRotate: () => void;
+  }): React.ReactNode {
+    return (
+      <>
+        {!isPublished && (
+          <ActionMenuItem
+            label={`Publish document (${pageCountLabel(totalPageCount)})`}
+            detail={`Sets ${publishedPageCount} of ${totalPageCount} pages live. Readers reach them through one secret link.`}
+            disabled={busy || totalPageCount === 0}
+            onSelect={onPublish}
+          />
+        )}
+        {isPublished && (
+          <ActionMenuItem
+            label={`Unpublish (${pageCountLabel(totalPageCount)})`}
+            detail="Takes the public page down. Every link to it starts answering 404."
+            disabled={busy}
+            onSelect={onUnpublish}
+          />
+        )}
+        {isArchived && (
+          <ActionMenuWarning>
+            This document is archived. Restore it before publishing.
+          </ActionMenuWarning>
+        )}
+        {isPublished && (
+          <>
+            <ActionMenuDivider />
+            <ActionMenuSection>Link</ActionMenuSection>
+            <ActionMenuItem
+              label="Copy secret link"
+              disabled={busy || !publicUrl}
+              onSelect={onCopyLink}
+            />
+            <ActionMenuItem
+              destructive
+              label="Rotate link"
+              disabled={busy || !publicShareToken}
+              onSelect={onRotate}
+            />
+            <ActionMenuWarning>
+              Anyone holding the link can read it. Rotating breaks every link
+              already sent.
+            </ActionMenuWarning>
+            {!publicShareToken && (
+              <ActionMenuWarning>
+                Only the project owner can get the secret link.
+              </ActionMenuWarning>
+            )}
+          </>
+        )}
+      </>
+    );
+  }
+
   return (
     <ActionMenu
       label="Publish"
@@ -127,11 +254,11 @@ export function DocumentPublishMenu({
       {(close) => {
         if (pending === "publish") {
           return (
-            <ActionMenuConfirm
-              busy={working}
-              question={`Publish ${publishConfirmSummary(totalPageCount, reviewedPageCount)}.`}
-              detail={`${publishedPageCount} of ${totalPageCount} pages are set to show. Anyone holding the secret link can read them.`}
-              confirmLabel={working ? "Publishing…" : "Publish document"}
+            <PublishConfirmStep
+              working={working}
+              totalPageCount={totalPageCount}
+              reviewedPageCount={reviewedPageCount}
+              publishedPageCount={publishedPageCount}
               onCancel={() => setPending(null)}
               onConfirm={() => void setWorkflow("published", close)}
             />
@@ -139,67 +266,27 @@ export function DocumentPublishMenu({
         }
         if (pending === "rotate") {
           return (
-            <ActionMenuConfirm
-              destructive
-              busy={working}
-              question="Rotate the secret link?"
-              detail="Every link already sent stops working. Anyone still reading through the old one loses access with no warning."
-              confirmLabel={working ? "Rotating…" : "Yes, rotate the link"}
+            <RotateConfirmStep
+              working={working}
               onCancel={() => setPending(null)}
               onConfirm={() => void rotateLink(close)}
             />
           );
         }
         return (
-          <>
-            {!isPublished && (
-              <ActionMenuItem
-                label={`Publish document (${pageCountLabel(totalPageCount)})`}
-                detail={`Sets ${publishedPageCount} of ${totalPageCount} pages live. Readers reach them through one secret link.`}
-                disabled={busy || totalPageCount === 0}
-                onSelect={() => setPending("publish")}
-              />
-            )}
-            {isPublished && (
-              <ActionMenuItem
-                label={`Unpublish (${pageCountLabel(totalPageCount)})`}
-                detail="Takes the public page down. Every link to it starts answering 404."
-                disabled={busy}
-                onSelect={() => void setWorkflow("draft", close)}
-              />
-            )}
-            {isArchived && (
-              <ActionMenuWarning>
-                This document is archived. Restore it before publishing.
-              </ActionMenuWarning>
-            )}
-            {isPublished && (
-              <>
-                <ActionMenuDivider />
-                <ActionMenuSection>Link</ActionMenuSection>
-                <ActionMenuItem
-                  label="Copy secret link"
-                  disabled={busy || !publicUrl}
-                  onSelect={() => void copyLink(close)}
-                />
-                <ActionMenuItem
-                  destructive
-                  label="Rotate link"
-                  disabled={busy || !publicShareToken}
-                  onSelect={() => setPending("rotate")}
-                />
-                <ActionMenuWarning>
-                  Anyone holding the link can read it. Rotating breaks every
-                  link already sent.
-                </ActionMenuWarning>
-                {!publicShareToken && (
-                  <ActionMenuWarning>
-                    Only the project owner can get the secret link.
-                  </ActionMenuWarning>
-                )}
-              </>
-            )}
-          </>
+          <PublishMenuItems
+            isPublished={isPublished}
+            isArchived={isArchived}
+            busy={busy}
+            totalPageCount={totalPageCount}
+            publishedPageCount={publishedPageCount}
+            publicUrl={publicUrl}
+            publicShareToken={publicShareToken}
+            onPublish={() => setPending("publish")}
+            onUnpublish={() => void setWorkflow("draft", close)}
+            onCopyLink={() => void copyLink(close)}
+            onRotate={() => setPending("rotate")}
+          />
         );
       }}
     </ActionMenu>

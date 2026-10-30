@@ -72,18 +72,6 @@ class DocumentPartService:
         """
         return self._injected_media or get_media_store()
 
-    async def list_parts(
-        self,
-        session: AsyncSession,
-        user: User,
-        project_id: UUID,
-        document_id: UUID,
-    ) -> list[DocumentPart]:
-        context = await self._access.require_document(session, user, project_id, document_id)
-        parts = sorted(context.document.parts, key=lambda p: p.order)
-        await self.backfill_part_dimensions(session, parts)
-        return parts
-
     async def upload_part(
         self,
         session: AsyncSession,
@@ -182,8 +170,11 @@ class DocumentPartService:
             filename_stem=filename_stem,
         )
         try:
-            upload_url, token = self._media.create_upload_url(
-                image_key, expires_at=datetime.now(UTC) + timedelta(minutes=5)
+            # A network round trip to Storage; keep it off the event loop.
+            upload_url, token = await asyncio.to_thread(
+                self._media.create_upload_url,
+                image_key,
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
             )
         except PresignUnsupported:
             # The local filesystem backend cannot presign. Roll the part back so no

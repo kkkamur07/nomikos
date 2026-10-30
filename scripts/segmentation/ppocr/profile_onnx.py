@@ -36,22 +36,41 @@ import argparse
 import collections
 import json
 import statistics
+import sys
 import time
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
-from verify_parity import (
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.segmentation.ppocr._fixtures import (
     SHAPE_CASES,
-    _build_tensor,
-    _make_post_op,
-    _norm_kwargs,
-    _resolve_image,
-    _run_onnx,
+    build_tensor,
+    config_float,
+    make_paddle_predictor,
+    make_post_op,
+    norm_kwargs,
+    resolve_image_file,
+    run_onnx,
+    run_paddle,
 )
 
 ORT_VERSION_PIN = "1.30.0"
 PROFILE_PAGE = "c13"
 PROFILE_CAP = 1920
+
+
+class _SessionOptions(TypedDict, total=False):
+    """One sessions-subset row: _make_session overrides for a labelled run."""
+
+    threads: int
+    opt_level: str
+    exec_mode: str
+    extra_entries: dict[str, str]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -99,15 +118,15 @@ def _c13_tensor(args: argparse.Namespace):
     import cv2
 
     cv2.setNumThreads(1)
-    norm_kwargs, post_cfg = _norm_kwargs(args.model_dir)
-    image_path = _resolve_image(PROFILE_PAGE, args.images, args.grec_images)
+    normaliser, post_cfg = norm_kwargs(args.model_dir)
+    image_path = resolve_image_file(PROFILE_PAGE, args.images, args.grec_images)
     bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     if bgr is None:
         raise RuntimeError(f"could not decode {image_path}")
-    tensor, shape = _build_tensor(bgr, cap=PROFILE_CAP, norm_kwargs=norm_kwargs)
-    thresh = float(post_cfg.get("thresh", 0.2))
-    box_thresh = float(post_cfg.get("box_thresh", 0.45))
-    post_op = _make_post_op(post_cfg, thresh, box_thresh)
+    tensor, shape = build_tensor(bgr, cap=PROFILE_CAP, normaliser=normaliser)
+    thresh = config_float(post_cfg, "thresh", 0.2)
+    box_thresh = config_float(post_cfg, "box_thresh", 0.45)
+    post_op = make_post_op(post_cfg, thresh, box_thresh)
     return tensor, shape, post_op
 
 
@@ -150,8 +169,8 @@ def cmd_profile(args: argparse.Namespace) -> int:
     tensor, _, _ = _c13_tensor(args)
     args.perfdir.mkdir(parents=True, exist_ok=True)
     session = _make_session(args.onnx, 4, profiling=args.perfdir / "ort-profile")
-    _run_onnx(session, tensor)
-    _run_onnx(session, tensor)
+    run_onnx(session, tensor)
+    run_onnx(session, tensor)
     profile_path = Path(session.end_profiling())
     print(f"profile={profile_path}")
     events = json.loads(profile_path.read_text()) if profile_path.is_file() else []
@@ -182,18 +201,26 @@ def _median_of_3(session, tensor: np.ndarray, shape: np.ndarray, post_op) -> flo
     samples = []
     for _ in range(3):
         started = time.perf_counter()
-        prob = _run_onnx(session, tensor)
+        prob = run_onnx(session, tensor)
         post_op([prob.astype(np.float32)], [shape])
         samples.append(time.perf_counter() - started)
     return float(statistics.median(samples))
 
 
+def _pop_extra_entries(kwargs: _SessionOptions) -> dict[str, str] | None:
+    """The session config entries for one subset row, if it sets any."""
+    entries = kwargs.pop("extra_entries", None)
+    if entries is None:
+        return None
+    return dict(entries)
+
+
 def cmd_sessions(args: argparse.Namespace) -> int:
     tensor, shape, post_op = _c13_tensor(args)
     _run_warmup = _make_session(args.onnx, 4)
-    _run_onnx(_run_warmup, tensor)
+    run_onnx(_run_warmup, tensor)
     del _run_warmup
-    subsets = {
+    subsets: dict[str, list[tuple[str, _SessionOptions]]] = {
         "opt1": [
             ("opt=ALL", {}),
             ("opt=EXTENDED", {"opt_level": "EXTENDED"}),
@@ -212,9 +239,15 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     only = args.only or "opt1"
     print("c13, detector plus postprocess, median of 3 after 1 warmup:")
     for label, kwargs in subsets[only]:
-        threads = int(kwargs.pop("threads", 4))
-        session = _make_session(args.onnx, threads, **kwargs)  # type: ignore[arg-type]
-        _run_onnx(session, tensor)
+        threads = kwargs.pop("threads", 4)
+        session = _make_session(
+            args.onnx,
+            threads,
+            opt_level=str(kwargs.pop("opt_level", "ALL")),
+            exec_mode=str(kwargs.pop("exec_mode", "SEQUENTIAL")),
+            extra_entries=_pop_extra_entries(kwargs),
+        )
+        run_onnx(session, tensor)
         median = _median_of_3(session, tensor, shape, post_op)
         print(f"{label}: median={median:.3f}s", flush=True)
         del session
@@ -234,13 +267,13 @@ def cmd_candidate(args: argparse.Namespace) -> int:
     rng = np.random.default_rng(0)
     for label, height, width in SHAPE_CASES:
         tensor = rng.normal(0.0, 1.0, size=(1, 3, height, width)).astype(np.float32)
-        out = _run_onnx(session, tensor)
+        out = run_onnx(session, tensor)
         ok = tuple(int(v) for v in out.shape) == (1, 1, height, width)
         print(f"shape {label}: ok={ok}")
         if not ok:
             return 1
     tensor, shape, post_op = _c13_tensor(args)
-    _run_onnx(session, tensor)
+    run_onnx(session, tensor)
     median = _median_of_3(session, tensor, shape, post_op)
     print(f"c13 median={median:.3f}s")
     print(f"top node types: {counts.most_common(8)}")
@@ -252,26 +285,24 @@ def cmd_compare(args: argparse.Namespace) -> int:
     import cv2
 
     cv2.setNumThreads(1)
-    norm_kwargs, post_cfg = _norm_kwargs(args.model_dir)
-    thresh = float(post_cfg.get("thresh", 0.2))
-    box_thresh = float(post_cfg.get("box_thresh", 0.45))
-    post_op = _make_post_op(post_cfg, thresh, box_thresh)
+    normaliser, post_cfg = norm_kwargs(args.model_dir)
+    thresh = config_float(post_cfg, "thresh", 0.2)
+    box_thresh = config_float(post_cfg, "box_thresh", 0.45)
+    post_op = make_post_op(post_cfg, thresh, box_thresh)
     ref = _make_session(args.onnx, 4)
     fast = _make_session(args.onnx, 4, opt_level="EXTENDED")
-    dz = _make_session(
-        args.onnx, 4, extra_entries={"session.set_denormal_as_zero": "1"}
-    )
+    dz = _make_session(args.onnx, 4, extra_entries={"session.set_denormal_as_zero": "1"})
     for page in ("c13", "vat-1r", "grec-p1"):
-        image_path = _resolve_image(page, args.images, args.grec_images)
+        image_path = resolve_image_file(page, args.images, args.grec_images)
         bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if bgr is None:
             raise RuntimeError(f"could not decode {image_path}")
-        tensor, shape = _build_tensor(bgr, cap=PROFILE_CAP, norm_kwargs=norm_kwargs)
-        ref_map = _run_onnx(ref, tensor).astype(np.float64)
+        tensor, shape = build_tensor(bgr, cap=PROFILE_CAP, normaliser=normaliser)
+        ref_map = run_onnx(ref, tensor).astype(np.float64)
         ref_boxes, _ = post_op([ref_map.astype(np.float32)], [shape])
         ref_boxes = np.asarray(ref_boxes, dtype=np.float64).reshape(-1, 4, 2)
         for label, session in (("extended", fast), ("denorm", dz)):
-            other_map = _run_onnx(session, tensor).astype(np.float64)
+            other_map = run_onnx(session, tensor).astype(np.float64)
             diff = float(np.abs(ref_map - other_map).max())
             other_boxes, _ = post_op([other_map.astype(np.float32)], [shape])
             other_boxes = np.asarray(other_boxes, dtype=np.float64).reshape(-1, 4, 2)
@@ -294,41 +325,40 @@ def cmd_final(args: argparse.Namespace) -> int:
     import cv2
 
     cv2.setNumThreads(1)
-    from verify_parity import _make_paddle_predictor, _run_paddle
 
-    norm_kwargs, post_cfg = _norm_kwargs(args.model_dir)
-    thresh = float(post_cfg.get("thresh", 0.2))
-    box_thresh = float(post_cfg.get("box_thresh", 0.45))
-    post_op = _make_post_op(post_cfg, thresh, box_thresh)
+    normaliser, post_cfg = norm_kwargs(args.model_dir)
+    thresh = config_float(post_cfg, "thresh", 0.2)
+    box_thresh = config_float(post_cfg, "box_thresh", 0.45)
+    post_op = make_post_op(post_cfg, thresh, box_thresh)
     sugars: list[tuple[str, np.ndarray, np.ndarray]] = []
     for page in ("c13", "vat-1r", "grec-p1"):
-        image_path = _resolve_image(page, args.images, args.grec_images)
+        image_path = resolve_image_file(page, args.images, args.grec_images)
         bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if bgr is None:
             raise RuntimeError(f"could not decode {image_path}")
-        tensor, shape = _build_tensor(bgr, cap=PROFILE_CAP, norm_kwargs=norm_kwargs)
+        tensor, shape = build_tensor(bgr, cap=PROFILE_CAP, normaliser=normaliser)
         sugars.append((page, tensor, shape))
-    vat_path = _resolve_image("vat-1r", args.images, args.grec_images)
+    vat_path = resolve_image_file("vat-1r", args.images, args.grec_images)
     vat = cv2.imread(str(vat_path), cv2.IMREAD_COLOR)
     if vat is None:
         raise RuntimeError(f"could not decode {vat_path}")
     big_bgr = cv2.resize(vat, (1280, 1920), interpolation=cv2.INTER_LINEAR)
-    big_tensor, big_shape = _build_tensor(big_bgr, cap=PROFILE_CAP, norm_kwargs=norm_kwargs)
+    big_tensor, big_shape = build_tensor(big_bgr, cap=PROFILE_CAP, normaliser=normaliser)
     print(f"big tensor shape={[int(v) for v in big_tensor.shape]}", flush=True)
     sugars.append(("big-1920x1280", big_tensor, big_shape))
     for threads in (8, 2):
         session = _make_session(args.onnx, threads, opt_level="EXTENDED")
         for page, tensor, shape in sugars:
-            _run_onnx(session, tensor)
+            run_onnx(session, tensor)
             median = _median_of_3(session, tensor, shape, post_op)
             print(f"onnx-extended {page} threads={threads}: {median:.3f}s", flush=True)
         del session
-    predictor = _make_paddle_predictor(args.model_dir, 8)
-    _run_paddle(predictor, big_tensor)
+    predictor = make_paddle_predictor(args.model_dir, 8)
+    run_paddle(predictor, big_tensor)
     samples = []
     for _ in range(3):
         started = time.perf_counter()
-        prob = _run_paddle(predictor, big_tensor)
+        prob = run_paddle(predictor, big_tensor)
         post_op([prob.astype(np.float32)], [big_shape])
         samples.append(time.perf_counter() - started)
     print(f"paddle big-1920x1280 threads=8: {float(statistics.median(samples)):.3f}s", flush=True)

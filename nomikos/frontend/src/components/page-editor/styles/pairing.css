@@ -1,0 +1,167 @@
+/* Pairing - tucked away, only when needed */
+.pe-strip__pair {
+  display: none;
+  padding: 0 12px 8px;
+  border-top: 1px solid var(--border);
+}
+.pe-strip__pair.is-open {
+  display: block;
+}
+.pe-strip__pair textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8125rem;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  resize: none;
+  margin-top: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pe-toolbar__processing-dot,
+  .pe-job-panel__pulse,
+  .pe-job-item__spinner {
+    animation: none;
+  }
+  .pe-seg,
+  .pe-job-panel,
+  .pe-strip__resizer::after,
+  .pe-model-preview [data-conf] {
+    transition: none;
+  }
+}
+
+.pe-job-panel {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + var(--nk-bottom-inset, 0px));
+  z-index: 40;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px - var(--nk-bottom-inset, 0px));
+  /* Rides up and down with the strip. Only changes animate, never the
+     first paint. */
+  transition:
+    bottom 120ms ease-out,
+    max-height 120ms ease-out;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 40px rgba(13, 31, 60, 0.18);
+  overflow-x: hidden;
+}
+.pe-job-panel--collapsed {
+  width: auto;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 8px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--navy);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.pe-job-panel__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: pe-processing-pulse 1.2s ease-in-out infinite;
+}
+.pe-job-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.pe-job-panel__title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.pe-job-panel__subtitle {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.pe-job-panel__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.pe-job-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+.pe-job-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+}
+.pe-job-item + .pe-job-item {
+  margin-top: 4px;
+}
+.pe-job-item--active {
+  background: rgba(245, 158, 11, 0.08);
+}
+.pe-job-item--done {
+  background: rgba(22, 101, 52, 0.06);
+}
+.pe-job-item--failed {
+  background: rgba(180, 0, 0, 0.06);
+}
+.pe-job-item__spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 2px solid rgba(146, 64, 14, 0.25);
+  border-top-color: #92400e;
+  border-radius: 50%;
+  animation: pe-processing-spin 0.8s linear infinite;
+}
+.pe-job-item__body {
+  min-width: 0;
+  flex: 1;
+}
+.pe-job-item__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.pe-job-item__kind {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.pe-job-item__status {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #92400e;
+}
+.pe-job-item--done .pe-job-item__status {
+  color: var(--green);
+}
+.pe-job-item--failed .pe-job-item__status {
+  color: var(--red);
+}
+.pe-job-item__label {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
