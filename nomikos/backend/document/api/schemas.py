@@ -132,6 +132,13 @@ class DocumentPartResponse(BaseModel):
     width: int | None
     height: int | None
     reviewed: bool
+    #: Read-only, written only by the review toggle. Null on a page nobody has
+    #: reviewed and on one reviewed before these columns existed - there is no
+    #: backfill, because the answer is not recoverable.
+    reviewed_at: datetime | None = None
+    #: Suppressed on the public read: an anonymous reader of a shared document has
+    #: no business learning which account signed the page off.
+    reviewed_by: UUID | None = None
     published: bool
     created_at: datetime
 
