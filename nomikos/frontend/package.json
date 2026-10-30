@@ -20,7 +20,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
     "antd": "^6.1.4",
-    "next": "^16.4.0",
+    "next": "^16.4.1",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
