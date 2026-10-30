@@ -322,8 +322,12 @@ def apply_chain(lines, gt, chain, kwargs):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pred-dir", required=True, type=Path)
-    parser.add_argument("--chains", nargs="+", required=True,
-                        help="comma-joined rule chains, e.g. F1 F2 F3 F1,F2,F3")
+    parser.add_argument(
+        "--chains",
+        nargs="+",
+        required=True,
+        help="comma-joined rule chains, e.g. F1 F2 F3 F1,F2,F3",
+    )
     parser.add_argument("--out-csv", type=Path, default=None)
     parser.add_argument("--gt-dir", type=Path, default=GT_DIR)
     parser.add_argument("--write-dirs", action="store_true")
@@ -366,11 +370,7 @@ def main(argv: list[str] | None = None) -> int:
             kept, removed, merged = apply_chain(list(lines), gt, chain, kwargs)
             # Which survived: identity by baseline, which the merge rewrites.
             kept_keys = {json.dumps(ln["baseline"]) for ln in kept}
-            lost = [
-                i
-                for i, ln in enumerate(lines)
-                if json.dumps(ln["baseline"]) not in kept_keys
-            ]
+            lost = [i for i, ln in enumerate(lines) if json.dumps(ln["baseline"]) not in kept_keys]
             total["removed"] += removed
             total["merged"] += merged
             total["removed_were_text"] += sum(1 for i in lost if i in before_tp)

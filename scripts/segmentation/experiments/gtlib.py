@@ -150,9 +150,7 @@ def load_gt_page(
         return None
     data = json.loads(recon.read_text())
     paired_ids = {
-        t["paired_line_id"]
-        for t in data["pairing"]["text_lines"]
-        if t.get("paired_line_id")
+        t["paired_line_id"] for t in data["pairing"]["text_lines"] if t.get("paired_line_id")
     }
     from PIL import Image
 
@@ -222,9 +220,7 @@ def load_manifest_pages(manifest_path: Path) -> list[dict[str, Any]]:
     return pages
 
 
-def load_all(
-    *, gt_dir: Path, manifest_path: Path, repo_root: Path
-) -> list[GTPage]:
+def load_all(*, gt_dir: Path, manifest_path: Path, repo_root: Path) -> list[GTPage]:
     out = []
     for page in load_manifest_pages(manifest_path):
         gt = load_gt_page(page, gt_dir=gt_dir, repo_root=repo_root)

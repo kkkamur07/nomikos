@@ -150,9 +150,7 @@ def baseline_x_extent(baseline: list[list[float]]) -> tuple[float, float]:
     return min(xs), max(xs)
 
 
-def dedupe_lines(
-    lines: list[dict[str, Any]], *, pitch: float
-) -> list[dict[str, Any]]:
+def dedupe_lines(lines: list[dict[str, Any]], *, pitch: float) -> list[dict[str, Any]]:
     """Drop near-duplicate lines produced where two tiles overlap.
 
     Two lines are duplicates when their baselines sit within 0.3 * pitch
@@ -162,8 +160,12 @@ def dedupe_lines(
     """
     order = sorted(
         range(len(lines)),
-        key=lambda i: -(baseline_x_extent(lines[i]["baseline"])[1]
-                        - baseline_x_extent(lines[i]["baseline"])[0]),
+        key=lambda i: (
+            -(
+                baseline_x_extent(lines[i]["baseline"])[1]
+                - baseline_x_extent(lines[i]["baseline"])[0]
+            )
+        ),
     )
     kept: list[int] = []
     for i in order:

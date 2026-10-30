@@ -196,25 +196,18 @@ def score_page(gt: gtlib.GTPage, pred: dict[str, Any]) -> PageScore:
 
     tp = sum(1 for pi, gi in used_pred.items() if gi not in dontcare_gt and pi not in dontcare_pred)
     fp_ids = [
-        pi
-        for pi in range(len(pred_lines))
-        if pi not in dontcare_pred and used_pred.get(pi) is None
+        pi for pi in range(len(pred_lines)) if pi not in dontcare_pred and used_pred.get(pi) is None
     ]
     spurious = sum(1 for pi in fp_ids if not loose_by_pred.get(pi))
     duplicate = len(fp_ids) - spurious
     paired_gt = [gi for gi in range(len(gt_lines)) if gi not in dontcare_gt]
     fn = sum(1 for gi in paired_gt if gi not in used_gt)
 
-    fragments = sum(
-        1
-        for gi in paired_gt
-        if len(loose_by_gt.get(gi, set()) - dontcare_pred) >= 2
-    )
+    fragments = sum(1 for gi in paired_gt if len(loose_by_gt.get(gi, set()) - dontcare_pred) >= 2)
     merges = sum(
         1
         for pi in range(len(pred_lines))
-        if pi not in dontcare_pred
-        and len(loose_by_pred.get(pi, set()) - dontcare_gt) >= 2
+        if pi not in dontcare_pred and len(loose_by_pred.get(pi, set()) - dontcare_gt) >= 2
     )
 
     # --- per column counts ----------------------------------------------

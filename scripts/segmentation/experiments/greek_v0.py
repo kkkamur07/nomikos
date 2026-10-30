@@ -48,9 +48,9 @@ def main(argv: list[str] | None = None) -> int:
 
     Image.MAX_IMAGE_PIXELS = None
     model_path, sha = segrun.blla_weights()
-    pages = greek_gt.loader(gt_dir=args.gt_dir, manual_only=False, converted_dir=args.converted_dir)(
-        gt_dir=args.gt_dir
-    )
+    pages = greek_gt.loader(
+        gt_dir=args.gt_dir, manual_only=False, converted_dir=args.converted_dir
+    )(gt_dir=args.gt_dir)
     for gt in pages:
         out = args.out_dir / f"{gt.slug}.json"
         if out.exists():

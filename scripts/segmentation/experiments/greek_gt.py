@@ -208,9 +208,7 @@ def load_greek_page(
 
 def _pitch(gt: gtlib.GTPage, column: int) -> float:
     ys = sorted(
-        statistics.median(p[1] for p in ln.baseline)
-        for ln in gt.lines
-        if ln.column == column
+        statistics.median(p[1] for p in ln.baseline) for ln in gt.lines if ln.column == column
     )
     gaps = sorted(b - a for a, b in zip(ys, ys[1:], strict=False) if b - a > 0)
     return statistics.median(gaps) if gaps else 0.0

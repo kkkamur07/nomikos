@@ -246,21 +246,18 @@ def build_variants() -> dict[str, VariantFn]:
     v["v1-crop"] = lambda gt: _run_pieces(gt, [oracle_text_box(gt)])
 
     for n in (2, 3):
+
         def tiles(gt, n=n):
             return _run_pieces(
                 gt,
-                horizontal_tiles(
-                    (0, 0, gt.width, gt.height), multiplier=n, pitch=gt.pitch_for(0)
-                ),
+                horizontal_tiles((0, 0, gt.width, gt.height), multiplier=n, pitch=gt.pitch_for(0)),
                 dedupe=True,
             )
 
         v[f"v2-tiles{n}"] = tiles
 
     v["v3a-cols-oracle"] = lambda gt: _run_pieces(gt, oracle_column_boxes(gt))
-    v["v3b-cols-health"] = lambda gt: _run_pieces(
-        gt, health_column_boxes(gt, _read_v0(gt.slug))
-    )
+    v["v3b-cols-health"] = lambda gt: _run_pieces(gt, health_column_boxes(gt, _read_v0(gt.slug)))
 
     def folio(gt):
         """Napoli only: cut the opening into two folios, then column bands."""
@@ -345,9 +342,7 @@ def _task(job: tuple[str, str]) -> tuple[str, str, int, float]:
     started = time.perf_counter()
     lines, seconds = fn(gt)
     wall = time.perf_counter() - started
-    segrun.write_prediction(
-        OUT / variant, variant, slug, (gt.width, gt.height), seconds, lines
-    )
+    segrun.write_prediction(OUT / variant, variant, slug, (gt.width, gt.height), seconds, lines)
     return variant, slug, len(lines), wall
 
 
