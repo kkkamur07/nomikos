@@ -453,6 +453,16 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Query"]
 # makes them safe.
 "tests/**" = ["S101", "S105", "S106", "S310", "S603", "S607"]
 
+# S101 (assert) again, for the same reason, for test files that live next to the
+# script they test instead of under `tests/`. A research script and its synthetic
+# tests are read together and moving the tests away from them loses that; the
+# `test_` prefix is what pytest and a reader both key on, so it is what this
+# pattern keys on too. The pattern matches test files only, never the scripts
+# themselves: an assert in `scripts/**/<not test_>.py` is still a finding, which
+# is the point. Only S101 is listed, because only S101 is wrong for every file
+# this pattern can match.
+"scripts/**/test_*.py" = ["S101"]
+
 [tool.ruff.format]
 quote-style = "double"
 
