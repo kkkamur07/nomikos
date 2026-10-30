@@ -8,6 +8,7 @@ are named and numbered inside it, and what happens when it covers none.
 from __future__ import annotations
 
 import io
+import json
 from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZipFile
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader
 
+from backend.annotation.application.page_xml_validation import validate_page_xml
 from tests.nomikos.integration.helpers import documents_url
 
 PAGE_NS = {"page": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"}
@@ -139,6 +141,7 @@ def test_member_exports_every_page_as_page_xml_and_image(
             "0002.xml",
             "0003.webp",
             "0003.xml",
+            "manifest.json",
         ]
         # S314: parsing the response this test just asked the app to render, in-process.
         root = ElementTree.fromstring(archive.read("0002.xml"))  # noqa: S314
@@ -176,7 +179,13 @@ def test_page_xml_archive_keeps_document_page_numbers_when_filtered_to_reviewed(
 
     assert response.status_code == 200
     with ZipFile(BytesIO(response.content)) as archive:
-        assert sorted(archive.namelist()) == ["0001.webp", "0001.xml", "0003.webp", "0003.xml"]
+        assert sorted(archive.namelist()) == [
+            "0001.webp",
+            "0001.xml",
+            "0003.webp",
+            "0003.xml",
+            "manifest.json",
+        ]
         root = ElementTree.fromstring(archive.read("0003.xml"))  # noqa: S314
     texts = [node.text for node in root.findall(".//page:TextEquiv/page:Unicode", PAGE_NS)]
     assert texts == ["delta"]
@@ -201,7 +210,67 @@ def test_page_xml_archive_streams_rather_than_buffering_the_whole_zip(
 
     with ZipFile(BytesIO(body)) as archive:
         assert archive.testzip() is None
-        assert len(archive.namelist()) == 6
+        assert len(archive.namelist()) == 7
+
+
+def test_page_xml_archive_carries_a_manifest_naming_the_corrected_pages(
+    client: TestClient, owner_headers: dict[str, str], owner_project: dict
+) -> None:
+    """The archive says which of its pages a human signed off, and what they are made of.
+
+    Without this the folder is three numbered XML files and no way to tell a page
+    somebody corrected from one the segmenter produced this morning, which is the
+    difference between a training set and a pile of exports.
+    """
+    project_id, document_id, _parts = _chapter(client, owner_headers, owner_project)
+
+    response = client.get(_export_url(project_id, document_id, "page-xml"), headers=owner_headers)
+
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+
+    assert manifest["document"]["name"] == "Chapter Four"
+    assert manifest["reviewed_only"] is False
+    assert manifest["page_count"] == 3
+    # Pages 1 and 3 are reviewed and carry approved text; page 2 is not reviewed.
+    assert manifest["corrected_page_count"] == 2
+    assert [page["corrected"] for page in manifest["pages"]] == [True, False, True]
+    assert [page["page_number"] for page in manifest["pages"]] == [1, 2, 3]
+    assert manifest["pages"][0]["xml"] == "0001.xml"
+    assert manifest["pages"][0]["image"] == "0001.webp"
+    assert manifest["pages"][0]["lines"]["total"] == 2
+    assert manifest["pages"][0]["lines"]["manual"] == 2
+    assert manifest["pages"][0]["lines"]["ground_truth"] == 2
+
+
+def test_every_exported_page_passes_the_page_xml_validator(
+    client: TestClient, owner_headers: dict[str, str], owner_project: dict
+) -> None:
+    """The archive is training-ready: polygon in Coords, left-to-right baseline, text.
+
+    These lines are created through the bulk ``PUT /lines`` route with no baseline of
+    their own, so every one of them exercises the derived-baseline path end to end.
+    """
+    project_id, document_id, _parts = _chapter(client, owner_headers, owner_project)
+
+    response = client.get(
+        _export_url(project_id, document_id, "page-xml"),
+        headers=owner_headers,
+        params={"reviewed_only": "true"},
+    )
+
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        for name in ("0001.xml", "0003.xml"):
+            result = validate_page_xml(archive.read(name))
+            assert result.problems == [], f"{name}: {result.problems}"
+            assert result.line_count > 0
+            assert result.derived_baseline_count == result.line_count
+
+    assert manifest["reviewed_only"] is True
+    assert manifest["corrected_page_count"] == 2
 
 
 # --- Transcription PDF ---
