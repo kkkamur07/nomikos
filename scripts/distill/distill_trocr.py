@@ -551,6 +551,15 @@ def run_eval_and_save(
         record,
     )
     state["step"] = step
+    # The best value is updated before last.pt is written, so a resumed run
+    # never compares against an older, higher CER and overwrites best/.
+    if metrics["cer"] < state["best_cer"]:
+        state["best_cer"] = metrics["cer"]
+        best_dir = args.out / "best"
+        best_dir.mkdir(parents=True, exist_ok=True)
+        student.save_pretrained(best_dir)
+        processor.save_pretrained(best_dir)
+        log(f"new best CER {metrics['cer']:.4f}, saved to {best_dir}")
     torch.save(
         state
         | {
@@ -561,13 +570,6 @@ def run_eval_and_save(
         },
         args.out / "last.pt",
     )
-    if metrics["cer"] < state["best_cer"]:
-        state["best_cer"] = metrics["cer"]
-        best_dir = args.out / "best"
-        best_dir.mkdir(parents=True, exist_ok=True)
-        student.save_pretrained(best_dir)
-        processor.save_pretrained(best_dir)
-        log(f"new best CER {metrics['cer']:.4f}, saved to {best_dir}")
     student.train()
 
 
@@ -632,11 +634,14 @@ def train(args: argparse.Namespace) -> None:
     train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)  # type: ignore[arg-type]
     val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)  # type: ignore[arg-type]
 
-    steps_per_epoch = max(1, math.ceil(len(train_ds) / (args.batch_size * args.grad_accum)))
+    # Accumulation runs across epoch boundaries and the last partial window is
+    # flushed after the final epoch, so the update count is the total number of
+    # micro-batches over grad_accum, rounded up once rather than per epoch.
+    micro_batches = int(args.epochs) * len(train_loader)
     if args.max_steps is not None:
         total_steps = int(args.max_steps)
     else:
-        total_steps = int(args.epochs) * steps_per_epoch
+        total_steps = max(1, math.ceil(micro_batches / args.grad_accum))
     warmup_steps = int(args.warmup_ratio * total_steps)
 
     def lr_factor(step: int) -> float:
@@ -649,6 +654,12 @@ def train(args: argparse.Namespace) -> None:
 
     optimizer = torch.optim.AdamW(student.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_factor)
+
+    def apply_update() -> None:
+        torch.nn.utils.clip_grad_norm_(student.parameters(), args.max_grad_norm)
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
 
     state: dict[str, Any] = {"best_cer": float("inf"), "step": 0}
     start_step = 0
@@ -702,10 +713,7 @@ def train(args: argparse.Namespace) -> None:
                 loss.backward()
                 micro += 1
                 if micro % args.grad_accum == 0:
-                    torch.nn.utils.clip_grad_norm_(student.parameters(), args.max_grad_norm)
-                    optimizer.step()
-                    scheduler.step()
-                    optimizer.zero_grad()
+                    apply_update()
                     step += 1
                     if step % args.log_every == 0 or step == total_steps:
                         lr = optimizer.param_groups[0]["lr"]
@@ -736,6 +744,11 @@ def train(args: argparse.Namespace) -> None:
                             scheduler,
                             use_bf16,
                         )
+            last_epoch = _epoch == int(args.epochs) - 1
+            if last_epoch and micro % args.grad_accum and step < total_steps:
+                # The final partial accumulation would otherwise be discarded.
+                apply_update()
+                step += 1
             run_eval_and_save(
                 student,
                 processor,
