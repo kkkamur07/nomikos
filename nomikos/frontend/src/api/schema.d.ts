@@ -1225,6 +1225,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/projects/{project_id}/documents/{document_id}/parts/{part_id}/lines/merge": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Merge Part Lines
+     * @description Fold two or more of this part's lines into one, and answer with the whole list.
+     *
+     *     The whole list, rather than the merged row, because the merge renumbers the
+     *     rows below it: the editor already reloads this shape after a history restore
+     *     and after every segment-health fix, so a client can replace its state rather
+     *     than reconcile a partial answer against orders it cannot recompute.
+     */
+    post: operations["merge_part_lines_projects__project_id__documents__document_id__parts__part_id__lines_merge_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/projects/{project_id}/documents/{document_id}/parts/{part_id}/lines/{line_id}": {
     parameters: {
       query?: never;
@@ -1462,6 +1487,40 @@ export interface paths {
     put?: never;
     /** Trim Overlap */
     post: operations["trim_overlap_projects__project_id__documents__document_id__parts__part_id__segment_health_trims_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{project_id}/documents/{document_id}/parts/{part_id}/segmentation-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List Segmentation Runs */
+    get: operations["list_segmentation_runs_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/projects/{project_id}/documents/{document_id}/parts/{part_id}/segmentation-runs/diff": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Segmentation Run Diff */
+    get: operations["segmentation_run_diff_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_diff_get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1853,6 +1912,18 @@ export interface components {
       lines: components["schemas"]["DayCount"][];
       /** Pages */
       pages: components["schemas"]["DayCount"][];
+    };
+    /** AddedLineResponse */
+    AddedLineResponse: {
+      /**
+       * Line Id
+       * Format: uuid
+       */
+      line_id: string;
+      /** Order */
+      order: number;
+      /** Points */
+      points: number[][];
     };
     /** AdminOverview */
     AdminOverview: {
@@ -2279,6 +2350,17 @@ export interface components {
       /** Copied Line Ids */
       copied_line_ids: string[];
     };
+    /** CorrectedLineResponse */
+    CorrectedLineResponse: {
+      /** External Id */
+      external_id: string;
+      /** Human Points */
+      human_points: number[][][];
+      /** Line Ids */
+      line_ids: string[];
+      /** Model Points */
+      model_points: number[][];
+    };
     /** DatabaseOverview */
     DatabaseOverview: {
       /** Active Queries */
@@ -2327,6 +2409,18 @@ export interface components {
        * Format: date
        */
       day: string;
+    };
+    /**
+     * DeletedLineResponse
+     * @description A proposed line with no live counterpart: removed, or absorbed by a merge.
+     */
+    DeletedLineResponse: {
+      /** External Id */
+      external_id: string;
+      /** Model Points */
+      model_points: number[][];
+      /** Order */
+      order: number;
     };
     /** DeviceResponse */
     DeviceResponse: {
@@ -2455,6 +2549,10 @@ export interface components {
       published: boolean;
       /** Reviewed */
       reviewed: boolean;
+      /** Reviewed At */
+      reviewed_at?: string | null;
+      /** Reviewed By */
+      reviewed_by?: string | null;
       /** Width */
       width: number | null;
     };
@@ -2950,6 +3048,52 @@ export interface components {
      * @enum {string}
      */
     LineGeometryKind: "polygon" | "rectangle";
+    /**
+     * LineMergeConflictDetail
+     * @description The 409 body, which has to name the lines so the client can offer a choice.
+     */
+    LineMergeConflictDetail: {
+      /**
+       * Code
+       * @description Stable machine-readable error code
+       */
+      code: string;
+      /**
+       * Line Ids
+       * @description The selected lines that carry transcribed text or a pairing
+       */
+      line_ids?: string[];
+      /**
+       * Message
+       * @description Allowlisted user-safe error message
+       */
+      message: string;
+      /**
+       * Ref
+       * @description Correlation id for support / log lookup
+       */
+      ref?: string | null;
+    };
+    /** LineMergeConflictResponse */
+    LineMergeConflictResponse: {
+      error: components["schemas"]["LineMergeConflictDetail"];
+    };
+    /**
+     * LineMergeRequest
+     * @description Merge the lines a human picked on the canvas, not a pair a detector offered.
+     */
+    LineMergeRequest: {
+      /**
+       * Keep Text From
+       * @description Which line's text and pairing to keep. Required only after a 409, and only ever one of the ids the 409 listed.
+       */
+      keep_text_from?: string | null;
+      /**
+       * Line Ids
+       * @description Two or more lines of this part, in any order
+       */
+      line_ids: string[];
+    };
     /**
      * LinePatchRequest
      * @description Partial line update.
@@ -3860,6 +4004,63 @@ export interface components {
        */
       upper_id: string;
     };
+    /** SegmentationDiffResponse */
+    SegmentationDiffResponse: {
+      /** Added */
+      added?: components["schemas"]["AddedLineResponse"][];
+      /** Corrected */
+      corrected?: components["schemas"]["CorrectedLineResponse"][];
+      /** Deleted */
+      deleted?: components["schemas"]["DeletedLineResponse"][];
+      run: components["schemas"]["SegmentationRunResponse"];
+      /** Unchanged */
+      unchanged?: components["schemas"]["UnchangedLineResponse"][];
+    };
+    /**
+     * SegmentationRunResponse
+     * @description One recorded run. The model fields are the copies taken when it happened.
+     */
+    SegmentationRunResponse: {
+      /** Block Count */
+      block_count: number;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Created By Job Id */
+      created_by_job_id: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Image Height */
+      image_height: number | null;
+      /** Image Width */
+      image_width: number | null;
+      /** Line Count */
+      line_count: number;
+      /** Model Artifact Ref */
+      model_artifact_ref: string | null;
+      /** Model Name */
+      model_name: string | null;
+      /** Model Provider */
+      model_provider: string | null;
+      /** Params */
+      params: {
+        [key: string]: unknown;
+      };
+      /**
+       * Part Id
+       * Format: uuid
+       */
+      part_id: string;
+      /** Registry Model Id */
+      registry_model_id: string | null;
+      /** Registry Tag */
+      registry_tag: string | null;
+    };
     /**
      * ShareUserRequest
      * @description Who to share with, named exactly one of three ways.
@@ -4000,6 +4201,16 @@ export interface components {
       kind: components["schemas"]["TranscriptionKind"];
       /** Name */
       name: string;
+    };
+    /** UnchangedLineResponse */
+    UnchangedLineResponse: {
+      /** External Id */
+      external_id: string;
+      /**
+       * Line Id
+       * Format: uuid
+       */
+      line_id: string;
     };
     /** UserResponse */
     UserResponse: {
@@ -10397,6 +10608,97 @@ export interface operations {
       };
     };
   };
+  merge_part_lines_projects__project_id__documents__document_id__parts__part_id__lines_merge_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+        part_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LineMergeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LineResponse"][];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Several selected lines carry text or a pairing */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LineMergeConflictResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
   delete_part_line_projects__project_id__documents__document_id__parts__part_id__lines__line_id__delete: {
     parameters: {
       query?: never;
@@ -11760,6 +12062,183 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["LineResponse"][];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
+  list_segmentation_runs_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+        part_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SegmentationRunResponse"][];
+        };
+      };
+      /** @description Not authenticated */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Not authorized */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Conflict with current state */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Validation error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiErrorResponse"];
+        };
+      };
+    };
+  };
+  segmentation_run_diff_projects__project_id__documents__document_id__parts__part_id__segmentation_runs_diff_get: {
+    parameters: {
+      query?: {
+        /** @description Which recorded run to compare against. Defaults to the latest. */
+        run_id?: string | null;
+      };
+      header?: never;
+      path: {
+        project_id: string;
+        document_id: string;
+        part_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SegmentationDiffResponse"];
         };
       };
       /** @description Not authenticated */

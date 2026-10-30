@@ -36,7 +36,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.annotation.application import segment_health
+from backend.annotation.application import line_work, segment_health
 from backend.annotation.application.line_geometry import geometry_points
 from backend.annotation.application.segment_health import (
     FragmentMerge,
@@ -52,7 +52,6 @@ from backend.document.infrastructure.orm_models import (
     DocumentPart,
     Line,
     LineGeometryKind,
-    TranscriptionKind,
 )
 from backend.users.infrastructure.orm_models import User
 
@@ -174,6 +173,12 @@ class SegmentHealthService:
                     points=points,
                     source=original.source,
                     source_metadata=original.source_metadata,
+                    # Both halves of a split come from the same proposed line, so
+                    # both keep its origin. The provenance diff then reports one
+                    # corrected entry carrying two live ids, which is what a split
+                    # is, rather than one correction and one phantom human line.
+                    segmentation_run_id=original.segmentation_run_id,
+                    run_external_id=original.run_external_id,
                     manual_geometry=True,
                     order=original.order,
                 )
@@ -357,43 +362,10 @@ class SegmentHealthService:
             is_paired=self._is_paired(line, paired_ids),
         )
 
-    @staticmethod
-    def _has_text(line: Line) -> bool:
-        """Any layer at all, not just the approved one.
-
-        A draft nobody has approved yet is still someone's work, and a model
-        prediction is the thing a reviewer is about to correct. Restricting this
-        to ground truth would make every un-approved line deletable.
-        """
-        return any(
-            isinstance(entry.text, str) and entry.text.strip()
-            for entry in (line.transcriptions or [])
-        )
-
-    @staticmethod
-    def _is_paired(line: Line, paired_ids: set[UUID]) -> bool:
-        """A human's decision about this line, in either of the two places it lands.
-
-        A non-blank ground-truth transcription is the usual one. A row in
-        ``page_transcription_lines`` pointing here is the other, and the first
-        does not imply it: pairing writes the ground-truth row and un-pairing
-        removes it, so the two agree most of the time, but text imported and
-        paired before anyone approved it carries the pairing without the layer.
-        Reading only the layers would call such a line untouched and offer it up
-        for deletion, discarding the pairing with it.
-
-        ``segment_merge_service._protected_line_ids`` takes the same union for
-        the same reason, and re-segmentation trusts it to decide what to keep.
-        """
-        if line.id in paired_ids:
-            return True
-        return any(
-            entry.transcription is not None
-            and entry.transcription.kind == TranscriptionKind.ground_truth
-            and isinstance(entry.text, str)
-            and entry.text.strip()
-            for entry in (line.transcriptions or [])
-        )
+    # Both predicates live in ``line_work`` now: the free merge asks the same
+    # question before it deletes a row, and the answer has to be one answer.
+    _has_text = staticmethod(line_work.has_text)
+    _is_paired = staticmethod(line_work.is_paired)
 
     @staticmethod
     def _page_size(part: DocumentPart, segments: list[Segment]) -> tuple[float, float, bool]:

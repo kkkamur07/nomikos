@@ -102,6 +102,7 @@ def _segment_like_blla(part_id: str, width: int, height: int) -> None:
     from sqlalchemy.orm import Session
 
     from backend.document.application.segment_merge_service import SegmentMergeService
+    from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
     from backend.ml.domain.segment import CanonicalBlock, CanonicalLine, CanonicalSegmentResult
     from infrastructure.db import sync_engine
 
@@ -131,9 +132,19 @@ def _segment_like_blla(part_id: str, width: int, height: int) -> None:
             text("update document_parts set width = :w, height = :h where id = :p"),
             {"w": width, "h": height, "p": part_id},
         )
+        # The run records the job that produced it under a foreign key, so the job
+        # has to exist, as it always does when a real callback lands.
+        job = Job(
+            id=uuid.uuid4(),
+            type=JobType.segment,
+            status=JobStatus.done,
+            payload={},
+            document_part_id=uuid.UUID(part_id),
+        )
+        session.add(job)
         session.commit()
         SegmentMergeService().apply_sync(
-            session, part_id=uuid.UUID(part_id), canonical_segment=segment, job_id=uuid.uuid4()
+            session, part_id=uuid.UUID(part_id), canonical_segment=segment, job_id=job.id
         )
 
 

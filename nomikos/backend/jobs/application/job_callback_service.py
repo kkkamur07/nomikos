@@ -21,6 +21,11 @@ from backend.document.application.transcribe_merge_service import (
 from backend.document.infrastructure.orm_models import Line
 from backend.jobs.infrastructure.notifications import notify_platform_job_status_changed
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
+from backend.ml.application.model_identity import (
+    EMPTY_MODEL_IDENTITY,
+    ModelIdentity,
+    identity_for_job,
+)
 from backend.ml.application.segment_mapping import to_canonical_segment
 from infrastructure.db import sync_system_session
 from nomikos_inference.contracts.common import InferenceJobStatus
@@ -73,6 +78,11 @@ class _MergeContext:
     #: ``payload["line_ids"]``, the callback must not merge results outside that
     #: subset. ``None`` means the whole page was in scope.
     allowed_line_ids: frozenset[uuid.UUID] | None = None
+    #: The model behind this run, read off the job while its row is still held in
+    #: ``_validate_callback``. Carried here rather than re-read in the merge so the
+    #: merge needs no second query, and so the identity recorded is the one the job
+    #: was submitted with even if the registry row is edited in between.
+    model_identity: ModelIdentity = EMPTY_MODEL_IDENTITY
 
 
 def _job_type_for_task(task: WireInferenceTask) -> JobType:
@@ -107,6 +117,9 @@ def _transcribe_output(callback: JobCallbackRequest) -> TranscribeBatchRunRespon
 
 
 def _merge_context(job: Job, callback: JobCallbackRequest) -> _MergeContext:
+    # The identity is read here, while the job row is still held in the callback's
+    # transaction, because nothing downstream can recover it: the callback carries no
+    # model fields, and the job row itself is deletable.
     return _MergeContext(
         job_id=job.id,
         job_type=job.type,
@@ -114,6 +127,7 @@ def _merge_context(job: Job, callback: JobCallbackRequest) -> _MergeContext:
         document_part_id=job.document_part_id,
         inference_job_id=callback.inference_job_id,
         allowed_line_ids=_allowed_line_ids(job),
+        model_identity=identity_for_job(job),
     )
 
 
@@ -127,6 +141,7 @@ def _apply_segment_merge(session, context: _MergeContext, callback: JobCallbackR
         canonical_segment=canonical,
         job_id=context.job_id,
         commit=False,
+        model_identity=context.model_identity,
     )
     return {
         "blocks_count": summary.blocks_count,
@@ -136,6 +151,9 @@ def _apply_segment_merge(session, context: _MergeContext, callback: JobCallbackR
         "preserved_manual_lines": summary.preserved_manual_lines,
         "preserved_transcribed_lines": summary.preserved_transcribed_lines,
         "skipped_covered_lines": summary.skipped_covered_lines,
+        "segmentation_run_id": str(summary.segmentation_run_id)
+        if summary.segmentation_run_id is not None
+        else None,
     }
 
 
@@ -219,6 +237,7 @@ def _apply_transcribe_merge_sync(
         job_id=context.job_id,
         lines_with_output=lines_with_output,
         commit=False,
+        model_identity=context.model_identity,
     )
     if failed_line_indexes:
         logger.warning(

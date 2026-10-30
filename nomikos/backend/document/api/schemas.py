@@ -9,6 +9,8 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
+from backend.annotation.application.line_merge_service import MAX_MERGE_LINES
+from backend.core.schemas.errors import ApiErrorDetail
 from backend.document.application.part_service import (
     MAX_PART_UPLOAD_BYTES as _MAX_PART_UPLOAD_BYTES,
 )
@@ -132,6 +134,13 @@ class DocumentPartResponse(BaseModel):
     width: int | None
     height: int | None
     reviewed: bool
+    #: Read-only, written only by the review toggle. Null on a page nobody has
+    #: reviewed and on one reviewed before these columns existed - there is no
+    #: backfill, because the answer is not recoverable.
+    reviewed_at: datetime | None = None
+    #: Suppressed on the public read: an anonymous reader of a shared document has
+    #: no business learning which account signed the page off.
+    reviewed_by: UUID | None = None
     published: bool
     created_at: datetime
 
@@ -251,6 +260,36 @@ class LineResponse(BaseModel):
     manual_geometry: bool
     line_transcriptions: list[LineTranscriptionResponse] = Field(default_factory=list)
     created_at: datetime
+
+
+class LineMergeRequest(BaseModel):
+    """Merge the lines a human picked on the canvas, not a pair a detector offered."""
+
+    line_ids: list[UUID] = Field(
+        min_length=2,
+        max_length=MAX_MERGE_LINES,
+        description="Two or more lines of this part, in any order",
+    )
+    keep_text_from: UUID | None = Field(
+        default=None,
+        description=(
+            "Which line's text and pairing to keep. Required only after a 409, "
+            "and only ever one of the ids the 409 listed."
+        ),
+    )
+
+
+class LineMergeConflictDetail(ApiErrorDetail):
+    """The 409 body, which has to name the lines so the client can offer a choice."""
+
+    line_ids: list[UUID] = Field(
+        default_factory=list,
+        description="The selected lines that carry transcribed text or a pairing",
+    )
+
+
+class LineMergeConflictResponse(BaseModel):
+    error: LineMergeConflictDetail
 
 
 class LineUpsertRequest(BaseModel):
