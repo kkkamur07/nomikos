@@ -83,10 +83,13 @@ def resolve_line_geometry(
 ) -> LineExportGeometry:
     """The polygon and the baseline to export for ``line``, rounded to whole pixels.
 
-    ``Coords`` prefers the mask, because that is the boundary the editor shows and
-    the one a human corrects; ``line.points`` is the fallback, and a degenerate
-    geometry of one or two points is squared off into its bounding rectangle so the
-    element is never written with fewer vertices than a polygon has.
+    ``Coords`` is ``line.points``, because that is the boundary the editor draws and
+    the one a human corrects: a vertex edit sends ``points`` alone and leaves an older
+    ``mask`` where it was, so preferring the mask would export the outline from before
+    the correction. The mask is the fallback for a line whose points are not a
+    polygon, the same order the canvas reads them in, and a degenerate geometry of one
+    or two points is squared off into its bounding rectangle so the element is never
+    written with fewer vertices than a polygon has.
 
     ``bounds`` is the page's ``(width, height)`` when it is known. Coordinates are
     clamped into it: a vertex a few pixels off the edge of the scan is a vertex no
@@ -94,7 +97,8 @@ def resolve_line_geometry(
     """
     mask_points = geometry_points(getattr(line, "mask", None))
     raw_points = _as_points(getattr(line, "points", None))
-    coords = quantize_polygon(_as_polygon(mask_points or raw_points), bounds=bounds)
+    outline = raw_points if len(raw_points) >= 3 else (mask_points or raw_points)
+    coords = quantize_polygon(_as_polygon(outline), bounds=bounds)
     # The same polygon the file will carry, in the float form the geometry helpers
     # work in. Every test below is made against this one rather than the unrounded
     # input, so an invariant that holds here holds in the exported file.
@@ -109,7 +113,10 @@ def resolve_line_geometry(
         # the two-point fallback, which would label a guess as a measurement.
         clipped = _clip_to_polygon(_left_to_right(stored), polygon)
         if len(clipped) >= 2:
-            ordered = quantize_baseline(clipped, coords)
+            # Rounded without the fallback: when rounding folds the stored vertices
+            # onto one x, ``quantize_baseline`` would put a full-width guess in their
+            # place, and that guess must not go out labelled as a measurement.
+            ordered = _rounded_baseline(clipped, coords)
             if len(ordered) >= 2:
                 return LineExportGeometry(coords=coords, baseline=ordered, baseline_derived=False)
     return LineExportGeometry(
@@ -147,6 +154,26 @@ def quantize_baseline(baseline: list[list[float]], polygon: list[list[int]]) -> 
     """
     if not polygon:
         return [[round(x), round(y)] for x, y in baseline]
+    kept = _rounded_baseline(baseline, polygon)
+    if len(kept) >= 2:
+        return kept
+    xs = [point[0] for point in polygon]
+    ys = [point[1] for point in polygon]
+    left, right = min(xs), max(xs)
+    top, bottom = min(ys), max(ys)
+    y = min(max(round(top + BASELINE_HEIGHT_FRACTION * (bottom - top)), top), bottom)
+    return [[left, y], [right, y]] if right > left else [[left, y], [left + 1, y]]
+
+
+def _rounded_baseline(baseline: list[list[float]], polygon: list[list[int]]) -> list[list[int]]:
+    """The rounded vertices that still run strictly left to right inside ``polygon``.
+
+    May come back with fewer than two points; deciding what replaces a collapsed
+    baseline is the caller's call, because only the caller knows whether the result
+    is about to be labelled measured.
+    """
+    if not polygon:
+        return [[round(x), round(y)] for x, y in baseline]
     xs = [point[0] for point in polygon]
     ys = [point[1] for point in polygon]
     left, right = min(xs), max(xs)
@@ -160,10 +187,7 @@ def quantize_baseline(baseline: list[list[float]], polygon: list[list[int]]) -> 
             # the run strictly increasing without moving anything off the line.
             continue
         kept.append(point)
-    if len(kept) >= 2:
-        return kept
-    y = min(max(round(top + BASELINE_HEIGHT_FRACTION * (bottom - top)), top), bottom)
-    return [[left, y], [right, y]] if right > left else [[left, y], [left + 1, y]]
+    return kept
 
 
 def _dedupe(points: list[list[int]]) -> list[list[int]]:

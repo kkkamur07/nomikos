@@ -256,3 +256,25 @@ def test_a_baseline_in_a_polygon_one_pixel_wide_still_has_two_points() -> None:
 
     assert len(baseline) == 2
     assert baseline[1][0] > baseline[0][0]
+
+
+def test_coords_follow_corrected_points_rather_than_a_stale_mask() -> None:
+    # A vertex edit sends ``points`` and leaves the model's mask behind; the file has
+    # to carry the outline the human left, not the one they corrected.
+    model_outline = [[10.0, 100.0], [110.0, 100.0], [110.0, 130.0], [10.0, 130.0]]
+    geometry = resolve_line_geometry(
+        _line(points=BOX, mask={"points": model_outline}, baseline={"points": BASELINE})
+    )
+
+    assert geometry.coords == BOX
+
+
+def test_a_baseline_that_rounding_collapses_is_labelled_derived() -> None:
+    # Both stored x values round to 12, so no measured baseline survives rounding;
+    # whatever replaces it is a guess and has to say so.
+    geometry = resolve_line_geometry(
+        _line(points=BOX, baseline={"points": [[12.1, 114.0], [12.2, 115.0]]})
+    )
+
+    assert geometry.baseline_derived is True
+    assert len(geometry.baseline) >= 2
