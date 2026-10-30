@@ -4,9 +4,10 @@
 \usepackage{lmodern}
 \usepackage{microtype}
 \usepackage{booktabs}
+\usepackage{tabularx}
 \usepackage{xcolor}
 \usepackage{tikz}
-\usetikzlibrary{fit,arrows.meta,backgrounds}
+\usetikzlibrary{fit,arrows.meta,backgrounds,positioning}
 \usepackage[font=small,skip=8pt]{caption}
 \usepackage{enumitem}
 \usepackage{titlesec}
@@ -22,6 +23,8 @@
 \setlength{\floatsep}{10pt plus 2pt}
 \DeclareUrlCommand\code{\urlstyle{tt}}
 \newcommand{\choice}[1]{\par\smallskip\textbf{#1}\enspace}
+% A path in the repository, linked to its page on GitHub.
+\newcommand{\repo}[1]{\href{https://github.com/kkkamur07/nomikos/tree/main/#1}{\code{#1}}}
 
 \definecolor{accent}{HTML}{B40000}
 \definecolor{boxfill}{HTML}{F6F3EE}
@@ -42,15 +45,37 @@
 
 \begin{document}
 
-{\LARGE\bfseries Nomikos: software engineering report}\par
+{\LARGE\bfseries Nomikos: software architecture}\par
 \smallskip
-{\small 30 October 2026, branch \texttt{main} at \texttt{a68cf6fa}. Every claim names a file or ADR in the repository.}
+{\small 30 October 2026, \href{https://github.com/kkkamur07/nomikos}{\texttt{github.com/kkkamur07/nomikos}}, branch \texttt{main} at \texttt{a68cf6fa}.}
 
-\section{Purpose and quality goals}
+Nomikos is a web platform for handwritten text recognition of manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. The corrections are the point: each one turns a model guess into ground truth for the next model. This report covers the stack, the architecture and its tradeoffs, and how a job moves through the system.
 
-Nomikos is a platform for handwritten text recognition (HTR) of manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, corrects the result in a browser editor, and exports PAGE XML, docx, PDF or text. The platform exists for the corrections, since each one turns a model proposal into ground truth for training the next model (ADR 0013). Four goals follow from that: the platform gives the same output as the training machine, no human correction is lost, inference runs the same code on a researcher's CPU and on a hosted worker, and the browser never reaches the database or storage directly (\code{docs/architecture.md}).
+\section{Tech stack}
 
-\section{Containers and deployment}
+We picked tools we already knew. With a small team and a fixed deadline, a familiar stack meant we spent our time on the manuscript problems and not on learning frameworks. Table~\ref{tab:stack} lists each layer and one more reason we kept it.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{0.95\linewidth}{@{}l l X@{}}
+\toprule
+Layer & Choice & Why, beyond familiarity \\
+\midrule
+Frontend & \href{https://nextjs.org}{Next.js 16}, React 19, TypeScript & Ant Design gives tables and forms for free; TanStack Query caches API calls \\
+API & \href{https://fastapi.tiangolo.com}{FastAPI}, SQLAlchemy 2 (async) & Pydantic models produce the OpenAPI schema the frontend types come from \\
+Database & \href{https://www.postgresql.org}{PostgreSQL 16}, Alembic & One store for data, the job queue and push notifications \\
+Inference & \href{https://onnxruntime.ai}{ONNX Runtime} on CPU & Small install, same code on a laptop and a server \\
+Models & \href{https://huggingface.co/nomikos-project}{Hugging Face Hub} & Versioned weights with pinned revisions, free hosting \\
+Hosting & \href{https://vercel.com}{Vercel}, \href{https://coolify.io}{Coolify} & Vercel for the static frontend, a self-hosted Coolify box for everything stateful \\
+CI & GitHub Actions & Lint, types, tests, security scans and PyPI releases in one place \\
+\bottomrule
+\end{tabularx}
+\caption{The stack. The Python inference agent is published on PyPI as \href{https://pypi.org/project/nomikos-inference/}{\texttt{nomikos-inference}}.}
+\label{tab:stack}
+\end{table}
+
+\section{Architecture and tradeoffs}
 
 \begin{figure}[ht]
 \centering
@@ -102,71 +127,117 @@ Nomikos is a platform for handwritten text recognition (HTR) of manuscripts. A r
     \node[key] at (12.3,0) {only HTTP entry};
   \end{scope}
 \end{tikzpicture}}
-\caption{Container and deployment view. The browser loads the editor from Vercel and then calls the API directly. Both agents run the same PyPI package and connect outbound only.}
+\caption{Containers and where they run. The browser loads the editor from Vercel and then talks to the API directly. Both agents run the same PyPI package and only make outbound calls.}
 \label{fig:containers}
 \end{figure}
 
-There are three deployable units (Figure~\ref{fig:containers}). The \textbf{frontend} (\code{nomikos/frontend/}) is Next.js 16 and React 19, rendered on the client. The \textbf{platform API} (\code{nomikos/backend/}) is FastAPI. The \textbf{inference agent} (\code{nomikos_inference/}) is the only package on PyPI and has no database, queue or listening port.
+Figure~\ref{fig:containers} shows the three programs we deploy. The frontend (\repo{nomikos/frontend}) renders on the client. The API (\repo{nomikos/backend}) holds all business logic. The inference agent (\repo{nomikos_inference}) has no database, no queue and no open port. Vercel serves the frontend and landing page. One Coolify host runs the API container built from \repo{nomikos/Dockerfile}, a Postgres container, the media directory \code{/data/nomikos/media} and a platform worker from the same image (\repo{infrastructure/docker-compose.worker.yml}). The hosted agent runs on a separate machine as systemd units.
 
-Vercel serves the landing page and the editor. One Coolify host runs the backend: the API is a Coolify application built from \code{nomikos/Dockerfile}, Postgres is a Coolify-managed container (\code{docs/inference/adding-inference-models.md}), and media sit in a host directory, \code{/data/nomikos/media}, since the move off Supabase Storage. The platform worker uses the same image under its own Compose file (\code{infrastructure/docker-compose.worker.yml}) and mounts that directory read-only. The hosted agent runs on a separate machine as \code{nomikos-worker@} systemd units (\code{scripts/platform/apply_email_env.sh}).
+\choice{A modular monolith.} The API is one process split into six bounded contexts (users, project, document, annotation, ml, jobs), each with \code{api}, \code{application}, \code{domain} and \code{infrastructure} layers (\repo{nomikos/backend/README.md}). Microservices would have given us network hops, several databases and distributed transactions to manage. A monolith gives one deploy and one transaction per request. The price is that boundaries are only conventions: document, annotation, ml and jobs import each other in both directions.
 
-\section{Key architectural choices}
+\choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Agents pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. Postgres \texttt{NOTIFY} tells the API when a job finishes, and the API forwards that to the browser as server-sent events. It would not scale to a high-traffic service, which we do not need.
 
-\choice{A modular monolith.} The API is one process split into bounded contexts (\code{users}, \code{project}, \code{document}, \code{annotation}, \code{ml}, \code{jobs}), each with \code{api/}, \code{application/}, \code{domain/} and \code{infrastructure/} layers (\code{nomikos/backend/README.md}). For a small team this keeps one deploy, one transaction scope and one database, where microservices would add network boundaries. The boundaries are weaker between contexts, where \code{document}, \code{annotation}, \code{ml} and \code{jobs} import each other both ways.
+\choice{Agents connect outward.} An inference agent is the same program on a researcher's laptop or on our server; only the token differs. A device token claims its owner's local jobs, a service token claims cloud jobs. Because the agent always starts the connection, a laptop behind a university firewall works without port forwarding, and the server never stores where agents live. An earlier design had the server push work to a listening inference service with its own queue, and laptop and cloud ended up running different code. The cost: if the API is down, agents stop.
 
-\choice{One Postgres queue, outbound agents.} The \code{jobs} table is the only queue (ADR 0003). An agent claims one page at a time with \texttt{FOR UPDATE SKIP LOCKED} through \code{POST /device/v1/jobs/claim} and reports through \code{POST /internal/inference/job-complete}. A message broker or a listening inference service would have repeated an earlier mistake: a second queue, \code{inference_jobs}, had needed its own claim loop and locks, and laptop and cloud ran different code. The credential decides what an agent may claim (ADR 0005): a device token gets its owner's \texttt{local} jobs and a service token any \texttt{cloud} job. A page whose lease expires goes back to \texttt{pending}. In exchange, the hosted worker depends on the API being up, and Postgres carries the queue load.
-
-\choice{ONNX serving with preprocessing parity.} Agents run ONNX Runtime on CPU. PyTorch only builds the graphs, in \code{nomikos_inference/export/}, outside the wheel (ADR 0006). With PyTorch as the runtime, the install had grown to 817\,MB on macOS arm64 and peak memory to 7.0\,GB. Pages from the training set once came back wrong, so ADR 0007 requires serving preprocessing to reproduce the training loader exactly, with crop padding recorded per model in \code{registry.yaml}. This adds an export step and parity tests in \code{tests/export/} that have to keep passing.
-
-\choice{Server-owned reading order.} Line order used to come from the client, and edits left gaps and collisions. The server now keeps \texttt{order} dense after every write and numbers lines region by region (ADR 0008, 0011, \code{reading_order.py}), so the editor, viewer and exports agree. Each line write renumbers the page while holding a lock on it.
-
-\choice{Model output as an immutable layer.} Each segmentation run is stored once in \code{segmentation_runs} as JSONB, with the model identity copied in, and never updated (ADR 0013, migration \code{011}). Before, an edit overwrote the proposal and a deleted false positive left no trace, so corrections could not become training data. Transcriptions follow the same rule: one \texttt{model} layer per run beside a single \texttt{ground\_truth} layer. Runs are kept forever.
-
-\choice{A generated API contract.} \code{scripts/platform/export_openapi.py} writes \code{openapi/openapi.json} (115 operations) and \texttt{openapi-typescript} turns it into \code{src/api/schema.d.ts}. A pre-commit hook regenerates both on backend changes and the CI job \texttt{check:api} fails on any drift, so the frontend cannot use a field the backend dropped. Every API change now needs a generation step, and the generated files are never edited by hand.
-
-\choice{Signed URLs, one authorisation path.} The browser talks only to the API. Images are served through short-lived signed links (\code{core/settings/storage.py}) behind a \texttt{MediaStore} protocol with local and Supabase backends. Row-level security is off and FastAPI checks access before every query (\code{docs/database-design.md}, section 10), so access is checked in one layer, and every route has to remember to call it.
-
-\choice{Self-hosted backend, frontend on Vercel.} The backend needs a persistent worker, a direct database connection, a \texttt{LISTEN} loop for server-sent events and a disk, which is why the worker ``never ran on Vercel'' (\code{docker-compose.worker.yml}). The static frontend stays on Vercel. The cost is operating that host, including its backups and releases.
+\choice{ONNX Runtime serves, PyTorch only exports.} Figure~\ref{fig:onnx} shows the model path. PyTorch is used once, at export time, in \repo{nomikos_inference/export}. The served package depends only on ONNX Runtime. With PyTorch at runtime the install was 817\,MB on an M-series Mac and peaked at 7\,GB of memory, too much for a researcher's laptop. Export brings its own risk. Early exported models returned wrong text on pages from their own training set, because serving resized and cropped images differently from the training loader. Serving now reproduces the training preprocessing step by step, crop padding is stored per model in \repo{nomikos_inference/registry.yaml}, and parity tests in \repo{tests/export} compare ONNX against PyTorch output.
 
 \begin{figure}[ht]
 \centering
-\resizebox{0.7\linewidth}{!}{%
+\resizebox{0.88\linewidth}{!}{%
+\begin{tikzpicture}[node distance=0.55cm and 0.9cm]
+  \node[box] (ckpt) {Trained checkpoint\\PyTorch};
+  \node[box, right=of ckpt] (exp) {\texttt{export.py}\\per architecture};
+  \node[box, right=of exp] (onnx) {\texttt{model.onnx}};
+  \node[store, right=of onnx] (hub) {Hugging Face Hub\\revision + SHA-256};
+  \node[box, below=2.5cm of hub] (cache) {Download, verify\\\scriptsize\texttt{\textasciitilde/.nomikos/hf/cache}};
+  \node[box, left=of cache] (pre) {Preprocess\\\scriptsize grey, height 48, pad 12};
+  \node[box, left=of pre, draw=accent, very thick] (ort) {ONNX Runtime\\CPU session};
+  \node[box, left=of ort] (out) {Lines or text\\to the API};
+  \node[box, below=0.55cm of exp, fill=white] (par) {Parity test\\\scriptsize ONNX vs PyTorch};
+
+  \begin{scope}[on background layer]
+    \node[group, fit=(ckpt)(exp)(onnx)(par)] (gbuild) {};
+    \node[group, fit=(out)(ort)(pre)(cache)] (gserve) {};
+  \end{scope}
+  \node[glabel] at (gbuild.north west) {Build time, needs PyTorch};
+  \node[glabel] at (gserve.north west) {Serve time, inside the agent, no PyTorch};
+
+  \draw[run] (ckpt) -- node[lab, above=2pt] {load} (exp);
+  \draw[run] (exp) -- node[lab, above=2pt] {trace} (onnx);
+  \draw[art] (onnx) -- node[lab, above=2pt] {upload} (hub);
+  \draw[run] (exp) -- node[lab, right=2pt] {check} (par);
+  \draw[art] (hub) -- node[lab, right=2pt] {first use} (cache);
+  \draw[run] (cache) -- node[lab, above=2pt] {graph} (pre);
+  \draw[run] (pre) -- node[lab, above=2pt] {tensor} (ort);
+  \draw[run] (ort) -- node[lab, above=2pt] {decode} (out);
+
+  \begin{scope}[shift={(-0.6,-4.9)}]
+    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {local step};
+    \draw[art] (3.0,0) -- (3.9,0); \node[key] at (4.0,0) {network transfer};
+    \draw[groupline, dashed, rounded corners=3pt] (6.6,-0.18) rectangle (7.5,0.18);
+    \node[key] at (7.6,0) {where it runs};
+  \end{scope}
+\end{tikzpicture}}
+\caption{From a trained model to a served one. The registry pins each model to a Hub revision and a file hash, so every agent runs the same bytes.}
+\label{fig:onnx}
+\end{figure}
+
+\choice{The server owns reading order.} Line order used to come from the client, and edits left gaps and duplicates. Now the server renumbers the page after every write, region by region, while holding a lock on the page (\repo{nomikos/backend/document/application/reading_order.py}). The editor, viewer and every export agree on the order. Each line edit costs a renumbering.
+
+\choice{Model output is never overwritten.} Each segmentation run is stored once in \code{segmentation_runs} as JSON with the model name and version, and never updated. Human edits go to the live lines and to a separate \code{ground_truth} transcription layer. Before this, an edit replaced the model's proposal and a deleted false positive left no trace, so we could not tell what the human had fixed. Keeping both is what makes corrections usable as training data. Runs are kept forever, so storage only grows.
+
+\choice{A generated API contract.} \repo{scripts/platform/export_openapi.py} writes \repo{nomikos/frontend/openapi/openapi.json} (115 operations) from the FastAPI app, and \href{https://openapi-ts.dev}{\texttt{openapi-typescript}} turns it into TypeScript types for the frontend. A pre-commit hook regenerates both, and CI fails if they drift. If the backend drops a field, the frontend stops compiling. Every API change needs the generation step, and nobody edits those files by hand.
+
+\choice{All access goes through the API.} The browser talks only to the API, never to Postgres or storage. Images come through short-lived signed URLs. Postgres row-level security is off; FastAPI checks access before every query. All authorisation lives in one layer, which is easy to audit but means every new route has to remember the check.
+
+\choice{Self-hosted backend, frontend on Vercel.} The backend needs things serverless platforms handle poorly: a long-running worker, a direct database connection, a \texttt{LISTEN} loop for live updates and a disk for images. Coolify deploys containers from Git on our own server. The static frontend stays on Vercel. We now run the box ourselves, including backups and releases.
+
+\section{Job flow}
+
+\begin{figure}[ht]
+\centering
+\resizebox{0.8\linewidth}{!}{%
 \begin{tikzpicture}[
   actor/.style={box, minimum width=2.3cm},
   msg/.style={-{Stealth[length=5pt]}, thick},
   ret/.style={-{Stealth[length=5pt]}, thick, dashed},
-  ml/.style={font=\footnotesize, above=0.5pt, inner sep=1pt, fill=white}]
+  ml/.style={font=\footnotesize, above=0.5pt, inner sep=1pt, fill=white},
+  tx/.style={draw=accent, fill=accent!6, rounded corners=2pt}]
   \def\xb{0} \def\xa{4.2} \def\xd{8.0} \def\xg{12.4}
+  % transaction bands behind each POST
+  \begin{scope}[on background layer]
+    \fill[tx] (\xa-0.3,-1.5) rectangle (\xd+0.3,-1.0);
+    \fill[tx] (\xa-0.3,-2.85) rectangle (\xd+0.3,-2.35);
+    \fill[tx] (\xa-0.3,-5.1) rectangle (\xd+0.3,-4.6);
+  \end{scope}
   \foreach \x/\n in {\xb/Browser, \xa/API, \xd/Postgres, \xg/Agent} {
     \node[actor] at (\x,0) {\n};
-    \draw[groupline] (\x,-0.43) -- (\x,-7.0);
+    \draw[groupline] (\x,-0.43) -- (\x,-6.6);
   }
-  \draw[msg] (\xb,-0.9) -- node[ml] {POST parts/upload, finalize} (\xa,-0.9);
-  \draw[msg] (\xb,-1.35) -- node[ml] {POST parts/\{part\}/segment} (\xa,-1.35);
-  \draw[msg] (\xa,-1.8) -- node[ml] {INSERT job, pending} (\xd,-1.8);
-  \draw[ret] (\xa,-2.25) -- node[ml] {202, job id} (\xb,-2.25);
-  \draw[msg] (\xg,-2.7) -- node[ml] {POST /device/v1/jobs/claim} (\xa,-2.7);
-  \draw[msg] (\xa,-3.15) -- node[ml] {SKIP LOCKED, waiting} (\xd,-3.15);
-  \draw[ret] (\xa,-3.6) -- node[ml] {page request, signed URL} (\xg,-3.6);
-  \draw[msg] (\xg,-4.05) -- node[ml] {GET signed image} (\xa,-4.05);
-  \node[box, minimum width=2.1cm, minimum height=0.45cm, inner ysep=1pt] at (\xg,-4.5) {ONNX model};
-  \draw[msg] (\xg,-5.1) -- node[ml] {POST /internal/inference/job-complete} (\xa,-5.05);
-  \draw[msg] (\xa,-5.5) -- node[ml] {run + lines, done, NOTIFY} (\xd,-5.5);
-  \draw[ret] (\xa,-5.95) -- node[ml] {SSE /jobs/\{id\}/events} (\xb,-5.95);
-  \draw[msg] (\xb,-6.4) -- node[ml] {PATCH lines, text} (\xa,-6.4);
-  \draw[msg] (\xb,-6.85) -- node[ml] {GET export/page-xml, docx} (\xa,-6.85);
-  \begin{scope}[shift={(5.6,-7.55)}]
+  \draw[msg] (\xb,-0.95) -- node[ml] {POST \dots/segment} (\xa,-0.95);
+  \draw[msg] (\xa,-1.4) -- node[ml, fill=none] {INSERT job, pending} (\xd,-1.4);
+  \draw[ret] (\xa,-1.85) -- node[ml] {202, job id} (\xb,-1.85);
+  \draw[msg] (\xg,-2.3) -- node[ml] {POST /device/v1/jobs/claim} (\xa,-2.3);
+  \draw[msg] (\xa,-2.75) -- node[ml, fill=none] {SKIP LOCKED, waiting} (\xd,-2.75);
+  \draw[ret] (\xa,-3.2) -- node[ml, pos=0.62, fill=none] {page, model, signed image URL} (\xg,-3.2);
+  \node[box, minimum width=2.1cm, minimum height=0.45cm, inner ysep=1pt] at (\xg,-3.75) {run ONNX model};
+  \draw[msg] (\xg,-4.55) -- node[ml] {POST /internal/inference/job-complete} (\xa,-4.55);
+  \draw[msg] (\xa,-5.0) -- node[ml, fill=none] {lock, merge, done, NOTIFY} (\xd,-5.0);
+  \draw[ret] (\xd,-5.6) -- node[ml] {LISTEN} (\xa,-5.6);
+  \draw[ret] (\xa,-6.15) -- node[ml] {SSE /jobs/\{id\}/events} (\xb,-6.15);
+  \begin{scope}[shift={(1.2,-7.2)}]
     \draw[msg] (0,0) -- (0.9,0); \node[key] at (1.0,0) {request};
-    \draw[ret] (2.5,0) -- (3.4,0); \node[key] at (3.5,0) {response or push};
+    \draw[ret] (2.6,0) -- (3.5,0); \node[key] at (3.6,0) {response or push};
+    \fill[tx] (6.4,-0.18) rectangle (7.3,0.18); \node[key] at (7.4,0) {one database transaction};
   \end{scope}
 \end{tikzpicture}}
-\caption{One page end to end: upload, segment, correct, export. Paths without a leading slash sit under \texttt{/projects/\{p\}/documents/\{d\}/}.}
-\label{fig:sequence}
+\caption{One segmentation job. Each of the three POST requests is a single transaction; the browser hears about the result through \texttt{NOTIFY} and server-sent events.}
+\label{fig:jobs}
 \end{figure}
 
-\section{Job flow and data model}
+A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POST requests drive it, and each one is a single database transaction, so a crash leaves the job in a known state. The browser's POST inserts a \texttt{pending} row and returns at once. An agent's claim POST locks one pending row, skipping rows other agents hold, and marks it \texttt{waiting}. The agent fetches the image through a signed URL, runs the model locally and sends the result in the completion POST. That handler locks the job, sets \code{callback_claimed_at} so a retried callback cannot merge twice, writes the run and the lines, marks the job \texttt{done} and fires \texttt{NOTIFY}. The API listens on that channel and pushes the event to the browser. If server-sent events are blocked, the browser polls \texttt{GET /jobs/\{id\}}. An agent that dies loses its lease after a timeout and the page goes back to \texttt{pending}; after five failed claims the job is marked failed.
 
-In Figure~\ref{fig:sequence}, the callback handler locks the job row and sets \code{callback_claimed_at} before merging, so a retried callback cannot merge twice (\code{docs/database-design.md}, 8.3). Without server-sent events the browser polls \code{GET /jobs/{id}}. In Figure~\ref{fig:er}, live lines point back to their run, which keeps the model identity as text, so it survives deletion of the job.
+\section{Data model}
 
 \begin{figure}[ht]
 \centering
@@ -196,25 +267,16 @@ In Figure~\ref{fig:sequence}, the callback handler locks the job row and sets \c
   \draw[rel] (run) -- node[lab, below=2pt] {origin of} (line);
   \draw[rel] (line.east) -| node[lab, pos=0.75] {1:n} (lt.south);
 \end{tikzpicture}}
-\caption{Core entities; identity, sharing and history tables omitted. The outlined entity is written once and never updated.}
+\caption{Core entities; users, sharing and history tables are left out. The outlined entity is written once and never updated.}
 \label{fig:er}
 \end{figure}
 
-\section{Quality engineering and releases}
+A project holds documents, a document holds pages, and a page holds regions and lines (Figure~\ref{fig:er}). Text does not live on the line. It lives in \code{line_transcription}, one row per line and per transcription layer, so the model's text and the human's text sit side by side. Every live line points back to the segmentation run that proposed it, and the run keeps the model identity as text, so the history survives even if the job or the catalog row is deleted. The full schema and its reasoning are in \repo{docs/database-design.md}.
 
-\textbf{Tests.} \code{tests/nomikos/} (unit, integration on real Postgres), \code{tests/inference/} (also on real weights), \code{tests/export/} (ONNX against PyTorch), \code{tests/hf/} and \code{tests/load/}.
+\section{Quality and open issues}
 
-\textbf{CI} (\code{.github/workflows/}, actions pinned by SHA). \code{quality.yml} runs \texttt{tsc}, ESLint, Vitest and a build, then Ruff, mypy, unit tests, Postgres 16 integration tests after \texttt{alembic upgrade head}, a nightly real-weights lane and \texttt{check:api}. \code{security.yml} runs gitleaks, \texttt{npm audit} and \texttt{pip-audit} with documented VEX exceptions. \code{deployment.yml} builds both images with SBOMs and Trivy scans, and \code{release.yml} publishes the wheel with an attestation through PyPI trusted publishing. Pre-commit repeats the fast checks. Changes land as squash-merged pull requests, and commit bodies cite Greptile review findings.
+CI (\repo{.github/workflows}) runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The agent is released to PyPI through trusted publishing. Changes land as squash-merged pull requests.
 
-\textbf{Releases.} Production never runs Alembic, because the API image only starts uvicorn, so the schema must be in place before Coolify deploys. \code{scripts/platform/release_2026_10_11.sh} runs as root on the Coolify host: it applies dated SQL files inside the Postgres container, sets environment variables through the Coolify API, waits for the merge and a healthy new API container, then checks \code{alembic_version} and \code{/health}. Catalog rows go through \code{apply_catalog_sql.sh}. \code{tests/platform/} tests these scripts against stubs.
-
-\section{Limits and next steps}
-
-\begin{itemize}
-  \item \textbf{Schema by hand.} Releases apply migrations as hand-run SQL; an \texttt{alembic upgrade} step would remove that risk.
-  \item \textbf{mypy does not gate.} It runs with \texttt{continue-on-error: true} and names a path, \texttt{inference}, that no longer exists (\code{quality.yml}).
-  \item \textbf{Docs lag production.} \code{docs/deployment/production.md} still puts the API on Vercel with Supabase storage, and \code{docs/database-design.md} 5.4 still says the callback blocks the event loop, which \code{job_callback_service.py} no longer does.
-  \item \textbf{One host.} API, database and media share one Coolify host; metrics stay in memory (ADR 0010).
-\end{itemize}
+Four things remain open. Production does not run Alembic; a release script (\repo{scripts/platform/release_2026_10_11.sh}) applies dated SQL by hand before Coolify deploys, which an automatic migration step would make safer. mypy runs in CI but does not fail the build. Some documents still describe the old Vercel and Supabase setup (\repo{docs/deployment/production.md}). API, database and media share one host, so that host is a single point of failure.
 
 \end{document}
