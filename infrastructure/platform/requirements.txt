@@ -73,7 +73,7 @@ multidict==6.9.1
     # via yarl
 numpy==1.26.4
     # via shapely
-packaging==26.2
+packaging==26.3
     # via deprecation
 pillow==13.0.0
     # via fpdf2
