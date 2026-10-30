@@ -407,9 +407,21 @@ Database size (\code{lines} table) & 44.8\,MB (26\,MB) \\
 \label{tab:usage}
 \end{table}
 
+\section{Scaling}
+
+The current load is small (Table~\ref{tab:usage}), and one host carries it easily. At ten or a hundred times the load, each part grows in its own way:
+\begin{itemize}
+  \item \textbf{Inference.} Most of the time goes here, and it scales by adding agents. Agents claim with \texttt{FOR UPDATE SKIP LOCKED}, so any number of them can pull from the same queue without knowing about each other. Every researcher who runs a laptop agent adds capacity that costs us nothing.
+  \item \textbf{API.} The API keeps its data in Postgres and the media store, so it can run more processes (uvicorn reads \code{WEB_CONCURRENCY}) or more containers. Each process opens its own \code{LISTEN} connection and a pool of 5 connections plus 10 overflow, so with many processes Postgres needs a connection pooler in front of it. Request metrics also have to move out of process memory first.
+  \item \textbf{Database.} At 44.8\,MB, Postgres is nowhere near a limit. The first step is to give it its own host or a managed service, away from the API.
+  \item \textbf{Media.} Page images sit in a local directory, which ties the API and the platform worker to one machine. Code reaches media only through a storage interface with a local and a Supabase Storage backend, chosen by \code{STORAGE_BACKEND}, and browsers and agents only ever see signed URLs. Moving images to object storage is therefore a configuration change, not a change to any caller.
+\end{itemize}
+
 \section{Quality and monitoring}
 
 CI (\repo{.github/workflows}) runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The agent is released to PyPI through trusted publishing.
+
+The backend has 889 unit tests and 298 integration tests. Coverage is configured in \repo{pyproject.toml} but not measured in CI, because a second run of the integration suite does not fit the CI budget. A local run of the unit tests alone covers 56\,\% of statements and branches in \code{nomikos/backend} and \code{nomikos_inference}; the integration tests add to that but need a running Postgres.
 
 An admin dashboard covers monitoring. It shows users, jobs per model with success rate and median duration, Postgres statistics, request counts and timings per route, failure reports sent by browsers, and user feedback.
 
@@ -417,9 +429,8 @@ An admin dashboard covers monitoring. It shows users, jobs per model with succes
 \section{Open issues}
 
 \begin{itemize}
-  \item \textbf{Schema changes by hand.} Production does not run Alembic. A release script in \repo{scripts/platform} applies dated SQL before Coolify deploys; running migrations automatically would be safer.
+  \item \textbf{Schema changes by hand.} Production does not run Alembic. Before Coolify deploys, a release script in \mbox{\repo{scripts/platform}} applies dated SQL; running migrations automatically would be safer.
   \item \textbf{One host.} Backups leave the host, but the API, database and media still share it, so it is a single point of failure.
-  \item \textbf{Restore is undocumented.} The Cloudflare backup schedule and the steps to restore from it are not written down in the repository.
   \item \textbf{Short-lived metrics.} Request metrics live in the memory of one API process and reset on every restart, and no alerting is set up.
 \end{itemize}
 
