@@ -10,3 +10,4 @@ export { usePageEditorRunState } from "./usePageEditorRunState";
 export { usePairingState } from "./usePairingState";
 export { useSegmentHealth } from "./useSegmentHealth";
 export { useRegions } from "./useRegions";
+export { useSegmentMerge } from "./useSegmentMerge";

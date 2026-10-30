@@ -22,6 +22,7 @@ import {
   type PageEditorJobKind,
 } from "../jobProgress";
 import { segmentNumberFor, segmentsInNumberOrder } from "../segmentNumbering";
+import { selectionAfterClick } from "../segmentSelection";
 import { statusMessage, type StatusMessage } from "../statusMessage";
 import { groundTruthLayer } from "../../../utils/transcriptionLayerLabel";
 import { useUnsavedTranscriptGuard } from "../PageEditorTranscriptEditor";
@@ -92,6 +93,11 @@ export function usePairingState({
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(
     null,
   );
+  // The segments picked for a group action, empty unless there are two or more
+  // of them. Held beside the single selection rather than replacing it: the
+  // strip, pairing, per-segment OCR and vertex editing are all about one
+  // segment and stay that way.
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
   const [approvedTextDraft, setApprovedTextDraft] = useState("");
   const [transcriptionSaveMessage, setTranscriptionSaveMessage] =
     useState<StatusMessage | null>(null);
@@ -101,6 +107,7 @@ export function usePairingState({
 
   useEffect(() => {
     setSelectedSegmentId(null);
+    setSelectedSegmentIds([]);
     setApprovedTextDraft("");
     setTranscriptionSaveMessage(null);
     setOcrMessage(null);
@@ -616,13 +623,32 @@ export function usePairingState({
     }
   }
 
-  function selectSegment(lineId: string) {
-    const selected = lines.find((line) => line.id === lineId) ?? null;
-    setSelectedSegmentId(lineId);
+  /**
+   * ``additive`` is a shift-click or a cmd/ctrl-click: it toggles the segment in
+   * the group instead of replacing the selection. A plain click drops the group,
+   * which is what makes clicking away from a half-built merge do the obvious
+   * thing.
+   */
+  function selectSegment(lineId: string, additive = false) {
+    const next = selectionAfterClick(
+      { anchorId: selectedSegmentId, groupIds: selectedSegmentIds },
+      lineId,
+      additive,
+    );
+    setSelectedSegmentIds(next.groupIds);
+    setSelectedSegmentId(next.anchorId);
+    const selected =
+      next.anchorId === null
+        ? null
+        : (lines.find((line) => line.id === next.anchorId) ?? null);
     setTranscriptionSaveMessage(null);
     setApprovedTextDraft(
       selected ? lineTextForLayer(selected, selectedTranscriptionLayerId) : "",
     );
+  }
+
+  function clearSegmentGroup() {
+    setSelectedSegmentIds([]);
   }
 
   function navigateSegment(direction: -1 | 1) {
@@ -651,6 +677,9 @@ export function usePairingState({
   return {
     selectedSegmentId,
     setSelectedSegmentId,
+    selectedSegmentIds,
+    setSelectedSegmentIds,
+    clearSegmentGroup,
     approvedTextDraft,
     setApprovedTextDraft,
     transcriptionSaveMessage,

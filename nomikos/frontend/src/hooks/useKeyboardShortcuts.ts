@@ -4,6 +4,7 @@ interface ShortcutHandlers {
   onDrawBox?: () => void;
   onDrawPolygon?: () => void;
   onEditVertices?: () => void;
+  onMerge?: () => void;
   onDelete?: () => void;
   onEscape?: () => void;
   onEnter?: () => void;
@@ -53,6 +54,12 @@ export const useKeyboardShortcuts = (handlers: ShortcutHandlers) => {
       else if (key === "p" && !ctrl) {
         e.preventDefault();
         current.onDrawPolygon?.();
+      }
+      // M - Merge the selected segments. Free: the editor binds B, P, V,
+      // Delete, Escape, Enter, Ctrl+Z/Y and PageUp/PageDown, and nothing else.
+      else if (key === "m" && !ctrl) {
+        e.preventDefault();
+        current.onMerge?.();
       }
       // V - Edit Vertices
       else if (key === "v" && !ctrl) {

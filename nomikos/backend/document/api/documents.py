@@ -7,10 +7,15 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.annotation.application.export_service import AnnotationExportService
+from backend.annotation.application.line_merge_service import (
+    LineMergeService,
+    LineMergeTextConflict,
+)
 from backend.annotation.application.page_xml_export_service import PageXmlExportService
 from backend.annotation.application.transcription_pdf_service import TranscriptionPdfService
 from backend.core.api.content_disposition import attachment_disposition
@@ -41,6 +46,8 @@ from backend.document.api.schemas import (
     LayoutResetRequest,
     LayoutResponse,
     LineCreateRequest,
+    LineMergeConflictResponse,
+    LineMergeRequest,
     LinePatchRequest,
     LineResponse,
     LinesReplaceRequest,
@@ -84,6 +91,7 @@ router = APIRouter(prefix="/projects/{project_id}/documents", tags=["documents"]
 _catalog = DocumentCatalog()
 _parts = DocumentPartService()
 _layout = LayoutService()
+_line_merges = LineMergeService()
 _transcriptions = TranscriptionService()
 _enqueue = DocumentJobEnqueueService()
 _capacity = InferenceCapacityService()
@@ -620,6 +628,68 @@ async def delete_part_line(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     await _layout.delete_part_line(db, current_user, project_id, document_id, part_id, line_id)
+
+
+# The free merge sits with the other line mutations rather than under
+# `segment-health`, because that router's contract is "apply the fix the report
+# offered" and every one of its routes refuses an id the report did not flag.
+# This one starts from what a human picked and offers nothing, so putting it
+# there would mean one router with two opposite rules about where a choice comes
+# from. The service behind it still lives in the annotation module, next to the
+# geometry it reuses and the has-somebody-worked-on-this rule it must not
+# diverge from.
+@router.post(
+    "/{document_id}/parts/{part_id}/lines/merge",
+    response_model=list[LineResponse],
+    responses={
+        409: {
+            "model": LineMergeConflictResponse,
+            "description": "Several selected lines carry text or a pairing",
+        }
+    },
+)
+async def merge_part_lines(
+    project_id: UUID,
+    document_id: UUID,
+    part_id: UUID,
+    body: LineMergeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[LineResponse] | JSONResponse:
+    """Fold two or more of this part's lines into one, and answer with the whole list.
+
+    The whole list, rather than the merged row, because the merge renumbers the
+    rows below it: the editor already reloads this shape after a history restore
+    and after every segment-health fix, so a client can replace its state rather
+    than reconcile a partial answer against orders it cannot recompute.
+    """
+    try:
+        lines = await _line_merges.merge_lines(
+            db,
+            current_user,
+            project_id,
+            document_id,
+            part_id,
+            body.line_ids,
+            body.keep_text_from,
+        )
+    except LineMergeTextConflict as conflict:
+        # Caught here rather than left to the global ConflictError handler, which
+        # answers with a message alone. The client cannot ask "keep whose text?"
+        # without the ids, so this is the one conflict that carries data.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=jsonable_encoder(
+                {
+                    "error": {
+                        "code": "MERGE_TEXT_CONFLICT",
+                        "message": str(conflict),
+                        "line_ids": conflict.line_ids,
+                    }
+                }
+            ),
+        )
+    return [line_response(line) for line in lines]
 
 
 @router.put("/{document_id}/parts/{part_id}/lines", response_model=list[LineResponse])
