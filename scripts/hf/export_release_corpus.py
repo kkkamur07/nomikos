@@ -265,40 +265,51 @@ def _points_str(points: list[list[float]]) -> str:
     return " ".join(f"{_format_coord(x)},{_format_coord(y)}" for x, y in points)
 
 
+def ground_truth_text(raw_line: dict) -> str | None:
+    """The saved Ground truth text of one layout line, or None when it has none."""
+    for entry in raw_line.get("line_transcriptions") or []:
+        if isinstance(entry, dict) and entry.get("transcription_kind") == "ground_truth":
+            text = entry.get("text")
+            return text if isinstance(text, str) else None
+    return None
+
+
 def collect_part_lines(layout: dict, pairing: dict) -> tuple[list[dict], int, int]:
-    """Join layout segments with paired transcription text.
+    """Join layout segments with their saved Ground truth text.
 
     Returns (lines, text_line_count, paired_line_count) where each line holds
-    id, points, baseline points, optional text and optional text_order (the
-    position of its text in the transcription, which the scholars typed in
-    reading order). Lines that no text line pairs to are unpaired
-    (text_order None). Text lines paired to an unknown segment id are
-    ignored for the XML but still counted as text lines.
+    id, points, baseline points, optional text and optional text_order. The
+    text is the line's Ground truth entry in ``layout.lines[].line_transcriptions``,
+    so inline corrections and text typed without a candidate both ship.
+    Candidate pairings only supply text_order (the position of the paired
+    candidate in the transcription, which the scholars typed in reading
+    order). Lines without Ground truth are unpaired (text None). Candidate
+    text lines are still counted as text lines.
     """
     text_lines = pairing.get("text_lines", []) if isinstance(pairing, dict) else []
-    text_by_segment: dict[str, list[tuple[int, str]]] = {}
+    order_by_segment: dict[str, int] = {}
     for list_index, entry in enumerate(text_lines):
         segment_id = entry.get("paired_line_id")
         if segment_id:
             order = entry.get("order")
             position = int(order) if isinstance(order, int) else list_index
-            text_by_segment.setdefault(str(segment_id), []).append(
-                (position, entry.get("text", ""))
-            )
+            key = str(segment_id)
+            order_by_segment[key] = min(position, order_by_segment.get(key, position))
     raw_lines = layout.get("lines", []) if isinstance(layout, dict) else []
     lines: list[dict] = []
     for raw in raw_lines:
         points = [[float(x), float(y)] for x, y in raw.get("points", [])]
         baseline = geometry_points(raw.get("baseline")) or []
-        hits = sorted(text_by_segment.get(str(raw.get("id")), []))
-        text = "\n".join(text for _, text in hits) if hits else None
+        text = ground_truth_text(raw)
         lines.append(
             {
                 "id": str(raw.get("id")),
                 "points": points,
                 "baseline": baseline,
                 "text": text,
-                "text_order": hits[0][0] if hits else None,
+                "text_order": order_by_segment.get(str(raw.get("id")))
+                if text is not None
+                else None,
             }
         )
     paired = sum(1 for line in lines if line["text"] is not None)

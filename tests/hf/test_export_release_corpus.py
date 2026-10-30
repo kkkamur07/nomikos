@@ -98,3 +98,38 @@ def test_page_xml_builder_follows_text_order_and_valid_reading_order():
     for element in text_lines:
         coords = element.find("p:Coords", ns).get("points")
         assert all(part.split(",")[0].lstrip("-").isdigit() for part in coords.split())
+
+
+def _gt(text: str) -> list[dict]:
+    return [
+        {"transcription_kind": "model", "text": "model guess"},
+        {"transcription_kind": "ground_truth", "text": text},
+    ]
+
+
+def test_collect_part_lines_takes_ground_truth_text_and_candidate_order():
+    builder = _load()
+    box = [[0, 0], [10, 0], [10, 10], [0, 10]]
+    layout = {
+        "lines": [
+            {"id": "corrected", "points": box, "line_transcriptions": _gt("fixed text")},
+            {"id": "typed", "points": box, "line_transcriptions": _gt("typed text")},
+            {"id": "bare", "points": box, "line_transcriptions": []},
+        ]
+    }
+    pairing = {
+        "text_lines": [
+            {"order": 0, "text": "other line", "paired_line_id": None},
+            {"order": 1, "text": "old candidate", "paired_line_id": "corrected"},
+        ]
+    }
+
+    lines, text_count, paired_count = builder.collect_part_lines(layout, pairing)
+
+    by_id = {line["id"]: line for line in lines}
+    assert by_id["corrected"]["text"] == "fixed text"
+    assert by_id["corrected"]["text_order"] == 1
+    assert by_id["typed"]["text"] == "typed text"
+    assert by_id["typed"]["text_order"] is None
+    assert by_id["bare"]["text"] is None
+    assert (text_count, paired_count) == (2, 2)
