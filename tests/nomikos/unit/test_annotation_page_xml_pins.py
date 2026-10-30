@@ -306,12 +306,12 @@ class TestKillerPins:
         assert export_file_stem("Codex_", 1) == "Codex_page_1"
         assert export_file_stem("CODEX_", 1) == "CODEX_page_1"
 
-    def test_three_point_outline_falls_back_to_its_lower_edge(self) -> None:
+    def test_mask_outline_is_exported_whole_as_the_baseline(self) -> None:
         line = _line(
             points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
             mask={"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]},
         )
-        assert len(_baseline_export_points(line)) == 2
+        assert _baseline_export_points(line) == [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]
 
     @pytest.mark.asyncio
     async def test_public_bundle_uses_the_published_context(self) -> None:

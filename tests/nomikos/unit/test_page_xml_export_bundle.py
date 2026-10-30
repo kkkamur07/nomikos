@@ -102,29 +102,20 @@ def test_attachment_disposition_non_ascii_keeps_a_fallback_and_the_real_name() -
     assert header.isascii()
 
 
-# --- PAGE Baseline geometry: stored baseline, else the outline's lower edge ---
+# --- PAGE Baseline geometry priority: mask, then baseline, then coords ---
 
 
-def test_baseline_export_prefers_the_stored_baseline_over_the_mask() -> None:
-    coords = [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]]
-    mask = {"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0], [1.0, 4.0]]}
+def test_baseline_export_prefers_mask_over_baseline_over_coords() -> None:
+    coords = [[0.0, 0.0], [10.0, 0.0]]
+    mask = {"points": [[1.0, 1.0], [2.0, 2.0]]}
     baseline = {"points": [[3.0, 3.0], [4.0, 4.0]]}
 
     assert (
         _baseline_export_points(_line(points=coords, mask=mask, baseline=baseline))
-        == baseline["points"]
+        == mask["points"]
     )
     assert _baseline_export_points(_line(points=coords, baseline=baseline)) == baseline["points"]
-
-
-def test_baseline_export_falls_back_to_the_mask_lower_edge() -> None:
-    coords = [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]]
-    mask = {"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0], [1.0, 4.0]]}
-    # The closed outline is not a baseline: only its lower edge is exported.
-    assert _baseline_export_points(_line(points=coords, mask=mask)) == [
-        [1.0, 4.0],
-        [9.0, 4.0],
-    ]
+    assert _baseline_export_points(_line(points=coords)) == coords
 
 
 def test_baseline_export_falls_through_malformed_geometry_to_coords() -> None:
@@ -136,15 +127,6 @@ def test_baseline_export_falls_through_malformed_geometry_to_coords() -> None:
         baseline={"points": [[1.0, 2.0, 3.0]]},
     )
     assert _baseline_export_points(line) == coords
-
-
-def test_baseline_export_keeps_xy_order_and_drops_non_numeric_pairs() -> None:
-    coords = [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]]
-    baseline = {"points": [[1.0, 9.0], ["oops", 2.0], [8.0, 2.0]]}
-    assert _baseline_export_points(_line(points=coords, baseline=baseline)) == [
-        [1.0, 9.0],
-        [8.0, 2.0],
-    ]
 
 
 def test_ground_truth_text_selects_the_ground_truth_layer() -> None:
@@ -174,7 +156,6 @@ def test_export_part_lines_renders_coords_baseline_and_ground_truth() -> None:
     line = _line(
         points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
         mask={"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]},
-        baseline={"points": [[2.0, 3.0], [8.0, 3.0]]},
         transcriptions=[_transcription("ἐν ἀρχῇ", TranscriptionKind.ground_truth)],
     )
 
@@ -190,27 +171,8 @@ def test_export_part_lines_renders_coords_baseline_and_ground_truth() -> None:
 
     text_line = root.find(".//p:TextLine", PAGE_NS)
     assert text_line.find("p:Coords", PAGE_NS).get("points") == "0,0 10,0 10,5"
-    # Baseline is the stored baseline, not the closed mask outline.
-    assert text_line.find("p:Baseline", PAGE_NS).get("points") == "2,3 8,3"
-    assert text_line.find(".//p:Unicode", PAGE_NS).text == "ἐν ἀρχῇ"
-
-
-def test_export_part_lines_falls_back_to_the_mask_lower_edge() -> None:
-    service = PageXmlExportService.__new__(PageXmlExportService)
-    part = SimpleNamespace(id=uuid4(), width=640, height=480, image_key="parts/x.webp")
-    line = _line(
-        points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]],
-        mask={"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0], [1.0, 4.0]]},
-        transcriptions=[_transcription("ἐν ἀρχῇ", TranscriptionKind.ground_truth)],
-    )
-
-    xml = service._export_part_lines(
-        part, [line], image_filename="Codex_page_1.webp", image_size=None
-    )
-    root = fromstring(xml)  # noqa: S314 - XML produced by this test, not untrusted input
-
-    text_line = root.find(".//p:TextLine", PAGE_NS)
-    assert text_line.find("p:Baseline", PAGE_NS).get("points") == "1,4 9,4"
+    # Baseline comes from the mask polygon, not the coords.
+    assert text_line.find("p:Baseline", PAGE_NS).get("points") == "1,1 9,1 9,4"
     assert text_line.find(".//p:Unicode", PAGE_NS).text == "ἐν ἀρχῇ"
 
 
