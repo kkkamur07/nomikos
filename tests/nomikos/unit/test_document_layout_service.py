@@ -27,6 +27,7 @@ from backend.document.infrastructure.orm_models import (
     Transcription,
     TranscriptionKind,
 )
+from backend.users.infrastructure.orm_models import User
 
 _POINTS = [[10.0, 10.0], [40.0, 10.0], [40.0, 25.0], [10.0, 25.0]]
 _OTHER_POINTS = [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]
@@ -137,7 +138,8 @@ class _World:
     async def replace(self, lines: list[dict], *, allow_new_ids: bool = False) -> list[Line]:
         return await self.service.replace_part_lines(
             self.session,
-            object(),
+            # A real user row: the service stamps ``updated_by`` with its id.
+            User(id=uuid.uuid4(), email="editor@example.test"),
             self.document.project_id,
             self.document.id,
             self.part.id,

@@ -301,6 +301,8 @@ class TestHistoryGeometryState:
             "mask",
             "kraken_ceiling",
             "approved_text",
+            "segmentation_run_id",
+            "run_external_id",
         }
 
 

@@ -294,5 +294,6 @@ def test_commit_false_leaves_the_transaction_to_the_caller() -> None:
     )
 
     assert session.commits == 0
-    # Deletes and new blocks are flushed so the inserts that follow see them.
-    assert session.flushes == 2
+    # The run record, then deletes and new blocks, are flushed so the inserts that
+    # follow see them.
+    assert session.flushes == 3

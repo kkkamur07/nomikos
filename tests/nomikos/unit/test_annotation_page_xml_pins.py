@@ -19,8 +19,6 @@ from PIL import Image
 from backend.annotation.application.page_xml_export_service import (
     PAGE_XML_NAMESPACE,
     PageXmlExportService,
-    _baseline_export_points,
-    _format_coord,
     _ground_truth_text,
     _image_filename,
     _points,
@@ -66,6 +64,12 @@ def _service():
     return PageXmlExportService.__new__(PageXmlExportService)
 
 
+def _render(service, part, lines, **kwargs) -> bytes:
+    """The XML for ``lines`` on a page with no regions."""
+    xml, _counts = service._export_part_lines(part, [], lines, **kwargs)
+    return xml
+
+
 class TestDocumentEnvelope:
     def _xml(self):
         service = _service()
@@ -75,9 +79,7 @@ class TestDocumentEnvelope:
             baseline={"points": [[2.0, 3.0], [8.0, 3.0]]},
             text="ἐν ἀρχῇ",
         )
-        xml = service._export_part_lines(
-            part, [line], image_filename="Codex_page_1.webp", image_size=None
-        )
+        xml = _render(service, part, [line], image_filename="Codex_page_1.webp", image_size=None)
         return xml, part, line
 
     def test_declaration_root_and_schema_location(self) -> None:
@@ -115,7 +117,7 @@ class TestDocumentEnvelope:
         root = fromstring(xml)  # noqa: S314 - XML produced by this test
         text_line = root.find(".//p:TextLine", NS)
         assert text_line.get("id") == f"line_{line.id}"
-        assert text_line.get("custom") == "source:kraken; kind:polygon"
+        assert text_line.get("custom") == "nomikos {source:kraken; kind:polygon;}"
         assert text_line.find("p:Coords", NS).get("points") == "0,0 10,0 10,5"
         assert text_line.find("p:Baseline", NS).get("points") == "2,3 8,3"
         assert text_line.find(".//p:Unicode", NS).text == "ἐν ἀρχῇ"
@@ -126,7 +128,7 @@ class TestDocumentEnvelope:
         lines = [
             _line(points=[[0.0, float(i)], [10.0, float(i)]], text=f"line {i}") for i in range(3)
         ]
-        xml = service._export_part_lines(part, lines, image_filename="s.webp", image_size=None)
+        xml = _render(service, part, lines, image_filename="s.webp", image_size=None)
         root = fromstring(xml)  # noqa: S314 - XML produced by this test
         found = root.findall(".//p:TextLine", NS)
         assert [el.get("id") for el in found] == [f"line_{line.id}" for line in lines]
@@ -138,16 +140,8 @@ class TestDocumentEnvelope:
 
 
 class TestCoordinateFormatting:
-    def test_points_join_xy_pairs_with_spaces(self) -> None:
-        assert _points([[1.0, 2.0], [2.5, 3.0]]) == "1,2 2.5,3"
-
-    def test_format_coord_drops_integer_points(self) -> None:
-        assert _format_coord(4.0) == "4"
-        assert _format_coord(4.5) == "4.5"
-
-    def test_baseline_export_never_emits_xy_swapped(self) -> None:
-        line = _line(points=[[0.0, 0.0]], baseline={"points": [[1.0, 9.0], [8.0, 2.0]]})
-        assert _baseline_export_points(line) == [[1.0, 9.0], [8.0, 2.0]]
+    def test_points_join_whole_xy_pairs_with_spaces(self) -> None:
+        assert _points([[1.0, 2.0], [3.4, 4.6]]) == "1,2 3,5"
 
     def test_ground_truth_text_strips_edges(self) -> None:
         line = _line(points=[[0.0, 0.0]], text="  ἔργον  ")
@@ -186,6 +180,9 @@ class _Repository:
 
     async def get_part(self, _session, _part_id):
         return self._part
+
+    async def list_part_blocks(self, _session, _part_id):
+        return []
 
     async def list_part_lines(self, _session, _part_id):
         return self._lines
@@ -236,8 +233,8 @@ class TestServicePaths:
         service, document, project_id, _document_id = self._context(part, lines)
 
         xml = await service.export_part(object(), object(), project_id, document.id, part.id)
-        expected = service._export_part_lines(
-            part, lines, image_filename="Codex_page_1.webp", image_size=None
+        expected = _render(
+            service, part, lines, image_filename="Codex_page_1.webp", image_size=None
         )
 
         assert _without_created(xml) == _without_created(expected)
@@ -277,8 +274,8 @@ class TestServicePaths:
         service, _document, project_id, document_id = self._context(part, lines)
 
         xml = await service.export_part_public(object(), project_id, document_id, part.id)
-        expected = service._export_part_lines(
-            part, lines, image_filename="Codex_page_1.webp", image_size=None
+        expected = _render(
+            service, part, lines, image_filename="Codex_page_1.webp", image_size=None
         )
 
         assert _without_created(xml) == _without_created(expected)
@@ -295,7 +292,7 @@ class TestKillerPins:
         service = _service()
         part = _part()
         line = _line(points=[[0.0, 0.0], [9.0, 0.0]], text="α")
-        xml = service._export_part_lines(part, [line], image_filename="s.webp", image_size=None)
+        xml = _render(service, part, [line], image_filename="s.webp", image_size=None)
         root = fromstring(xml)  # noqa: S314 - XML produced by this test
         text_line = root.find(".//p:TextLine", NS)
         equiv = text_line.find("p:TextEquiv", NS)
@@ -305,13 +302,6 @@ class TestKillerPins:
     def test_stem_strips_a_trailing_underscore(self) -> None:
         assert export_file_stem("Codex_", 1) == "Codex_page_1"
         assert export_file_stem("CODEX_", 1) == "CODEX_page_1"
-
-    def test_mask_outline_is_exported_whole_as_the_baseline(self) -> None:
-        line = _line(
-            points=[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
-            mask={"points": [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]},
-        )
-        assert _baseline_export_points(line) == [[1.0, 1.0], [9.0, 1.0], [9.0, 4.0]]
 
     @pytest.mark.asyncio
     async def test_public_bundle_uses_the_published_context(self) -> None:

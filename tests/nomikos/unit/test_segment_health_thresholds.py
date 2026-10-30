@@ -828,13 +828,9 @@ class TestMergeKillerPins:
     def test_fractional_fallback_rounds(self) -> None:
         primary = [[0.05, 0.15], [0.05, 10.15], [0.05, 10.16]]
         fragment = [[0.05, 20.15], [0.05, 30.15], [0.05, 30.16]]
-        assert merge_polygons(primary, fragment) == [
-            [0.1, 0.1],
-            [0.1, 10.2],
-            [0.1, 20.1],
-            [0.1, 30.1],
-            [0.1, 30.2],
-        ]
+        # One shared x leaves no envelope, so the fallback is the hull: on a
+        # vertical line that is its two rounded ends.
+        assert merge_polygons(primary, fragment) == [[0.1, 0.1], [0.1, 30.2]]
 
     def test_fractional_bridge_rounds(self) -> None:
         primary = [[0.05, 0.15], [10.0, 0.0], [10.0, 10.0], [0.05, 10.0]]
