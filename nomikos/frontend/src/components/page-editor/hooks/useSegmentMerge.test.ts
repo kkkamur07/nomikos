@@ -51,16 +51,18 @@ function setup() {
   const setTextLines = vi.fn();
   const setPairingProgress = vi.fn();
   const onMerged = vi.fn();
-  const view = renderHook(() =>
-    useSegmentMerge({
-      projectId: "project-1",
-      documentId: "document-1",
-      partId: "part-1",
-      setLines,
-      setTextLines,
-      setPairingProgress,
-      onMerged,
-    }),
+  const view = renderHook(
+    ({ partId }: { partId: string }) =>
+      useSegmentMerge({
+        projectId: "project-1",
+        documentId: "document-1",
+        partId,
+        setLines,
+        setTextLines,
+        setPairingProgress,
+        onMerged,
+      }),
+    { initialProps: { partId: "part-1" } },
   );
   return { ...view, setLines, setTextLines, setPairingProgress, onMerged };
 }
@@ -90,7 +92,7 @@ describe("useSegmentMerge", () => {
       undefined,
     );
     expect(view.setLines).toHaveBeenCalledWith([line(FIRST)]);
-    expect(view.onMerged).toHaveBeenCalledWith(FIRST);
+    expect(view.onMerged).toHaveBeenCalledWith(line(FIRST));
   });
 
   it("re-reads the pairing, because the merge released the deleted lines'", async () => {
@@ -195,5 +197,72 @@ describe("useSegmentMerge", () => {
     expect(view.result.current.conflict).toBeNull();
     expect(view.result.current.mergeError).toMatch(/project members/i);
     expect(view.setLines).not.toHaveBeenCalled();
+  });
+
+  it("ignores a 409 that arrives after the reviewer paged on", async () => {
+    let refuse: (error: unknown) => void = () => undefined;
+    mergePartLines.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        refuse = reject;
+      }),
+    );
+    const view = setup();
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = view.result.current.mergeSegments([FIRST, SECOND, THIRD]);
+    });
+    view.rerender({ partId: "part-2" });
+    await act(async () => {
+      refuse(conflictError([FIRST, THIRD]));
+      await pending;
+    });
+
+    expect(view.result.current.conflict).toBeNull();
+    expect(view.result.current.mergeError).toBeNull();
+    act(() => {
+      view.result.current.resolveConflict(THIRD);
+    });
+    expect(mergePartLines).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not paint an old page's merged lines over the new page", async () => {
+    let answer: (lines: unknown) => void = () => undefined;
+    mergePartLines.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const view = setup();
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = view.result.current.mergeSegments([FIRST, SECOND]);
+    });
+    view.rerender({ partId: "part-2" });
+    await act(async () => {
+      answer([line(FIRST)]);
+      await pending;
+    });
+
+    expect(view.setLines).not.toHaveBeenCalled();
+    expect(view.onMerged).not.toHaveBeenCalled();
+  });
+
+  it("drops an open question when the page changes", async () => {
+    mergePartLines.mockRejectedValueOnce(conflictError([FIRST, THIRD]));
+    const view = setup();
+
+    await act(async () => {
+      await view.result.current.mergeSegments([FIRST, SECOND, THIRD]);
+    });
+    expect(view.result.current.conflict).not.toBeNull();
+    view.rerender({ partId: "part-2" });
+
+    expect(view.result.current.conflict).toBeNull();
+    act(() => {
+      view.result.current.resolveConflict(THIRD);
+    });
+    expect(mergePartLines).toHaveBeenCalledTimes(1);
   });
 });

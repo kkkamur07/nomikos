@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, type LineResponse } from "../../../api/client";
 import { ApiError } from "../../../api/errors";
@@ -57,8 +57,12 @@ type UseSegmentMergeArgs = {
     total_lines: number;
     percent: number;
   }) => void;
-  /** Called once the merge has committed, so the group can be dropped. */
-  onMerged: (survivingLineId: string) => void;
+  /**
+   * Called once the merge has committed, so the group can be dropped. Carries the
+   * surviving line as the server returned it: the server picks the survivor, and
+   * its text is what the strip has to show, not whatever was clicked last.
+   */
+  onMerged: (survivor: LineResponse | null) => void;
 };
 
 export function useSegmentMerge({
@@ -78,6 +82,19 @@ export function useSegmentMerge({
   const [conflict, setConflict] = useState<MergeTextConflict | null>(null);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
 
+  // The page a request was sent for. A merge answered after the reviewer has
+  // paged on belongs to a page no longer on screen: applying its lines would
+  // paint them over the new page, and a 409 from it would ask about segments
+  // that are not there and send the answer to the new page's endpoint.
+  const pageKey = `${projectId}/${documentId}/${partId}`;
+  const pageKeyRef = useRef(pageKey);
+  pageKeyRef.current = pageKey;
+  useEffect(() => {
+    setConflict(null);
+    setPendingIds([]);
+    setMergeError(null);
+  }, [pageKey]);
+
   const dismissConflict = useCallback(() => {
     setConflict(null);
     setPendingIds([]);
@@ -96,6 +113,8 @@ export function useSegmentMerge({
         );
         return;
       }
+      const requestedFor = pageKey;
+      const stillOnPage = () => pageKeyRef.current === requestedFor;
       setMerging(true);
       setMergeError(null);
       try {
@@ -106,19 +125,22 @@ export function useSegmentMerge({
           lineIds,
           keepTextFrom,
         );
+        // The merge committed whichever page is on screen now, so the cached
+        // document views are stale either way.
+        invalidateAfter.partContentChanged(projectId, documentId);
+        if (!stillOnPage()) return;
         setLines(lines);
         setConflict(null);
         setPendingIds([]);
-        const survivor =
-          lines.find((line) => lineIds.includes(line.id))?.id ?? lineIds[0];
-        onMerged(survivor);
-        invalidateAfter.partContentChanged(projectId, documentId);
+        onMerged(lines.find((line) => lineIds.includes(line.id)) ?? null);
         // The merge released the pairings of the lines it deleted, so the text
         // column is stale until this lands. Same follow-up the delete makes.
         const pairing = await api.getPagePairing(projectId, documentId, partId);
+        if (!stillOnPage()) return;
         setTextLines(pairing.text_lines);
         setPairingProgress(pairing.pairing_progress);
       } catch (err) {
+        if (!stillOnPage()) return;
         const textConflict = conflictFrom(err);
         if (textConflict) {
           setConflict(textConflict);
@@ -134,6 +156,7 @@ export function useSegmentMerge({
       projectId,
       documentId,
       partId,
+      pageKey,
       setLines,
       setTextLines,
       setPairingProgress,

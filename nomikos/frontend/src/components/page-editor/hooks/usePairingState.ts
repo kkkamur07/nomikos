@@ -647,6 +647,22 @@ export function usePairingState({
     );
   }
 
+  /**
+   * Select the line a merge kept, from the merge's own response. The server
+   * chooses the survivor, so the draft has to be read from it rather than left
+   * holding the last clicked segment's text, which Save would then write over
+   * the text the merge preserved. ``lines`` is not read: it is still the list
+   * from before the merge when this runs.
+   */
+  function selectMergedSurvivor(survivor: LineResponse | null) {
+    setSelectedSegmentIds([]);
+    setSelectedSegmentId(survivor?.id ?? null);
+    setTranscriptionSaveMessage(null);
+    setApprovedTextDraft(
+      survivor ? lineTextForLayer(survivor, selectedTranscriptionLayerId) : "",
+    );
+  }
+
   function clearSegmentGroup() {
     setSelectedSegmentIds([]);
   }
@@ -679,6 +695,7 @@ export function usePairingState({
     setSelectedSegmentId,
     selectedSegmentIds,
     setSelectedSegmentIds,
+    selectMergedSurvivor,
     clearSegmentGroup,
     approvedTextDraft,
     setApprovedTextDraft,

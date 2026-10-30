@@ -253,9 +253,8 @@ export function PageEditorPlaceholderPage() {
     setPairingProgress,
     // The group is gone once it has been merged; the survivor stays selected so
     // the strip shows the text that was kept rather than nothing at all.
-    onMerged: (survivingLineId) => {
-      pairing.setSelectedSegmentIds([]);
-      pairing.setSelectedSegmentId(survivingLineId);
+    onMerged: (survivor) => {
+      pairing.selectMergedSurvivor(survivor);
       setSelectedVertexIndex(null);
     },
   });

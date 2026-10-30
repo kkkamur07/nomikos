@@ -71,6 +71,7 @@ describe("PageEditorPlaceholderPage merge", () => {
   });
 
   afterEach(async () => {
+    localStorage.removeItem("nomikos_page_editor_settings");
     vi.restoreAllMocks();
     await flushPageEditorEffects();
   });
@@ -120,6 +121,30 @@ describe("PageEditorPlaceholderPage merge", () => {
       );
     });
     expect(await screen.findByText("2 Segments")).toBeTruthy();
+  });
+
+  it("shows the text the server kept, not the last clicked Segment's", async () => {
+    // Segment 1 carries "alpha"; the shift-click on blank Segment 2 loads an
+    // empty draft, and the server keeps Segment 1. Saving that empty draft
+    // would wipe the text the merge preserved.
+    // The strip only opens with the transcript column off.
+    localStorage.setItem(
+      "nomikos_page_editor_settings",
+      JSON.stringify({ sideBySide: false }),
+    );
+    const alpha = withGroundTruth(THREE[0], "alpha");
+    mockedApi.listPartLines.mockResolvedValue([alpha, THREE[1], THREE[2]]);
+    mockedApi.mergePartLines.mockResolvedValue([alpha, THREE[2]]);
+    renderPageEditor();
+    await selectTwoSegments();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Merge (2)" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("textbox", { name: /text for selected Segment/ }),
+      ).toHaveValue("alpha");
+    });
   });
 
   it("merges from the keyboard with M", async () => {
