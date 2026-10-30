@@ -30,7 +30,7 @@ from nomikos_inference.contracts.segment import SegmentBlock, SegmentLine, Segme
 #: the polyline three quarters down the quad sides.
 DEFAULT_BASELINE_FRACTION = 0.75
 
-Metadata = dict[str, str | float | int | bool]
+Metadata = dict[str, object]
 
 
 def _bounds_box(polys: list[list[list[float]]]) -> dict[str, Any]:
