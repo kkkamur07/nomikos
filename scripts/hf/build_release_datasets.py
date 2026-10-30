@@ -31,7 +31,7 @@ import shutil
 import sys
 from io import BytesIO
 from pathlib import Path
-from xml.etree.ElementTree import parse as xml_parse
+from xml.etree.ElementTree import fromstring as xml_fromstring
 from xml.etree.ElementTree import tostring as xml_tostring
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -236,11 +236,22 @@ def sort_grec_opening(line_dicts: list[dict]) -> list[dict]:
     return sorted(line_dicts, key=key)
 
 
+def _derive_baseline():
+    """``derive_baseline`` from the backend, imported from this checkout."""
+    nomikos = str(REPO_ROOT / "nomikos")
+    if nomikos not in sys.path:
+        sys.path.insert(0, nomikos)
+    from backend.annotation.application.page_xml_geometry import derive_baseline
+
+    return derive_baseline
+
+
 def load_local_grec_page(local_base: Path, manuscript: str, order: int) -> dict | None:
     """Read one local PAGE XML page for a raw part order, or None.
 
     Returns width, height and lines in build_page_xml input shape, with
     text_order following the opening reading order. Empty text is unpaired.
+    Baselines are derived from the polygons.
     """
     wanted = LOCAL_PAGE_XML.get(manuscript, {}).get(order)
     if wanted is None:
@@ -249,20 +260,20 @@ def load_local_grec_page(local_base: Path, manuscript: str, order: int) -> dict 
     if not path.exists():
         raise BuildError(f"{manuscript} order {order}: no local PAGE XML at {path}")
     page = parse_page_xml(path)
+    derive_baseline = _derive_baseline()
     entries = []
     for raw_line in page["lines"]:
         text = raw_line["text"]
         if text is not None and not text.strip():
             text = None
+        points = [[float(x), float(y)] for x, y in raw_line["polygon"]]
         entries.append(
             {
                 "id": raw_line["id"],
-                "points": [[float(x), float(y)] for x, y in raw_line["polygon"]],
-                "baseline": (
-                    [[float(x), float(y)] for x, y in raw_line["baseline"]]
-                    if raw_line["baseline"]
-                    else []
-                ),
+                "points": points,
+                # The old export wrote the polygon into Baseline, so the stored
+                # baseline is ignored and one is derived from the polygon.
+                "baseline": derive_baseline(points),
                 "text": text,
                 "text_order": None,
             }
@@ -476,14 +487,22 @@ def write_parquet(path: Path, columns: dict, schema_kind: str) -> None:
     pq.write_table(table, str(path))
 
 
-def rewrite_page_xml_text(xml_path: Path, image_name: str) -> bytes:
-    """Return the page XML with imageFilename set to the release image name."""
-    root = xml_parse(str(xml_path)).getroot()  # noqa: S314 - XML this script wrote, not untrusted input
+def rewrite_page_xml_text(data: bytes, image_name: str) -> bytes:
+    """Return the page XML with imageFilename set to the release image path."""
+    root = xml_fromstring(data)  # noqa: S314 - XML this script wrote, not untrusted input
     page = root.find(_ns("Page"))
     if page is None:
-        raise BuildError(f"{xml_path}: no Page element")
+        raise BuildError("page XML: no Page element")
     page.set("imageFilename", image_name)
     return xml_tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def release_image_path(manuscript: str, image_name: str, ship: bool) -> str:
+    """imageFilename as seen from page-xml/<manuscript>/, where images/ is two levels up.
+
+    Unshipped images have no release folder, so the bare file name is kept.
+    """
+    return f"../../images/{manuscript}/{image_name}" if ship else image_name
 
 
 def build_repo(
@@ -494,9 +513,41 @@ def build_repo(
     part_ids: dict[tuple[str, str, int], str],
     grec_local: Path | None = None,
 ) -> dict:
-    """Build one release folder. Returns counts for the summary."""
+    """Build one release folder. Returns counts for the summary.
+
+    The folder is built fresh beside the target and swapped in only after the
+    build succeeds, so files of withdrawn pages (or images no longer shipped)
+    never survive from an earlier build.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    final_dir = out / repo
+    staging = out / f".{repo}.building"
+    retired = out / f".{repo}.old"
+    for leftover in (staging, retired):
+        if leftover.exists():
+            shutil.rmtree(leftover)
+    try:
+        counts = _write_repo(raw, staging, cards, repo, part_ids, grec_local)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    if final_dir.exists():
+        final_dir.rename(retired)
+    staging.rename(final_dir)
+    shutil.rmtree(retired, ignore_errors=True)
+    return counts
+
+
+def _write_repo(
+    raw: Path,
+    repo_dir: Path,
+    cards: Path,
+    repo: str,
+    part_ids: dict[tuple[str, str, int], str],
+    grec_local: Path | None,
+) -> dict:
+    """Write one release folder into an empty ``repo_dir``."""
     spec = REPOS[repo]
-    repo_dir = out / repo
     (repo_dir / "data" / "lines").mkdir(parents=True, exist_ok=True)
     (repo_dir / "data" / "pages").mkdir(parents=True, exist_ok=True)
     line_rows: dict[str, list] = {name: [] for name in _LINES_COLUMNS}
@@ -513,6 +564,7 @@ def build_repo(
             index = page["page_index"]
             tag = f"{index:04d}"
             image_name = f"{tag}.{page['ext']}"
+            xml_image = release_image_path(manuscript, image_name, ship)
             if ship and page["image_bytes"] is not None:
                 (repo_dir / "images" / manuscript / image_name).write_bytes(page["image_bytes"])
                 digest = hashlib.sha256(page["image_bytes"]).hexdigest()
@@ -521,7 +573,9 @@ def build_repo(
             if page.get("local_xml"):
                 if page.get("xml_bytes") is None:
                     raise BuildError(f"{manuscript} page {tag}: missing local page XML")
-                (repo_dir / "page-xml" / manuscript / f"{tag}.xml").write_bytes(page["xml_bytes"])
+                (repo_dir / "page-xml" / manuscript / f"{tag}.xml").write_bytes(
+                    rewrite_page_xml_text(page["xml_bytes"], xml_image)
+                )
             else:
                 raw_xml = sorted(
                     (raw / mspec["project_slug"] / mspec["doc_slug"] / "page").glob(f"{tag}_*.xml")
@@ -529,7 +583,7 @@ def build_repo(
                 if not raw_xml:
                     raise BuildError(f"{manuscript} page {tag}: no exported XML")
                 (repo_dir / "page-xml" / manuscript / f"{tag}.xml").write_bytes(
-                    rewrite_page_xml_text(raw_xml[0], image_name)
+                    rewrite_page_xml_text(raw_xml[0].read_bytes(), xml_image)
                 )
             page_id = f"{manuscript}/{tag}"
             object_ids: list[str] = []

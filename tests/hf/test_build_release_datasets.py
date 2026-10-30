@@ -127,11 +127,11 @@ def fake_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     out = tmp_path / "release"
     counts = builder.build_repo(raw, out, tmp_path / "cards", "test-repo", {})
-    return builder, out / "test-repo", counts, recorded
+    return builder, out / "test-repo", counts, recorded, raw
 
 
 def test_release_layout_manifest_and_xml(fake_tree):
-    _, repo_dir, counts, recorded = fake_tree
+    _, repo_dir, counts, recorded, _ = fake_tree
     assert counts == {"pages": 2, "lines": 3, "images_shipped": 1}
     # The zero-paired page is excluded everywhere.
     assert not (repo_dir / "page-xml" / "ms-ship" / "0001.xml").exists()
@@ -156,8 +156,33 @@ def test_release_layout_manifest_and_xml(fake_tree):
     assert [row["image_sha256"] != "" for row in rows] == [True, False]
     root = xml_parse(str(repo_dir / "page-xml" / "ms-ship" / "0000.xml")).getroot()  # noqa: S314 - XML this test wrote, not untrusted input
     page = root.find(_tag("Page"))
-    assert page.get("imageFilename") == "0000.png"
+    image_ref = page.get("imageFilename")
+    assert image_ref == "../../images/ms-ship/0000.png"
+    xml_dir = repo_dir / "page-xml" / "ms-ship"
+    assert (xml_dir / image_ref).resolve() == (repo_dir / "images" / "ms-ship" / "0000.png")
     assert page.get("imageWidth") == "60"
+    unshipped = xml_parse(str(repo_dir / "page-xml" / "ms-noimg" / "0000.xml")).getroot()  # noqa: S314 - XML this test wrote, not untrusted input
+    assert unshipped.find(_tag("Page")).get("imageFilename") == "0000.png"
+
+
+def test_rebuild_drops_withdrawn_page_files(fake_tree, tmp_path: Path):
+    builder, repo_dir, _, _, raw = fake_tree
+    assert (repo_dir / "page-xml" / "ms-ship" / "0000.xml").exists()
+    # Page 0000 loses its last paired line: its files must go on the next build.
+    (raw / "proj" / "doc-ship" / "page" / "0000_part.xml").write_bytes(
+        _fake_page_xml(
+            "0000_part.png",
+            60,
+            80,
+            [{"poly": [[10, 10], [30, 10], [30, 20], [10, 20]], "text": None}],
+        )
+    )
+    counts = builder.build_repo(raw, repo_dir.parent, tmp_path / "cards", "test-repo", {})
+    assert counts == {"pages": 1, "lines": 1, "images_shipped": 0}
+    assert not (repo_dir / "page-xml" / "ms-ship" / "0000.xml").exists()
+    assert not (repo_dir / "images" / "ms-ship" / "0000.png").exists()
+    assert (repo_dir / "page-xml" / "ms-noimg" / "0000.xml").exists()
+    assert sorted(path.name for path in repo_dir.parent.iterdir()) == ["test-repo"]
 
 
 def test_ship_images_switch():
@@ -210,6 +235,10 @@ def _local_opening_xml() -> bytes:
 
 
 def test_local_page_xml_reading_order_and_folio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip(
+        "backend.annotation.application.page_xml_geometry",
+        reason="derive_baseline lands with the fix/training-data-export PR",
+    )
     builder = _load()
     raw = tmp_path / "raw"
     monkeypatch.setitem(
@@ -284,6 +313,8 @@ def test_local_page_xml_reading_order_and_folio(tmp_path: Path, monkeypatch: pyt
     assert recorded["pages"]["folio"] == ["1v-2r", "2v-3r"]
     assert recorded["pages"]["text_source"] == ["production", "local-page-xml"]
     assert recorded["pages"]["objects"][1]["paired"] == [True, True, False]
+    # The stored Baseline is ignored and one is derived inside the polygon.
+    assert recorded["lines"]["baseline"][1] == [[102, 220], [298, 220]]
     root = xml_parse(str(repo_dir / "page-xml" / "bnf-grec-1360" / "0002.xml")).getroot()  # noqa: S314 - XML this test wrote, not untrusted input
     texts = [
         element.find(f"{_tag('TextEquiv')}/{_tag('Unicode')}")
@@ -315,7 +346,7 @@ def test_folio_labels():
 
 
 def test_crop_size(fake_tree):
-    builder, repo_dir, _, _ = fake_tree
+    builder, repo_dir, _, _, _ = fake_tree
     blob = (repo_dir / "images" / "ms-ship" / "0000.png").read_bytes()
     crop = builder.crop_line(blob, [10, 10, 30, 20], (60, 80))
     with Image.open(BytesIO(crop)) as handle:
