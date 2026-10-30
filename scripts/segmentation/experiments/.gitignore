@@ -1,0 +1,4 @@
+out/*
+!out/overlays/
+out/overlays/*
+!out/overlays/*.png
