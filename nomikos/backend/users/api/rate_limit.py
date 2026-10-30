@@ -269,13 +269,17 @@ async def refund_rate_limit(keys: Sequence[str], *, window_seconds: int) -> None
     The account bucket is charged before the password is verified and refunded
     when the attempt succeeds, so only failures spend budget while a parallel
     burst cannot slip the cap.
+
+    The select and the delete run under the key's advisory lock: unlocked, two
+    concurrent successes picked the same latest row, both deleted that one id,
+    and only one charge came back.
     """
     unique_keys = _normalized(keys)
     if not unique_keys:
         return
     window_start = datetime.now(UTC) - timedelta(seconds=window_seconds)
-    async with AsyncSessionLocal() as db:
-        for key in unique_keys:
+    async with _locked_rate_limit_session(unique_keys) as (db, locked_keys):
+        for key in locked_keys:
             row_id = await db.scalar(
                 select(AuthRateLimitAttempt.id)
                 .where(

@@ -176,6 +176,21 @@ async def test_refund_returns_one_charge(sessions: _SessionFactory) -> None:
     assert sessions.store == []
 
 
+async def test_refund_selects_and_deletes_under_the_key_lock(sessions: _SessionFactory) -> None:
+    await rate_limit.consume_rate_limit(["k"], limit=5, window_seconds=60, detail="slow")
+    await rate_limit.consume_rate_limit(["k"], limit=5, window_seconds=60, detail="slow")
+
+    await rate_limit.refund_rate_limit(["k"], window_seconds=60)
+
+    # Two concurrent successes must not both pick the same latest row: the
+    # refund's session takes the key's advisory lock before it reads, and
+    # commits the delete in that same transaction.
+    refund = sessions.sessions[-1]
+    assert refund.locks == ["k"]
+    assert refund.commits == 1
+    assert len(sessions.store) == 1
+
+
 async def test_expired_attempts_do_not_count(sessions: _SessionFactory) -> None:
     stale = AuthRateLimitAttempt(key="k", attempted_at=datetime.now(UTC) - timedelta(seconds=600))
     stale.id = 1
