@@ -22,6 +22,8 @@
 \titleformat*{\section}{\large\bfseries}
 \setlength{\textfloatsep}{12pt plus 2pt}
 \setlength{\floatsep}{10pt plus 2pt}
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\floatpagefraction}{0.8}
 \DeclareUrlCommand\code{\urlstyle{tt}}
 \newcommand{\choice}[1]{\par\smallskip\textbf{#1}\enspace}
 % A path in the repository, linked to its page on GitHub.
@@ -52,51 +54,31 @@
 \smallskip
 {\small Live at \href{https://nomikos.app}{\texttt{nomikos.app}}, code at \href{https://github.com/kkkamur07/nomikos}{\texttt{github.com/kkkamur07/nomikos}}.}
 
-Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images, runs a segmenter and a recogniser, fixes the output in a browser editor and exports PAGE XML, docx, PDF or plain text. Researchers correct what the models get wrong, and those corrections flow back as training data for the next, better model.
+Nomikos is a web platform for handwritten text recognition of Byzantine Greek, Armenian, Syriac and Coptic manuscripts. A researcher uploads page images and runs a segmenter, which finds the lines on a page, and a recogniser, which reads each line. They fix the output in a browser editor and export PAGE XML (a standard format for page layout and text), docx, PDF or plain text.
 
-We built Nomikos around four goals. Each choice in Section~\ref{sec:arch} serves at least one of them.
+We built Nomikos around two goals.
 \begin{enumerate}
-  \item \textbf{A fast, accurate editor in the browser.} Researchers correct model output without installing anything, and the editor keeps every correction apart from the model's guess so it can go into training.
-  \item \textbf{Low running cost.} Models run on researchers' own machines where possible, so we do not pay for cloud compute on every page.
-  \item \textbf{Easy to run anywhere.} The inference runner installs with one command, fits on an ordinary laptop and works behind a university firewall.
-  \item \textbf{Safe by default.} The browser and the runners reach the system through one API, and every credential can do only what its holder needs.
+  \item \textbf{Researchers verify, they do not transcribe.} The models and the platform do the heavy lifting: they find the lines on a page and read them. The researcher checks the result and fixes what is wrong. Our target is to make transcription ten times faster than typing it by hand. Every fix is stored apart from the model's guess (Section~\ref{sec:data}), so it becomes training data for the next model.
+  \item \textbf{Models in the researcher's workflow, without the setup.} Running a research model usually means a GPU, a Python environment and the authors' training code. On Nomikos a researcher uploads pages in the browser, picks a model and gets the output, with nothing to install. Jobs run on our hosted runner, or on the researcher's own computer, where the compute costs us nothing.
 \end{enumerate}
 
-\section{Tech stack}
+Existing HTR platforms did not fit these goals. eScriptorium is open source but built around one engine, kraken, and someone has to host an instance. Transkribus lets users train and apply their own models, but only inside its own cloud, where recognition is metered in credits.
 
-We chose tools with broad support that we already knew well. Table~\ref{tab:stack} lists what each one does in Nomikos.
+\section{System overview}
 
-\begin{table}[ht]
-\centering
-\small
-\begin{tabularx}{0.95\linewidth}{@{}l l >{\raggedright\arraybackslash}X@{}}
-\toprule
-Layer & Choice & Functionality \\
-\midrule
-Frontend & \href{https://nextjs.org}{Next.js 16}, React 19, TypeScript & Project pages, the page editor and exports in the browser; Ant Design for components, TanStack Query for API calls \\
-API & \href{https://fastapi.tiangolo.com}{FastAPI}, SQLAlchemy 2 (async) & Authentication, projects, documents, annotation, jobs and exports over HTTPS JSON \\
-Database & \href{https://www.postgresql.org}{PostgreSQL 16}, \href{https://alembic.sqlalchemy.org}{Alembic} & Stores all data, holds the job queue and sends job notifications; Alembic versions the schema as numbered migrations \\
-Inference & \href{https://onnxruntime.ai}{ONNX Runtime} on CPU & Runs segmentation and recognition models inside the runner, on a laptop or a server \\
-Models & \href{https://huggingface.co/nomikos-project}{Hugging Face Hub} & Hosts the model weights, pinned by revision and file hash \\
-Hosting & \href{https://vercel.com}{Vercel}, \href{https://coolify.io}{Coolify} & Vercel serves the frontend; Coolify runs the API, Postgres and worker on our server \\
-Backups & \href{https://www.cloudflare.com}{Cloudflare} & Off-site copies of the production data \\
-CI & GitHub Actions & Lint, type checks, tests, security scans and PyPI releases \\
-\bottomrule
-\end{tabularx}
-\caption{The stack. The Python inference runner is published on PyPI as \href{https://pypi.org/project/nomikos-inference/}{\texttt{nomikos-inference}}.}
-\label{tab:stack}
-\end{table}
+Figure~\ref{fig:containers} shows two paths.
 
-\section{Architecture and tradeoffs}\label{sec:arch}
+On the request path, the browser loads the editor from Vercel once and from then on sends every call to the FastAPI API, the only backend service that accepts incoming HTTP. The API holds all business logic. It reads and writes Postgres, keeps page images in a media directory on the host, and streams job updates back to the browser as server-sent events (SSE), a one-way stream over an ordinary HTTP connection.
 
-\begin{figure}[ht]
+On the work path, models run in the \emph{inference runner}, a small Python program published on PyPI. The researcher chooses where a job runs: locally, on a runner installed on their own computer with one command, or in the cloud, on the runner we host, which needs no install. Both are the same program. A runner asks the API for a job, downloads the page image, runs the model and posts the result back. GitHub Actions publishes each runner release to PyPI, and the runner fetches model weights from the Hugging Face Hub. A separate platform worker handles jobs that need no model, such as building exports, and reads the same media directory without write access.
+
+\begin{figure}[!ht]
 \centering
 \resizebox{0.88\linewidth}{!}{%
 \begin{tikzpicture}
   \node[box] (browser) at (0,0) {Browser};
   \node[box] (laptop) at (2.4,-3.3) {Runner (laptop)\\device token};
   \node[box] (next) at (6.2,1.9) {Next.js editor};
-  \node[box] (landing) at (9.6,1.9) {Landing page};
   \node[box, draw=accent, very thick] (api) at (6.2,0) {FastAPI API\\uvicorn};
   \node[store] (pg) at (13.0,0) {Postgres};
   \node[store] (cf) at (13.0,1.9) {Cloudflare\\backups};
@@ -109,7 +91,7 @@ CI & GitHub Actions & Lint, type checks, tests, security scans and PyPI releases
 
   \begin{scope}[on background layer]
     \node[group, fit=(browser)(laptop)] (gres) {};
-    \node[group, fit=(next)(landing)] (gvercel) {};
+    \node[group, fit=(next)] (gvercel) {};
     \node[group, fit=(api)(pg)(media)(worker)] (gcool) {};
     \node[group, fit=(hosted)] (ginf) {};
   \end{scope}
@@ -120,11 +102,11 @@ CI & GitHub Actions & Lint, type checks, tests, security scans and PyPI releases
 
   \draw[run] (browser.north) |- node[lab, pos=0.75] {HTTPS, app bundle} (next.west);
   \draw[run] (browser) -- node[lab] {HTTPS JSON\\JWT, SSE} (api);
-  \draw[run] (api) -- node[lab] {SQL, NOTIFY} (pg);
+  \draw[run] (api) -- node[lab] {SQL} (pg);
   \draw[run] (api.south east) -- node[lab, right=3pt] {files} (media.north west);
   \draw[run] (worker) -- node[lab, right=3pt] {SQL, jobs} (pg);
-  \draw[run] (laptop.north east) -- node[lab, sloped] {claim, callback} (api.south west);
-  \draw[run] (hosted) -- node[lab, pos=0.62] {claim, callback} (api);
+  \draw[run] (laptop.north east) -- (api.south west);
+  \draw[run] (hosted) -- node[lab, pos=0.62] {claim, callback\\(both runners)} (api);
   \draw[art] (hf.north west) -- node[lab, right=2pt] {model weights} (laptop.south);
   \draw[art] (hf.north east) -- node[lab, right=2pt] {model weights} (hosted.south);
   \draw[art] (pypi) -- node[lab, above=2pt] {install} (hosted);
@@ -145,49 +127,91 @@ CI & GitHub Actions & Lint, type checks, tests, security scans and PyPI releases
 \label{fig:containers}
 \end{figure}
 
-Figure~\ref{fig:containers} has two paths. On the request path, the browser loads the editor from Vercel once and then sends every call to the FastAPI API, the only service that accepts incoming HTTP. The API holds all business logic. It reads and writes Postgres, keeps page images in a media directory on the host, and streams job updates back to the browser. On the work path, models run in the \emph{inference runner}, a small Python program that researchers install from PyPI. One copy runs on a researcher's laptop and another on our inference host. Each asks the API for a job, downloads the page image, runs the model and posts the result back. GitHub Actions publishes each release of the runner to PyPI, and the runner fetches model weights from the Hugging Face Hub. The platform worker handles the jobs that need no model, such as building exports, and reads the same media directory without write access.
-
 All stateful parts sit on one Coolify host: the API container, the Postgres container, the media directory and the platform worker. Postgres is backed up off the host to Cloudflare. The hosted runner lives on a separate machine as systemd units.
+
+\choice{Frontend on Vercel, backend on Coolify.} Vercel builds and serves Next.js natively and caches it on a global edge network, so the editor loads fast. The backend needs what serverless platforms handle poorly: a long-running worker, a direct database connection, a disk for images and connections that stay open for the SSE streams (Section~\ref{sec:jobs}). Coolify deploys our containers from Git on our own server, and we take care of that server, its releases and its backups.
 
 The frontend runs entirely in the browser. TanStack Query caches every API response for 30 seconds and refetches when the tab regains focus or the network comes back. In the editor, a line's text is saved when the line loses focus, edits can be undone, and saved states of a page go into a history the user can restore from. While a job runs, all components that care about it share one event stream for that job, and if no event arrives for 12 seconds the browser falls back to polling.
 
-\choice{A modular monolith.} The API is one process split into six bounded contexts (users, project, document, annotation, ml, jobs), each with \code{api}, \code{application}, \code{domain} and \code{infrastructure} layers. Microservices would add network hops, several databases and distributed transactions. A monolith gives one deploy and one transaction per request, and Alembic migrations keep the single schema in step with the code. The price is that boundaries are only conventions: document, annotation, ml and jobs import each other in both directions.
+We chose tools with broad support that we already knew (Table~\ref{tab:stack}).
 
-\choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Runners pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. The queue matters more as the platform grows. Many users start jobs and many runners claim them at the same moment, and without a single queue that locks each row these transactions would collide: two runners could take the same page, or a result could land on a job that was already finished. With one table and row locks, every claim and every callback is one ordered transaction. The cost is that Postgres carries the queue load on top of every other request.
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{0.95\linewidth}{@{}l l >{\raggedright\arraybackslash}X@{}}
+\toprule
+Layer & Choice & Functionality \\
+\midrule
+Frontend & \href{https://nextjs.org}{Next.js 16}, React 19, TypeScript & The web app researchers use: upload pages, check and correct the model output, export the result \\
+API & \href{https://fastapi.tiangolo.com}{FastAPI}, SQLAlchemy 2 (async) & The server behind the app: answers every request, checks who may see and change what, and holds all business logic \\
+Database & \href{https://www.postgresql.org}{PostgreSQL 16}, \href{https://alembic.sqlalchemy.org}{Alembic} & Stores all data and also serves as the job queue; Alembic keeps the revision history of the schema \\
+Inference & \href{https://onnxruntime.ai}{ONNX Runtime} on CPU & Runs the machine learning models that find lines and read text, on an ordinary computer without a GPU \\
+Models & \href{https://huggingface.co/nomikos-project}{Hugging Face Hub} & Stores the trained model files, each pinned to an exact version; our models and datasets are public there \\
+Hosting & \href{https://vercel.com}{Vercel}, \href{https://coolify.io}{Coolify} & Puts the system online: Vercel serves the web app, Coolify runs the server and database on our machine \\
+Backups & \href{https://www.cloudflare.com}{Cloudflare} & Keeps copies of the data away from our server \\
+CI & GitHub Actions & Checks and tests every change automatically and publishes new releases \\
+\bottomrule
+\end{tabularx}
+\caption{The stack. The Python inference runner is published on PyPI as \href{https://pypi.org/project/nomikos-inference/}{\texttt{nomikos-inference}}.}
+\label{tab:stack}
+\end{table}
 
-\choice{Runners connect outward.} The runner on a researcher's laptop and the one on our inference host are the same program; only the token differs (Figure~\ref{fig:runners}). A device token claims its owner's local jobs, a service token claims cloud jobs. This lets researchers run models on their own machines instead of on rented cloud servers, which keeps our hosting costs low, and the hosted runner covers anyone without a capable laptop. Because the runner always opens the connection, it works behind a university firewall without port forwarding, and the server never needs to know where runners are. The alternative, a server that pushes work to a listening inference service, needs open ports, a registry of worker addresses and a second code path. The cost: if the API is down, runners stop.
+\section{Job flow}\label{sec:jobs}
 
-\begin{figure}[H]
+\begin{figure}[!ht]
 \centering
 \resizebox{0.8\linewidth}{!}{%
-\begin{tikzpicture}
-  \node[box] (la) at (0,0) {Runner\\\scriptsize device token, own CPU};
-  \node[store] (lc) at (0,-1.5) {Model cache\\\scriptsize\texttt{\textasciitilde/.nomikos}};
-  \node[box] (ha) at (0,-3.6) {Runner\\\scriptsize service token};
-  \node[box, draw=accent, very thick] (api) at (7.2,-1.8) {FastAPI API};
-  \node[store] (q) at (12.4,-1.8) {\texttt{jobs} table\\\scriptsize local jobs | cloud jobs};
+\begin{tikzpicture}[
+  actor/.style={box, minimum width=2.3cm},
+  msg/.style={-{Stealth[length=5pt]}, thick},
+  ret/.style={-{Stealth[length=5pt]}, thick, dashed},
+  ml/.style={font=\footnotesize, above=0.5pt, inner sep=1pt, fill=white},
+  tx/.style={draw=accent, fill=accent!6, rounded corners=2pt}]
+  \def\xb{0} \def\xa{4.4} \def\xd{8.6} \def\xg{13.0}
+  % transaction bands behind each POST, wide enough to hold their labels
   \begin{scope}[on background layer]
-    \node[group, fit=(la)(lc)] (gl) {};
-    \node[group, fit=(ha)] (gh) {};
+    \fill[tx] (\xa-0.9,-1.6) rectangle (\xd+0.9,-1.05);
+    \fill[tx] (\xa-0.9,-3.25) rectangle (\xd+0.9,-2.7);
+    \fill[tx] (\xa-0.9,-5.65) rectangle (\xd+0.9,-5.1);
   \end{scope}
-  \node[glabel] at (gl.north west) {Researcher laptop};
-  \node[glabel] at (gh.north west) {Inference host};
-  \draw[groupline, very thick] (3.2,0.9) -- node[pos=0.03, right, font=\scriptsize\itshape, text=groupline] {firewall} (3.2,-4.5);
-  \draw[run] (la.east) -- node[lab, sloped] {claim own local jobs} (api.north west);
-  \draw[run] (ha.east) -- node[lab, sloped] {claim any cloud job} (api.south west);
-  \draw[run] (la) -- node[lab, right=2pt] {load} (lc);
-  \draw[run] (api) -- node[lab, above=2pt] {SKIP LOCKED} (q);
-  \begin{scope}[shift={(4.2,-5.2)}]
-    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {outbound HTTPS, opened by the runner};
+  \foreach \x/\n in {\xb/Browser, \xa/API, \xd/Postgres, \xg/Runner} {
+    \node[actor] at (\x,0) {\n};
+    \draw[groupline] (\x,-0.43) -- (\x,-7.0);
+  }
+  \draw[msg] (\xb,-0.95) -- node[ml] {POST \dots/segment} (\xa,-0.95);
+  \draw[msg] (\xa,-1.45) -- node[ml, fill=none] {INSERT job, pending} (\xd,-1.45);
+  \draw[ret] (\xa,-1.95) -- node[ml] {202, job id} (\xb,-1.95);
+  \draw[msg] (\xg,-2.6) -- node[ml] {POST /device/v1/jobs/claim} (\xa,-2.6);
+  \draw[msg] (\xa,-3.1) -- node[ml, fill=none] {SKIP LOCKED, waiting} (\xd,-3.1);
+  \draw[ret] (\xa,-3.7) -- node[ml, pos=0.62] {page, model, signed image URL} (\xg,-3.7);
+  \node[box, minimum width=2.1cm, minimum height=0.45cm, inner ysep=1pt] at (\xg,-4.25) {run ONNX model};
+  \draw[msg] (\xg,-5.0) -- node[ml] {POST /internal/inference/job-complete} (\xa,-5.0);
+  \draw[msg] (\xa,-5.5) -- node[ml, fill=none] {lock, merge, done, NOTIFY} (\xd,-5.5);
+  \draw[ret] (\xd,-6.1) -- node[ml] {LISTEN} (\xa,-6.1);
+  \draw[ret] (\xa,-6.65) -- node[ml] {SSE /jobs/\{id\}/events} (\xb,-6.65);
+  \begin{scope}[shift={(1.2,-7.7)}]
+    \draw[msg] (0,0) -- (0.9,0); \node[key] at (1.0,0) {request};
+    \draw[ret] (2.6,0) -- (3.5,0); \node[key] at (3.6,0) {response or push};
+    \fill[tx] (6.4,-0.18) rectangle (7.3,0.18); \node[key] at (7.4,0) {one database transaction};
   \end{scope}
 \end{tikzpicture}}
-\caption{Two runners, one program. Both open the connection, so no inbound port is needed on either machine; the token decides which jobs a runner may claim.}
-\label{fig:runners}
+\caption{One segmentation job. Each of the three POST requests is a single transaction; the browser hears about the result through \texttt{NOTIFY} and server-sent events.}
+\label{fig:jobs}
 \end{figure}
+
+A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POST requests drive it, and each one is a single database transaction, so a crash leaves the job in a known state. The browser's POST inserts a \texttt{pending} row and returns at once. A runner's claim POST locks one pending row, skipping rows other runners hold, and marks it \texttt{waiting}. The runner fetches the image through a signed URL, runs the model locally and sends the result in the completion POST. That handler locks the job, sets \code{callback_claimed_at} so a retried callback cannot merge twice, writes the run and the lines, marks the job \texttt{done} and fires \texttt{NOTIFY}, which wakes every process listening on that Postgres channel. Each API process keeps one \texttt{LISTEN} connection that feeds all its open streams, and it pushes the result to the browser over the job's SSE stream at \texttt{/jobs/\{id\}/events}. If the stream is blocked, the browser polls \texttt{GET /jobs/\{id\}}. A runner reports a heartbeat while it works. If the heartbeats stop, its lease expires and the job goes back to \texttt{pending}; after five expired leases the job is marked failed.
+
+\section{Design decisions}
+
+\choice{One process, six contexts.} The API is one process split into six bounded contexts (users, project, document, annotation, ml, jobs), each with \code{api}, \code{application}, \code{domain} and \code{infrastructure} layers. Microservices would add network hops, several databases and distributed transactions. A monolith gives one deploy and one transaction per request, and one schema whose revisions Alembic records. The price is that boundaries are only conventions: document, annotation, ml and jobs import each other in both directions.
+
+\choice{Postgres is the queue.} The \code{jobs} table is the only queue. We did not add Redis or RabbitMQ, so a job and the data it writes commit in the same transaction and nothing can drift between two stores. Runners pull work with \texttt{SELECT \dots\ FOR UPDATE SKIP LOCKED}, which lets many workers claim rows without blocking each other. The cost is that Postgres carries the queue load on top of every other request.
+
+\choice{Runners connect outward.} Only the token tells the two runners apart (Figure~\ref{fig:security}). A device token claims its owner's local jobs, a service token claims cloud jobs. This splits the compute bill. A local job runs on the researcher's own machine and costs us nothing; a cloud job runs on our host, which is the only inference we pay for. The hosted runner serves anyone without a capable laptop or who does not want to install anything. Because the runner always opens the connection, it works behind a university firewall without port forwarding, and the server never needs to know where runners are. The alternative, a server that pushes work to a listening inference service, needs open ports, a registry of worker addresses and a second code path. The cost is that runners stop whenever the API is down.
 
 \choice{ONNX Runtime serves, PyTorch only exports.} The runner lives on researchers' laptops, some with only 8\,GB of memory, so we chose \href{https://onnxruntime.ai}{ONNX Runtime} because it is light. Figure~\ref{fig:onnxbars} compares it with PyTorch for serving.
 
-\begin{figure}[H]
+\begin{figure}[!ht]
 \centering
 \resizebox{0.62\linewidth}{!}{%
 \begin{tikzpicture}[x=0.06cm, bl/.style={font=\footnotesize, anchor=west, inner sep=2pt}]
@@ -208,13 +232,13 @@ The frontend runs entirely in the browser. TanStack Query caches every API respo
     \fill[accent] (40,-0.15) rectangle (46,0.15); \node[key] at (47,0) {ONNX Runtime};
   \end{scope}
 \end{tikzpicture}}
-\caption{Serving with PyTorch against ONNX Runtime, bars scaled to PyTorch. Measured on macOS arm64. Numbers from our architecture decision records.}
+\caption{Serving with PyTorch against ONNX Runtime, bars scaled to PyTorch. The installed package is 54\% smaller. Measured on macOS arm64; numbers from our architecture decision records.}
 \label{fig:onnxbars}
 \end{figure}
 
-The ONNX Runtime install is 54\% smaller, and a page needs 3.0\,GB of memory instead of 7.0\,GB. One CPU build installs on every platform, so nobody needs a special flag to keep GPU libraries off their laptop. PyTorch is still part of the project, but only to export each trained model to an ONNX file (Figure~\ref{fig:onnx}). Parity tests check that the exported model gives the same output as the original, and a registry file shipped with the runner stores each model's preprocessing settings.
+One CPU build installs on every platform, so nobody needs a special flag to keep GPU libraries off their laptop. PyTorch is still part of the project, but only to export each trained model to an ONNX file (Figure~\ref{fig:onnx}). Parity tests check that the exported model gives the same output as the original, and a registry file shipped with the runner stores each model's preprocessing settings.
 
-\begin{figure}[H]
+\begin{figure}[!ht]
 \centering
 \resizebox{0.88\linewidth}{!}{%
 \begin{tikzpicture}[node distance=0.55cm and 0.9cm]
@@ -257,63 +281,13 @@ The ONNX Runtime install is 54\% smaller, and a page needs 3.0\,GB of memory ins
 
 Adding a model follows the same path: export it and pass the parity test, publish it to the Hub, add an entry with its revision and file hash to the registry, insert a row in the model catalog table so it appears in the editor's model picker, deploy the API, and release a new runner so runners carry the entry. Each runner downloads the weights on first use.
 
+\choice{The API contract is generated.} A script exports the OpenAPI description of the FastAPI app (115 operations), and openapi-typescript turns it into TypeScript types for the frontend. A pre-commit hook regenerates both, and CI fails if they drift. If the backend drops a field, the frontend stops compiling, so the two sides cannot go out of sync on \texttt{main}.
+
+\section{Data model}\label{sec:data}
 
 \choice{Model output is never overwritten.} Each segmentation run is stored once in \code{segmentation_runs} as JSON with the model name and version, and never updated. Human edits go to the live lines and to a separate \code{ground_truth} transcription layer. Comparing the two shows exactly what a person fixed, including lines they deleted, and that difference is the training data. Overwriting the model output in place would save space but lose that record, so we keep every run and accept that storage only grows.
 
-\choice{A generated API contract.} A script exports the OpenAPI description of the FastAPI app (115 operations), and openapi-typescript turns it into TypeScript types for the frontend. A pre-commit hook regenerates both, and CI fails if they drift. Hand-written frontend types would drift from the backend without anyone noticing. Here, if the backend drops a field, the frontend stops compiling, and CI catches any change that skipped the generation step, so the two sides cannot go out of sync on \texttt{main}.
-
-\choice{All access goes through the API.} The browser talks only to the API, never to Postgres or storage. Images come through short-lived signed URLs. We do not use Postgres row-level security or let the browser query the database directly; FastAPI checks access before every query. All authorisation lives in one layer, which is easy to audit but means every new route has to remember the check.
-
-\choice{Frontend on Vercel, backend on Coolify.} Vercel builds and serves Next.js natively, with caching and a global edge network, which gives the editor the best load times we can get. The backend needs what serverless platforms handle poorly: a long-running worker, a direct database connection, a disk for images and long-lived connections. The most important of these are the \textbf{server-sent event (SSE) streams}: a browser watching a job keeps one HTTP connection open to \texttt{/jobs/\{id\}/events}, and the API pushes job progress down it the moment Postgres reports a change. Inside the API a single \texttt{LISTEN} on the database feeds all of these streams, so the browser never polls in normal use. Coolify deploys our containers from Git on our own server, and we take care of that server, its releases and its backups.
-
-\section{Job flow}
-
-\begin{figure}[ht]
-\centering
-\resizebox{0.8\linewidth}{!}{%
-\begin{tikzpicture}[
-  actor/.style={box, minimum width=2.3cm},
-  msg/.style={-{Stealth[length=5pt]}, thick},
-  ret/.style={-{Stealth[length=5pt]}, thick, dashed},
-  ml/.style={font=\footnotesize, above=0.5pt, inner sep=1pt, fill=white},
-  tx/.style={draw=accent, fill=accent!6, rounded corners=2pt}]
-  \def\xb{0} \def\xa{4.2} \def\xd{8.0} \def\xg{12.4}
-  % transaction bands behind each POST
-  \begin{scope}[on background layer]
-    \fill[tx] (\xa-0.3,-1.5) rectangle (\xd+0.3,-1.0);
-    \fill[tx] (\xa-0.3,-2.85) rectangle (\xd+0.3,-2.35);
-    \fill[tx] (\xa-0.3,-5.1) rectangle (\xd+0.3,-4.6);
-  \end{scope}
-  \foreach \x/\n in {\xb/Browser, \xa/API, \xd/Postgres, \xg/Runner} {
-    \node[actor] at (\x,0) {\n};
-    \draw[groupline] (\x,-0.43) -- (\x,-6.6);
-  }
-  \draw[msg] (\xb,-0.95) -- node[ml] {POST \dots/segment} (\xa,-0.95);
-  \draw[msg] (\xa,-1.4) -- node[ml, fill=none] {INSERT job, pending} (\xd,-1.4);
-  \draw[ret] (\xa,-1.85) -- node[ml] {202, job id} (\xb,-1.85);
-  \draw[msg] (\xg,-2.3) -- node[ml] {POST /device/v1/jobs/claim} (\xa,-2.3);
-  \draw[msg] (\xa,-2.75) -- node[ml, fill=none] {SKIP LOCKED, waiting} (\xd,-2.75);
-  \draw[ret] (\xa,-3.2) -- node[ml, pos=0.62, fill=none] {page, model, signed image URL} (\xg,-3.2);
-  \node[box, minimum width=2.1cm, minimum height=0.45cm, inner ysep=1pt] at (\xg,-3.75) {run ONNX model};
-  \draw[msg] (\xg,-4.55) -- node[ml] {POST /internal/inference/job-complete} (\xa,-4.55);
-  \draw[msg] (\xa,-5.0) -- node[ml, fill=none] {lock, merge, done, NOTIFY} (\xd,-5.0);
-  \draw[ret] (\xd,-5.6) -- node[ml] {LISTEN} (\xa,-5.6);
-  \draw[ret] (\xa,-6.15) -- node[ml] {SSE /jobs/\{id\}/events} (\xb,-6.15);
-  \begin{scope}[shift={(1.2,-7.2)}]
-    \draw[msg] (0,0) -- (0.9,0); \node[key] at (1.0,0) {request};
-    \draw[ret] (2.6,0) -- (3.5,0); \node[key] at (3.6,0) {response or push};
-    \fill[tx] (6.4,-0.18) rectangle (7.3,0.18); \node[key] at (7.4,0) {one database transaction};
-  \end{scope}
-\end{tikzpicture}}
-\caption{One segmentation job. Each of the three POST requests is a single transaction; the browser hears about the result through \texttt{NOTIFY} and server-sent events.}
-\label{fig:jobs}
-\end{figure}
-
-A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POST requests drive it, and each one is a single database transaction, so a crash leaves the job in a known state. The browser's POST inserts a \texttt{pending} row and returns at once. A runner's claim POST locks one pending row, skipping rows other runners hold, and marks it \texttt{waiting}. The runner fetches the image through a signed URL, runs the model locally and sends the result in the completion POST. That handler locks the job, sets \code{callback_claimed_at} so a retried callback cannot merge twice, writes the run and the lines, marks the job \texttt{done} and fires \texttt{NOTIFY}. The API's \texttt{LISTEN} loop picks this up and pushes it to the browser over the job's SSE stream. If the stream is blocked, the browser polls \texttt{GET /jobs/\{id\}}. A runner that dies loses its lease after a timeout and the page goes back to \texttt{pending}; after five failed claims the job is marked failed.
-
-\section{Data model}
-
-\begin{figure}[ht]
+\begin{figure}[!ht]
 \centering
 \resizebox{0.7\linewidth}{!}{%
 \begin{tikzpicture}[ent/.style={box, minimum width=2.7cm}, rel/.style={thick}]
@@ -345,14 +319,11 @@ A job is one page and one model, and Figure~\ref{fig:jobs} follows it. Three POS
 \label{fig:er}
 \end{figure}
 
-A project holds documents, a document holds pages, and a page holds regions and lines (Figure~\ref{fig:er}). Text does not live on the line. It lives in \code{line_transcription}, one row per line and per transcription layer, so the model's text and the human's text sit side by side. Every live line points back to the segmentation run that proposed it, and the run keeps the model identity as text, so the history survives even if the job or the catalog row is deleted.
-
-
-Appendix~\ref{app:columns} lists the main columns. A job row carries its own claim state (who holds it, how often it was claimed, when it last reported), which is all the queue needs.
+A project holds documents, a document holds pages, and a page holds regions and lines (Figure~\ref{fig:er}). Text does not live on the line. It lives in \code{line_transcription}, one row per line and per transcription layer, so the model's text and the human's text sit side by side. Every model-proposed line points back to the segmentation run that proposed it, and the run keeps the model identity as text, so the history survives even if the job or the catalog row is deleted. A job row carries its own claim state (who holds it, how often it was claimed, when it last reported), which is all the queue needs.
 
 \section{Security}
 
-\begin{figure}[H]
+\begin{figure}[!ht]
 \centering
 \resizebox{0.86\linewidth}{!}{%
 \begin{tikzpicture}
@@ -372,22 +343,23 @@ Appendix~\ref{app:columns} lists the main columns. A job row carries its own cla
   \end{scope}
   \node[glabel] at (gs.north west) {Coolify host, database credentials stay here};
   \begin{scope}[shift={(-0.6,-5.3)}]
-    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {HTTPS request, labelled with what the credential reaches};
+    \draw[run] (0,0) -- (0.9,0); \node[key] at (1.0,0) {HTTPS request opened by the caller, labelled with what the credential reaches};
   \end{scope}
 \end{tikzpicture}}
-\caption{Three credentials, one entry point. Each caller gets only the rights its token carries; nothing outside the host holds a database password.}
+\caption{Three credentials, one entry point. Each caller gets only the rights its token carries, and runners only ever open connections to the API, so no inbound port is needed on a laptop or behind a university firewall. Nothing outside the host holds a database password.}
 \label{fig:security}
 \end{figure}
 
-Figure~\ref{fig:security} shows who can reach what. FastAPI owns authentication. It stores password hashes, issues JWT access tokens with rotating sessions, checks CSRF tokens and rate-limits login attempts. A laptop runner never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the runner opens the browser, the signed-in user approves the device, and the runner receives a device token that it sends in its own header. That token can claim only its owner's local jobs.
+Figure~\ref{fig:security} shows who can reach what. The browser never talks to Postgres or storage directly, and images come through short-lived signed URLs. We chose not to use Postgres row-level security, so FastAPI checks access before every query. All authorisation lives in one layer, which is easy to audit but means every new route has to remember the check. FastAPI also owns authentication: password hashes, JWT access tokens with rotating sessions, CSRF checks and rate-limited logins. A laptop runner never sees a password. It pairs once through a flow modelled on the OAuth device authorization grant (\href{https://www.rfc-editor.org/rfc/rfc8628}{RFC 8628}): the runner opens the browser, the signed-in user approves the device, and the runner receives a device token that it sends in its own header. That token can claim only its owner's local jobs.
 
 The completion callback is narrowed in the same way. The API records which runner holds each job in \code{jobs.claimed_by} and accepts a result only from that runner, so one paired laptop cannot complete or fail anyone else's work. Runners get only inference and callback credentials, never database or JWT secrets. Before loading a model, a runner checks the file against the SHA-256 hash pinned in the registry.
 
-\section{Usage so far}
+\section{Usage and quality}
 
-Table~\ref{tab:usage} gives the numbers from the admin dashboard for the 90 days up to 30 October 2026.
+Table~\ref{tab:usage} gives the numbers from the admin dashboard for the 90 days up to 30 October 2026. They show that the platform is used, not yet how much faster transcription has become: we have not measured the ten-times target.
+% TODO(usage table): add a local vs hosted split of jobs once the read-only production query has been run.
 
-\begin{table}[H]
+\begin{table}[ht]
 \centering
 \small
 \begin{tabular}{@{}l r@{}}
@@ -398,62 +370,24 @@ Accounts (four of them test or service accounts) & 18 \\
 Jobs run & 1,070 \\
 \quad transcriptions & 876 \\
 \quad segmentations & 194 \\
-Failed jobs & 0 \\
 Median transcription time per page, by model & 2.5 to 3.3\,s \\
 Median segmentation time per page, current segmenters & 14 to 36\,s \\
-Average runner claim request & 35\,ms \\
-Database size (\code{lines} table) & 44.8\,MB (26\,MB) \\
 \bottomrule
 \end{tabular}
 \caption{Usage over 90 days. Times run from job creation to completion.}
 \label{tab:usage}
 \end{table}
 
-\section{Scaling}
+CI on GitHub Actions runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights and the API contract check. Secret scanning, dependency audits and container scans run alongside, and the runner is released to PyPI through trusted publishing. The backend has 889 unit tests and 298 integration tests, of which 170 need a running Postgres. A local run of the unit tests alone covers 56\,\% of statements and branches in the backend and the runner. An admin dashboard shows users, jobs per model with success rate and median duration, request timings per route, and the failure reports and feedback that users send.
 
-The current load is small (Table~\ref{tab:usage}), and one host carries it easily. At ten or a hundred times the load, each part grows in its own way:
+\section{Limits and next steps}
+
+Two weaknesses matter today:
 \begin{itemize}
-  \item \textbf{Inference.} Most of the time goes here, and it scales by adding runners. Runners claim with \texttt{FOR UPDATE SKIP LOCKED}, so any number of them can pull from the same queue without knowing about each other. Every researcher who runs a laptop runner adds capacity that costs us nothing.
-  \item \textbf{API.} The API keeps its data in Postgres and the media store, so it can run more processes (uvicorn reads \code{WEB_CONCURRENCY}) or more containers. Each process opens its own \code{LISTEN} connection and a pool of 5 connections plus 10 overflow, so with many processes Postgres needs a connection pooler in front of it. Request metrics also have to move out of process memory first.
-  \item \textbf{Database.} At 44.8\,MB, Postgres is nowhere near a limit. The first step is to give it its own host or a managed service, away from the API.
-  \item \textbf{Media.} Page images sit in a local directory, which ties the API and the platform worker to one machine. Code reaches media only through a storage interface with a local and a Supabase Storage backend, chosen by \code{STORAGE_BACKEND}, and browsers and runners only ever see signed URLs. Moving images to object storage is therefore a configuration change, not a change to any caller.
+  \item \textbf{Schema changes by hand.} Alembic holds the revision history, but the production container never runs it. Before Coolify deploys, a release script applies dated SQL by hand and checks the recorded Alembic version; running migrations automatically would be safer.
+  \item \textbf{One host.} The API, Postgres and the media directory share one Coolify host, so it is a single point of failure. Backups leave the host, so the data survives a lost machine, but the service does not survive an outage. The first step is to give Postgres its own host or a managed service.
 \end{itemize}
 
-\section{Quality and monitoring}
 
-CI on GitHub Actions runs type checks, linting and tests for both frontend and backend, integration tests against a real Postgres 16, a nightly run on real model weights, the API contract check, secret scanning, dependency audits and container scans. The runner is released to PyPI through trusted publishing.
-
-The backend has 889 unit tests and 298 integration tests. A local run of the unit tests alone covers 56\,\% of statements and branches in the backend and the runner; the integration tests add to that but need a running Postgres.
-
-An admin dashboard covers monitoring. It shows users, jobs per model with success rate and median duration, Postgres statistics, request counts and timings per route, failure reports sent by browsers, and user feedback.
-
-
-\section{Open issues}
-
-\begin{itemize}
-  \item \textbf{Schema changes by hand.} Production does not run Alembic. Before Coolify deploys, a release script applies dated SQL by hand; running migrations automatically would be safer.
-  \item \textbf{One host.} Backups leave the host, but the API, database and media still share it, so it is a single point of failure.
-\end{itemize}
-
-\appendix
-\section{Main table columns}\label{app:columns}
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabularx}{0.88\linewidth}{@{}l >{\raggedright\arraybackslash}X@{}}
-\toprule
-Table & Main columns \\
-\midrule
-\code{jobs} & \texttt{type}, \texttt{status}, \texttt{execution\_target}, \texttt{model\_id}, \texttt{document\_part\_id}, \texttt{claimed\_by}, \texttt{claim\_attempts}, \texttt{heartbeat\_at}, \texttt{callback\_claimed\_at}, \texttt{payload}, \texttt{result} \\
-\code{segmentation_runs} & \texttt{part\_id}, \texttt{created\_by\_job\_id}, \texttt{model\_name}, \texttt{model\_artifact\_ref}, \texttt{params}, \texttt{lines}, \texttt{blocks} (JSONB) \\
-\code{lines} & \texttt{part\_id}, \texttt{block\_id}, \texttt{baseline}, \texttt{mask}, \texttt{order}, \texttt{source}, \texttt{segmentation\_run\_id}, \texttt{manual\_geometry} \\
-\code{transcriptions} & \texttt{document\_id}, \texttt{kind} (model or ground truth), \texttt{model\_name}, \texttt{created\_by\_job\_id} \\
-\code{line_transcriptions} & \texttt{line\_id}, \texttt{transcription\_id}, \texttt{text}, \texttt{confidence} \\
-\bottomrule
-\end{tabularx}
-\caption{The tables a job touches.}
-\label{tab:columns}
-\end{table}
 
 \end{document}
