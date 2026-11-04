@@ -7,10 +7,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 import infrastructure.models  # noqa: F401 - register all ORM mappers
 from backend.core.api import health as health_module
+from backend.core.schema_revision import DEFAULT_SCRIPT_LOCATION, code_revisions
 from backend.core.settings.job import get_job_settings
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
 from infrastructure.db import sync_system_session
@@ -60,7 +63,50 @@ def test_health_returns_ok_when_database_is_reachable(client: TestClient):
     # An empty queue is null, not 0: "nothing is pending" and "something has been
     # pending for no time at all" are different answers and only one of them is
     # ever true of a queue with no rows.
-    assert body == {"status": "ok", "database": "ok", "oldest_pending_job_seconds": None}
+    head = code_revisions().head
+    assert body == {
+        "status": "ok",
+        "database": "ok",
+        "oldest_pending_job_seconds": None,
+        "schema": "ok",
+        "schema_revision": head,
+        "expected_schema_revision": head,
+    }
+
+
+def _set_database_revision(revision: str) -> None:
+    with sync_system_session() as session:
+        session.execute(text("UPDATE alembic_version SET version_num = :rev"), {"rev": revision})
+        session.commit()
+
+
+def test_health_returns_503_when_the_schema_is_behind_the_code(client: TestClient):
+    """A database one migration behind the shipped head takes the API out of rotation.
+
+    The 2026-11-04 incident: code needing ``011`` deployed against a database at
+    ``010`` and ``/health`` kept answering ok. ``alembic_version`` is rewound to the
+    head's parent for this one request and restored in ``finally``, because the
+    whole suite shares the ``kalamos`` database.
+    """
+    head = code_revisions().head
+    parent = ScriptDirectory(str(DEFAULT_SCRIPT_LOCATION)).get_revision(head).down_revision
+    assert isinstance(parent, str)
+    with sync_system_session() as session:
+        original = session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+
+    _set_database_revision(parent)
+    try:
+        response = client.get("/health")
+    finally:
+        _set_database_revision(original)
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["database"] == "ok"
+    assert body["schema"] == "behind"
+    assert body["schema_revision"] == parent
+    assert body["expected_schema_revision"] == head
 
 
 # --- The queue's only alarm ---
