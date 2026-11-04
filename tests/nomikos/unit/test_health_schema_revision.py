@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 
 os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production-at-least-32-bytes")
 
@@ -26,6 +28,7 @@ from backend.core.app import create_app
 from backend.core.schema_revision import (
     CodeRevisions,
     compare_schema_revision,
+    head_parent,
     load_code_revisions,
 )
 from infrastructure.db import get_db
@@ -75,6 +78,121 @@ def test_default_script_location_does_not_depend_on_cwd(monkeypatch, tmp_path) -
     monkeypatch.chdir(tmp_path)
 
     assert load_code_revisions(schema_revision.DEFAULT_SCRIPT_LOCATION) is not None
+
+
+def _write_versions(root: Path, files: dict[str, str]) -> Path:
+    versions = root / "versions"
+    versions.mkdir(parents=True)
+    for name, body in files.items():
+        (versions / name).write_text(body)
+    return root
+
+
+def _rev(revision: str, down: str | None) -> str:
+    return (
+        f"import alembic.op\nrevision: str = {revision!r}\ndown_revision: str | None = {down!r}\n"
+    )
+
+
+def test_synthetic_linear_chain(tmp_path: Path) -> None:
+    root = _write_versions(
+        tmp_path,
+        {
+            "a.py": _rev("001_a", None),
+            "b.py": "revision = '002_b'\ndown_revision = '001_a'\n",
+            "c.py": _rev("003_c", "002_b"),
+        },
+    )
+
+    assert load_code_revisions(root) == CODE
+    assert head_parent(root) == "002_b"
+
+
+def test_synthetic_two_heads_is_none(tmp_path: Path) -> None:
+    root = _write_versions(
+        tmp_path,
+        {
+            "a.py": _rev("001_a", None),
+            "b.py": _rev("002_b", "001_a"),
+            "c.py": _rev("003_c", "001_a"),
+        },
+    )
+
+    assert load_code_revisions(root) is None
+
+
+def test_synthetic_unparsable_file_is_none(tmp_path: Path) -> None:
+    root = _write_versions(
+        tmp_path, {"a.py": _rev("001_a", None), "b.py": "revision = '002_b'\ndef broken(:\n"}
+    )
+
+    assert load_code_revisions(root) is None
+
+
+def test_synthetic_merge_revision_is_none(tmp_path: Path) -> None:
+    root = _write_versions(
+        tmp_path,
+        {
+            "a.py": _rev("001_a", None),
+            "b.py": _rev("002_b", "001_a"),
+            "c.py": "revision = '003_c'\ndown_revision = ('001_a', '002_b')\n",
+        },
+    )
+
+    assert load_code_revisions(root) is None
+
+
+def test_synthetic_unknown_down_revision_is_none(tmp_path: Path) -> None:
+    root = _write_versions(tmp_path, {"a.py": _rev("002_b", "001_missing")})
+
+    assert load_code_revisions(root) is None
+
+
+def test_synthetic_file_without_revision_is_skipped(tmp_path: Path) -> None:
+    root = _write_versions(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "helpers.py": "VALUE = 1\n",
+            "a.py": _rev("001_a", None),
+            "b.py": _rev("002_b", "001_a"),
+            "c.py": _rev("003_c", "002_b"),
+        },
+    )
+
+    assert load_code_revisions(root) == CODE
+
+
+def test_shipped_chain_matches_alembic() -> None:
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory(str(schema_revision.DEFAULT_SCRIPT_LOCATION))
+    head = script.get_current_head()
+    ancestors = frozenset(
+        rev.revision for rev in script.walk_revisions("base", head) if rev.revision != head
+    )
+
+    assert load_code_revisions() == CodeRevisions(head=head, ancestors=ancestors)
+    assert head_parent() == script.get_revision(head).down_revision
+
+
+def test_runtime_import_does_not_load_alembic() -> None:
+    """Stand-in for the API image build, whose ``platform-prod`` group has no alembic."""
+    repo = Path(__file__).resolve().parents[3]
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(repo / "nomikos"), str(repo)]),
+    }
+    code = (
+        "import sys; import backend.core.schema_revision; import backend.core.api.health; "
+        "assert 'alembic' not in sys.modules, sorted(m for m in sys.modules if 'alembic' in m)"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 # --- route --------------------------------------------------------------------

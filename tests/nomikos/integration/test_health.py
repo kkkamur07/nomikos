@@ -7,13 +7,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 import infrastructure.models  # noqa: F401 - register all ORM mappers
 from backend.core.api import health as health_module
-from backend.core.schema_revision import DEFAULT_SCRIPT_LOCATION, code_revisions
+from backend.core.schema_revision import code_revisions, head_parent
 from backend.core.settings.job import get_job_settings
 from backend.jobs.infrastructure.orm_models import Job, JobStatus, JobType
 from infrastructure.db import sync_system_session
@@ -89,7 +88,7 @@ def test_health_returns_503_when_the_schema_is_behind_the_code(client: TestClien
     whole suite shares the ``kalamos`` database.
     """
     head = code_revisions().head
-    parent = ScriptDirectory(str(DEFAULT_SCRIPT_LOCATION)).get_revision(head).down_revision
+    parent = head_parent()
     assert isinstance(parent, str)
     with sync_system_session() as session:
         original = session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
