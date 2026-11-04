@@ -586,14 +586,19 @@ def test_finalize_failure_rolls_back_the_merged_lines(
 
     monkeypatch.setattr(job_callback_service, "_mark_done_from_callback_sync", _boom)
 
-    with pytest.raises(RuntimeError, match="finalize exploded"):
-        client.post(
-            CALLBACK_URL,
-            headers=WEBHOOK_HEADERS,
-            json=_segment_done_payload(
-                product_job_id=product_job_id, inference_job_id=inference_job_id
-            ),
-        )
+    response = client.post(
+        CALLBACK_URL,
+        headers=WEBHOOK_HEADERS,
+        json=_segment_done_payload(
+            product_job_id=product_job_id, inference_job_id=inference_job_id
+        ),
+    )
+    # The catch-all inside CORS answers the failure as the JSON 500 rather than
+    # letting it escape to TestClient.
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "INTERNAL_SERVER_ERROR"
+    assert "RuntimeError: finalize exploded" in error["summary"]
 
     with sync_system_session() as session:
         lines = list(session.execute(select(Line).where(Line.part_id == part_id)).scalars().all())
