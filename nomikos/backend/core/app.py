@@ -12,6 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import infrastructure.models  # noqa: F401 - register all ORM mappers before first query
 from backend.annotation.api.history import router as annotation_history_router
@@ -269,19 +270,70 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        correlation_id = uuid.uuid4().hex
-        logger.exception(
-            "unhandled_api_error correlation_id=%s method=%s path=%s",
-            correlation_id,
-            request.method,
-            request.url.path,
-        )
-        return _error_response(
-            status_code=500,
-            code="INTERNAL_SERVER_ERROR",
-            message="Internal server error",
-            correlation_id=correlation_id,
-        )
+        """Last resort for a failure in a middleware outside the catch-all.
+
+        Starlette mounts this on ``ServerErrorMiddleware``, outside CORS, so its
+        response carries no CORS headers. Route failures never reach it:
+        :class:`UnhandledErrorMiddleware` answers them inside CORS first.
+        """
+        return _unhandled_error_response(method=request.method, path=request.url.path)
+
+
+def _unhandled_error_response(*, method: str, path: str) -> JSONResponse:
+    """Log the active exception once with its traceback and build the 500 envelope."""
+    correlation_id = uuid.uuid4().hex
+    logger.exception(
+        "unhandled_api_error correlation_id=%s method=%s path=%s",
+        correlation_id,
+        method,
+        path,
+    )
+    return _error_response(
+        status_code=500,
+        code="INTERNAL_SERVER_ERROR",
+        message="Internal server error",
+        correlation_id=correlation_id,
+    )
+
+
+class UnhandledErrorMiddleware:
+    """Pure ASGI catch-all: turn an unhandled route exception into the JSON 500.
+
+    ``exception_handler(Exception)`` alone is not enough: Starlette runs it on
+    ``ServerErrorMiddleware``, the outermost layer, so the 500 leaves without
+    CORS headers and the browser reports a network error instead of handing the
+    body (and ``X-Error-ID``) to the frontend. Mounted innermost so CORS, the
+    security headers and the request metrics all see an ordinary 500 response.
+    Only ``Exception`` is caught, so cancellation still propagates, and a
+    failure after the response has started is re-raised because a second
+    response cannot be sent.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            if response_started:
+                raise
+            response = _unhandled_error_response(
+                method=scope.get("method", "GET"), path=scope.get("path", "")
+            )
+            await response(scope, receive, send)
 
 
 @dataclass(frozen=True)
@@ -384,7 +436,10 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_enabled else None,
     )
 
-    # Innermost of the three, so CORS preflights answered by CORSMiddleware are not
+    # Innermost of all, so an unhandled route exception becomes the JSON 500 before
+    # it reaches the layers below and the response still passes through CORS.
+    app.add_middleware(UnhandledErrorMiddleware)
+    # Innermost of the remaining three, so CORS preflights answered by CORSMiddleware are not
     # counted and the router has filled in ``scope["route"]`` by the time it reads it.
     # In-process counters only (ADR "Admin dashboard and request metrics").
     app.add_middleware(RequestMetricsMiddleware)
