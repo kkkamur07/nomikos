@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { toast } from "../ui/toast";
 
 type DocumentSettingsPanelProps = {
@@ -43,9 +43,8 @@ export function DocumentSettingsPanel({
       onUpdated({ name: updated.name });
       toast.success("Document renamed");
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to rename document";
-      toast.error(message);
+      const message = userFacingMessage(err, "Failed to rename document");
+      toast.error(message, err);
     } finally {
       setSavingName(false);
     }

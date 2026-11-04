@@ -28,17 +28,53 @@ function cleanMessageText(text: string | undefined): string | null {
   return null;
 }
 
+const NETWORK_FAILURE =
+  "Could not reach the server. Check your connection and try again.";
+
+/** How much of the ref to show: enough to grep the server log, short enough to read out. */
+const SHORT_REF_LENGTH = 8;
+
+function refSuffix(error: ApiError): string {
+  return error.ref ? ` (ref ${error.ref.slice(0, SHORT_REF_LENGTH)})` : "";
+}
+
+/**
+ * The server's one-line condensed reason on a 500 (`error.summary`), already
+ * stripped of SQL, parameters and paths server side. Re-checked here anyway.
+ */
+function serverSummary(error: ApiError): string | null {
+  const summary = error.detail?.summary;
+  return typeof summary === "string" ? cleanMessageText(summary) : null;
+}
+
+function apiErrorMessage(error: ApiError, fallback: string): string {
+  const base =
+    cleanMessageText(error.message) ??
+    STATUS_FALLBACKS[error.status] ??
+    fallback;
+  if (error.status < 500) {
+    return base;
+  }
+  // A 5xx is only useful to report if the person can say which one: the ref
+  // finds the server log line, the summary says what broke.
+  const summary = serverSummary(error);
+  return summary
+    ? `Server error: ${summary}${refSuffix(error)}`
+    : `${base}${refSuffix(error)}`;
+}
+
 /** Map thrown values to short researcher-facing copy (no stacks). */
 export function userFacingMessage(
   error: unknown,
   fallback = "Something went wrong. Try again.",
 ): string {
   if (error instanceof ApiError) {
-    return (
-      cleanMessageText(error.message) ??
-      STATUS_FALLBACKS[error.status] ??
-      fallback
-    );
+    return apiErrorMessage(error, fallback);
+  }
+  // `fetch` rejects with a bare TypeError when the request never got an HTTP
+  // answer the page may read: offline, DNS, or a response without CORS headers.
+  if (error instanceof TypeError) {
+    return NETWORK_FAILURE;
   }
   if (error instanceof Error) {
     return cleanMessageText(error.message) ?? fallback;

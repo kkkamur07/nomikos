@@ -8,6 +8,7 @@ import {
   type UserResponse,
 } from "../api/client";
 import { ApiError } from "../api/errors";
+import { userFacingMessage } from "../api/userFacingError";
 import { invalidateAfter, resourceTags } from "../api/resources";
 import {
   hasAccessToken,
@@ -75,9 +76,8 @@ async function createDocumentAndOpen(
     open(doc.id);
     return true;
   } catch (err) {
-    const msg =
-      err instanceof ApiError ? err.message : "Failed to create document";
-    toast.error(msg);
+    const msg = userFacingMessage(err, "Failed to create document");
+    toast.error(msg, err);
     return false;
   }
 }
@@ -165,9 +165,8 @@ export function useProjectDashboard(): ProjectDashboardModel {
         navigateToLogin(router);
         return null;
       }
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to load project";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to load project");
+      toast.error(msg, err);
       return dashboardBannerText(err);
     },
   });
@@ -206,9 +205,8 @@ export function useProjectDashboard(): ProjectDashboardModel {
       invalidateAfter.projectDeleted(projectId);
       router.push("/projects");
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to delete project";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to delete project");
+      toast.error(msg, err);
     } finally {
       setDeletingProject(false);
     }
@@ -230,9 +228,8 @@ export function useProjectDashboard(): ProjectDashboardModel {
       invalidateAfter.documentDeleted(projectId, documentId);
       await reloadDashboard();
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to delete document";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to delete document");
+      toast.error(msg, err);
     } finally {
       setDeletingDocumentId(null);
     }

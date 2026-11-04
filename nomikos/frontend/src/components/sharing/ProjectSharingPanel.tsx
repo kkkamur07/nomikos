@@ -7,6 +7,7 @@ import {
 } from "react";
 import { api, type ProjectCollaboratorResponse } from "../../api/client";
 import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { toast } from "../ui/toast";
 
 type ProjectSharingPanelProps = {
@@ -77,9 +78,8 @@ export function ProjectSharingPanel({
       setDraft("");
       await load();
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to share project";
-      toast.error(message);
+      const message = userFacingMessage(err, "Failed to share project");
+      toast.error(message, err);
     } finally {
       setAdding(false);
     }
@@ -95,9 +95,8 @@ export function ProjectSharingPanel({
         current ? current.filter((item) => item.id !== person.id) : current,
       );
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to remove access";
-      toast.error(message);
+      const message = userFacingMessage(err, "Failed to remove access");
+      toast.error(message, err);
     } finally {
       setRemoving(null);
     }

@@ -110,6 +110,7 @@ describe("ProjectSharingPanel", () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
         "No account is registered under nobody@example.org",
+        expect.objectContaining({ status: 404 }),
       ),
     );
     // The draft is kept so the address can be corrected instead of retyped.
