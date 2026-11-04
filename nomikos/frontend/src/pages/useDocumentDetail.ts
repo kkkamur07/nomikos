@@ -8,6 +8,7 @@ import {
   type DocumentWorkflowCounts,
 } from "../api/client";
 import { ApiError } from "../api/errors";
+import { userFacingMessage } from "../api/userFacingError";
 import { invalidateAfter, resourceTags } from "../api/resources";
 import {
   hasAccessToken,
@@ -78,7 +79,7 @@ function documentDetailSubtitle(
 
 function documentLoadError(err: unknown): string | null {
   if (isUnauthorized(err)) return null;
-  return err instanceof ApiError ? err.message : "Failed to load document";
+  return userFacingMessage(err, "Failed to load document");
 }
 
 function documentBannerText(err: unknown): string {
@@ -177,7 +178,7 @@ function useDocumentDetailQueries(
         return null;
       }
       const msg = documentLoadError(err) ?? "Failed to load document";
-      toast.error(msg);
+      toast.error(msg, err);
       return documentBannerText(err);
     },
   });
@@ -225,9 +226,8 @@ async function deleteDocumentAndLeave(
     invalidateAfter.documentDeleted(projectId, documentId);
     leave();
   } catch (err) {
-    const msg =
-      err instanceof ApiError ? err.message : "Failed to delete document";
-    toast.error(msg);
+    const msg = userFacingMessage(err, "Failed to delete document");
+    toast.error(msg, err);
   }
 }
 

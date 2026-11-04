@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./client";
+import { ApiError } from "./errors";
 import { errorRef, userFacingMessage } from "./userFacingError";
 
 type ClientFailurePayload = {
@@ -12,13 +13,16 @@ type ClientFailurePayload = {
 function payloadFromError(
   error: unknown,
   source: string,
+  shownMessage?: string,
 ): ClientFailurePayload {
-  const message = userFacingMessage(error);
+  const message = shownMessage ?? userFacingMessage(error);
   const ref = errorRef(error);
   const status =
-    error && typeof error === "object" && "status" in error
-      ? Number((error as { status?: unknown }).status) || null
-      : null;
+    error instanceof ApiError
+      ? error.status
+      : error && typeof error === "object" && "status" in error
+        ? Number((error as { status?: unknown }).status) || null
+        : null;
   return {
     message,
     ref,
@@ -28,12 +32,18 @@ function payloadFromError(
   };
 }
 
-/** Fire-and-forget UI failure beacon for logging-first observability. */
+/**
+ * Fire-and-forget UI failure beacon for logging-first observability.
+ *
+ * `shownMessage` is the text the person actually saw, when the caller already
+ * chose it; `status` and `ref` still come from `error`.
+ */
 export function reportClientFailure(
   error: unknown,
   source = "ui",
+  shownMessage?: string,
 ): ClientFailurePayload {
-  const payload = payloadFromError(error, source);
+  const payload = payloadFromError(error, source, shownMessage);
   const body = JSON.stringify(payload);
   const url = `${API_BASE_URL}/client-failures`;
 

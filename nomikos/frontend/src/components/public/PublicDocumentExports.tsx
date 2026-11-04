@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { toast } from "../ui/toast";
 import { exportFileStem } from "../../utils/exportFilename";
 
@@ -57,9 +57,8 @@ export function PublicDocumentExports({
       URL.revokeObjectURL(url);
       setOpen(false);
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to download PDF";
-      toast.error(message);
+      const message = userFacingMessage(err, "Failed to download PDF");
+      toast.error(message, err);
     } finally {
       setDownloading(null);
     }
@@ -82,11 +81,11 @@ export function PublicDocumentExports({
       URL.revokeObjectURL(url);
       setOpen(false);
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Failed to download PAGE XML and page image";
-      toast.error(message);
+      const message = userFacingMessage(
+        err,
+        "Failed to download PAGE XML and page image",
+      );
+      toast.error(message, err);
     } finally {
       setDownloading(null);
     }
@@ -109,11 +108,11 @@ export function PublicDocumentExports({
       URL.revokeObjectURL(url);
       setOpen(false);
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Failed to download the Word document";
-      toast.error(message);
+      const message = userFacingMessage(
+        err,
+        "Failed to download the Word document",
+      );
+      toast.error(message, err);
     } finally {
       setDownloading(null);
     }

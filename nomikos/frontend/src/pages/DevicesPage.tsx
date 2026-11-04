@@ -100,7 +100,7 @@ export function DevicesPage() {
         return { kind: "unavailable" };
       }
       const message = userFacingMessage(err, "Failed to load your devices");
-      toast.error(message);
+      toast.error(message, err);
       return { kind: "failed", message };
     },
   });
@@ -116,7 +116,7 @@ export function DevicesPage() {
       // Invalidation refetches the mounted list; no second refetch needed.
       await invalidateAfter.deviceListChanged();
     } catch (err) {
-      toast.error(userFacingMessage(err, "Failed to revoke that device"));
+      toast.error(userFacingMessage(err, "Failed to revoke that device"), err);
     } finally {
       setRevokingDeviceId(null);
     }

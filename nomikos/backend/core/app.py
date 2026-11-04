@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
@@ -12,6 +13,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import infrastructure.models  # noqa: F401 - register all ORM mappers before first query
@@ -109,10 +111,13 @@ def _error_response(
     message: str,
     headers: Mapping[str, str] | None = None,
     correlation_id: str | None = None,
+    summary: str | None = None,
 ) -> JSONResponse:
     error: dict[str, object] = {"code": code, "message": message}
     if correlation_id:
         error["ref"] = correlation_id
+    if summary:
+        error["summary"] = summary
     content: dict[str, object] = {"error": error}
     response_headers = dict(headers or {})
     if correlation_id:
@@ -276,23 +281,88 @@ def _register_exception_handlers(app: FastAPI) -> None:
         response carries no CORS headers. Route failures never reach it:
         :class:`UnhandledErrorMiddleware` answers them inside CORS first.
         """
-        return _unhandled_error_response(method=request.method, path=request.url.path)
+        return _unhandled_error_response(request.scope, exc)
 
 
-def _unhandled_error_response(*, method: str, path: str) -> JSONResponse:
-    """Log the active exception once with its traceback and build the 500 envelope."""
+SUMMARY_MAX_CHARS = 200
+#: Absolute POSIX paths with at least two segments: enough to leak a deploy layout.
+_PATH_PATTERN = re.compile(r"(?:/[\w.@+-]+){2,}/?")
+#: SQLAlchemy appends these to its own message; never let one reach a client.
+_SQLALCHEMY_TAILS = (" [SQL:", " [parameters:", " (Background on this error")
+
+
+def _root_exception(exc: BaseException) -> BaseException:
+    """The exception that names the real failure, not the wrapper around it.
+
+    For SQLAlchemy that is ``exc.orig``, the DBAPI error. The asyncpg adapter
+    wraps the driver error once more and chains it as ``__cause__``, so follow
+    that too: ``UndefinedColumnError`` says more than ``ProgrammingError``.
+    """
+    if not isinstance(exc, DBAPIError) or exc.orig is None:
+        return exc
+    root: BaseException = exc.orig
+    for _ in range(5):
+        if root.__cause__ is None:
+            break
+        root = root.__cause__
+    return root
+
+
+def error_summary(exc: BaseException) -> str:
+    """One public line, ``Type: first line``, condensed from the root exception.
+
+    Shown to the person who hit the failure, so it carries the reason and nothing
+    an attacker could use: only the first line (no traceback, no SQL statement or
+    bound parameters, which SQLAlchemy puts after it), SQLAlchemy's own tails cut
+    defensively, absolute paths masked, and a hard length cap.
+    """
+    root = _root_exception(exc)
+    lines = str(root).strip().splitlines()
+    text = lines[0].strip() if lines else ""
+    for tail in _SQLALCHEMY_TAILS:
+        text = text.split(tail, 1)[0]
+    text = _PATH_PATTERN.sub("<path>", text).strip()
+    summary = f"{type(root).__name__}: {text}" if text else type(root).__name__
+    if len(summary) > SUMMARY_MAX_CHARS:
+        summary = summary[: SUMMARY_MAX_CHARS - 3] + "..."
+    return summary
+
+
+def _scope_user_id(scope: Scope) -> str:
+    """Best effort: whatever an auth layer left on ``request.state``, else ``-``."""
+    state = scope.get("state") or {}
+    user_id = state.get("user_id")
+    if user_id is None:
+        user_id = getattr(state.get("user"), "id", None)
+    return str(user_id) if user_id is not None else "-"
+
+
+def _unhandled_error_response(scope: Scope, exc: BaseException) -> JSONResponse:
+    """Log ``exc`` once as one greppable line plus traceback, and build the 500.
+
+    ``ref`` is the id the person sees in the toast, so ``grep <ref>`` in the
+    deployment logs lands on this line with everything needed to start.
+    """
     correlation_id = uuid.uuid4().hex
+    summary = error_summary(exc)
+    route = getattr(scope.get("route"), "path", None) or "-"
     logger.exception(
-        "unhandled_api_error correlation_id=%s method=%s path=%s",
+        "unhandled_api_error ref=%s method=%s path=%s route=%s user_id=%s exception=%s summary=%s",
         correlation_id,
-        method,
-        path,
+        scope.get("method", "-"),
+        scope.get("path", "-"),
+        route,
+        _scope_user_id(scope),
+        type(exc).__name__,
+        summary,
+        exc_info=exc,
     )
     return _error_response(
         status_code=500,
         code="INTERNAL_SERVER_ERROR",
         message="Internal server error",
         correlation_id=correlation_id,
+        summary=summary,
     )
 
 
@@ -327,12 +397,10 @@ class UnhandledErrorMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception:
+        except Exception as exc:
             if response_started:
                 raise
-            response = _unhandled_error_response(
-                method=scope.get("method", "GET"), path=scope.get("path", "")
-            )
+            response = _unhandled_error_response(scope, exc)
             await response(scope, receive, send)
 
 

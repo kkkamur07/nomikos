@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { toast } from "../ui/toast";
 import { slugify } from "../../utils/slugify";
 
@@ -39,9 +39,8 @@ export function ProjectSettingsPanel({
       onUpdated({ name: updated.name, guidelines: updated.guidelines ?? null });
       toast.success("Project updated");
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to update project";
-      toast.error(message);
+      const message = userFacingMessage(err, "Failed to update project");
+      toast.error(message, err);
     } finally {
       setSaving(false);
     }
