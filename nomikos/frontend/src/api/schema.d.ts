@@ -484,7 +484,7 @@ export interface paths {
     };
     /**
      * Health
-     * @description Liveness/readiness (``SELECT 1``) plus the age of the oldest pending job.
+     * @description Liveness/readiness (``SELECT 1``, schema revision) plus the oldest pending job's age.
      *
      *     Dev-user seeding lives in app lifespan.
      *
@@ -504,6 +504,18 @@ export interface paths {
      *     deployment step - the same class of gap that leaves the queue unclaimed in
      *     the first place. The cost is one ``min(created_at)`` against the
      *     ``ix_jobs_claim_pending`` partial index per probe.
+     *
+     *     **A schema behind the code is the one other 503.** Production never runs
+     *     alembic; migration SQL is applied by hand. When the code ships a revision
+     *     the database does not have yet, every query touching the new columns fails,
+     *     so this process genuinely cannot serve requests, and that is exactly what the
+     *     status code answers. Unlike the queue age, the fix belongs to this deploy:
+     *     a 503 keeps the new container from going healthy, so the image's
+     *     HEALTHCHECK holds the rollout instead of letting it 500 on real traffic. A
+     *     database *ahead* of the code is the documented release order (SQL before
+     *     merge) and stays 200; an unreadable revision on either side stays 200 too,
+     *     because "could not check" is not "cannot serve". The revision read runs last
+     *     so a failure there cannot poison the queue query's transaction.
      */
     get: operations["health_health_get"];
     put?: never;
@@ -2815,10 +2827,25 @@ export interface components {
        */
       database: "ok" | "error";
       /**
+       * Expected Schema Revision
+       * @description The alembic head shipped with the running code, if readable.
+       */
+      expected_schema_revision?: string | null;
+      /**
        * Oldest Pending Job Seconds
        * @description Age of the oldest job still in `pending`, in seconds. `null` means the queue is empty, or - on a 503 - that it could not be read. Reported, never gated on: see the route docstring.
        */
       oldest_pending_job_seconds?: number | null;
+      /**
+       * Schema
+       * @description Database revision against the alembic head the code ships: `ok` (equal), `behind` (an older known revision, which answers 503), `ahead` (a revision the code does not know, which is the apply-SQL-before-merge window), `unknown` (either side unreadable). `null` when the database is unreachable.
+       */
+      schema?: ("ok" | "behind" | "ahead" | "unknown") | null;
+      /**
+       * Schema Revision
+       * @description `alembic_version.version_num` in the database, if readable.
+       */
+      schema_revision?: string | null;
       /** Status */
       status: string;
     };
@@ -6315,7 +6342,7 @@ export interface operations {
           "application/json": components["schemas"]["ApiErrorResponse"];
         };
       };
-      /** @description Database unreachable */
+      /** @description Database unreachable, or its schema is behind the code's alembic head */
       503: {
         headers: {
           [name: string]: unknown;
