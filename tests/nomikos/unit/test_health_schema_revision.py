@@ -10,6 +10,10 @@ application with a fake session, so no Postgres is needed.
 from __future__ import annotations
 
 import logging
+import os
+
+os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production-at-least-32-bytes")
+
 from pathlib import Path
 from typing import Any
 
