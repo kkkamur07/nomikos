@@ -404,6 +404,18 @@
             ],
             "description": "Correlation id for support / log lookup",
             "title": "Ref"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Short user-safe cause of a server error; never carries SQL, parameters, paths or tracebacks",
+            "title": "Summary"
           }
         },
         "required": ["code", "message"],
@@ -2449,6 +2461,18 @@
             ],
             "description": "Correlation id for support / log lookup",
             "title": "Ref"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Short user-safe cause of a server error; never carries SQL, parameters, paths or tracebacks",
+            "title": "Summary"
           }
         },
         "required": ["code", "message"],

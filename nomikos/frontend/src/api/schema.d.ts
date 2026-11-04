@@ -2140,6 +2140,11 @@ export interface components {
        * @description Correlation id for support / log lookup
        */
       ref?: string | null;
+      /**
+       * Summary
+       * @description Short user-safe cause of a server error; never carries SQL, parameters, paths or tracebacks
+       */
+      summary?: string | null;
     };
     /** ApiErrorResponse */
     ApiErrorResponse: {
@@ -3097,6 +3102,11 @@ export interface components {
        * @description Correlation id for support / log lookup
        */
       ref?: string | null;
+      /**
+       * Summary
+       * @description Short user-safe cause of a server error; never carries SQL, parameters, paths or tracebacks
+       */
+      summary?: string | null;
     };
     /** LineMergeConflictResponse */
     LineMergeConflictResponse: {
