@@ -8,7 +8,7 @@ import {
   type ProjectResponse,
   type UserResponse,
 } from "../api/client";
-import { ApiError } from "../api/errors";
+import { userFacingMessage } from "../api/userFacingError";
 import { resourceTags, invalidateAfter } from "../api/resources";
 import {
   hasAccessToken,
@@ -99,9 +99,8 @@ export function ProjectsPage() {
       }
       // Unlike its sibling pages this one has no 403/404 rewrite: a project list
       // is never "not yours to see", it is only ever empty.
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to load projects";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to load projects");
+      toast.error(msg, err);
       return msg;
     },
   });
@@ -148,9 +147,8 @@ export function ProjectsPage() {
       invalidateAfter.projectCreated();
       await reloadProjects();
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to create project";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to create project");
+      toast.error(msg, err);
     } finally {
       setCreating(false);
     }
@@ -174,9 +172,8 @@ export function ProjectsPage() {
       invalidateAfter.projectDeleted(projectId);
       await reloadProjects();
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to delete project";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to delete project");
+      toast.error(msg, err);
     } finally {
       setDeletingProjectId(null);
     }

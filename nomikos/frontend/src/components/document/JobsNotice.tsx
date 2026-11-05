@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "../ui/toast";
 import { api, type JobResponse } from "../../api/client";
-import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { useJobPolling } from "../../hooks/useJobPolling";
 import { isTerminalJobStatus } from "../page-editor/jobProgress";
 import {
@@ -126,9 +126,8 @@ export function JobsNotice({
       trackJob(job_id);
       toast.success(`Test job enqueued (${shortId(job_id)})`);
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to enqueue test job";
-      toast.error(msg);
+      const msg = userFacingMessage(err, "Failed to enqueue test job");
+      toast.error(msg, err);
     } finally {
       setEnqueueing(false);
     }

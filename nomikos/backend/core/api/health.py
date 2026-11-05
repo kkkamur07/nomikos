@@ -8,6 +8,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.schema_revision import (
+    SchemaState,
+    code_revisions,
+    compare_schema_revision,
+    read_database_revision,
+)
 from backend.core.schemas.health import HealthResponse
 from backend.core.settings.job import get_job_settings
 from backend.jobs.infrastructure.job_repository import JobRepository
@@ -49,13 +55,47 @@ async def _oldest_pending_job_seconds(db: AsyncSession) -> float | None:
     return age_seconds
 
 
+async def _schema_check(db: AsyncSession) -> tuple[SchemaState, str | None, str | None]:
+    """Compare ``alembic_version`` with the shipped head and log anything but a match.
+
+    Returns ``(state, database revision, code head)``. Only ``behind`` is an ERROR:
+    it is the one state in which this process cannot serve requests. ``ahead`` is
+    the documented release order (SQL applied before merge, old code still
+    running) and ``unknown`` means one side could not be read; both warn and are
+    otherwise reported only.
+    """
+    code = code_revisions()
+    db_revision = await read_database_revision(db)
+    state = compare_schema_revision(db_revision, code)
+    head = code.head if code is not None else None
+    if state == "behind":
+        logger.error(
+            "database schema %s is behind code head %s: apply the migration SQL",
+            db_revision,
+            head,
+        )
+    elif state == "ahead":
+        logger.warning(
+            "database schema %s is not a revision this code knows (head %s): "
+            "expected only while a release's SQL is applied ahead of its deploy",
+            db_revision,
+            head,
+        )
+    return state, db_revision, head
+
+
 @router.get(
     "/health",
     response_model=HealthResponse,
-    responses={503: {"model": HealthResponse, "description": "Database unreachable"}},
+    responses={
+        503: {
+            "model": HealthResponse,
+            "description": "Database unreachable, or its schema is behind the code's alembic head",
+        }
+    },
 )
 async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse | JSONResponse:
-    """Liveness/readiness (``SELECT 1``) plus the age of the oldest pending job.
+    """Liveness/readiness (``SELECT 1``, schema revision) plus the oldest pending job's age.
 
     Dev-user seeding lives in app lifespan.
 
@@ -75,15 +115,43 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse | JSONRes
     deployment step - the same class of gap that leaves the queue unclaimed in
     the first place. The cost is one ``min(created_at)`` against the
     ``ix_jobs_claim_pending`` partial index per probe.
+
+    **A schema behind the code is the one other 503.** Production never runs
+    alembic; migration SQL is applied by hand. When the code ships a revision
+    the database does not have yet, every query touching the new columns fails,
+    so this process genuinely cannot serve requests, and that is exactly what the
+    status code answers. Unlike the queue age, the fix belongs to this deploy:
+    a 503 keeps the new container from going healthy, so the image's
+    HEALTHCHECK holds the rollout instead of letting it 500 on real traffic. A
+    database *ahead* of the code is the documented release order (SQL before
+    merge) and stays 200; an unreadable revision on either side stays 200 too,
+    because "could not check" is not "cannot serve". The revision read runs last
+    so a failure there cannot poison the queue query's transaction.
     """
     try:
         await db.execute(text("SELECT 1"))
     except SQLAlchemyError:
         body = HealthResponse(status="degraded", database="error")
-        return JSONResponse(status_code=503, content=body.model_dump())
+        return JSONResponse(status_code=503, content=body.model_dump(by_alias=True))
+
+    oldest_pending_job_seconds = await _oldest_pending_job_seconds(db)
+    schema_state, schema_revision, expected_schema_revision = await _schema_check(db)
+    if schema_state == "behind":
+        body = HealthResponse(
+            status="degraded",
+            database="ok",
+            oldest_pending_job_seconds=oldest_pending_job_seconds,
+            schema_state=schema_state,
+            schema_revision=schema_revision,
+            expected_schema_revision=expected_schema_revision,
+        )
+        return JSONResponse(status_code=503, content=body.model_dump(by_alias=True))
 
     return HealthResponse(
         status="ok",
         database="ok",
-        oldest_pending_job_seconds=await _oldest_pending_job_seconds(db),
+        oldest_pending_job_seconds=oldest_pending_job_seconds,
+        schema_state=schema_state,
+        schema_revision=schema_revision,
+        expected_schema_revision=expected_schema_revision,
     )

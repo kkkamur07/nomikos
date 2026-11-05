@@ -1,7 +1,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api, type DocumentWorkflow } from "../../api/client";
-import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { toast } from "../ui/toast";
 import { WorkflowBadge } from "../WorkflowBadge";
 import {
@@ -78,11 +78,11 @@ export function DocumentLiveSharingControls({
           : "Document returned to draft",
       );
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Failed to update document status";
-      toast.error(message);
+      const message = userFacingMessage(
+        err,
+        "Failed to update document status",
+      );
+      toast.error(message, err);
     } finally {
       setPublishing(false);
     }

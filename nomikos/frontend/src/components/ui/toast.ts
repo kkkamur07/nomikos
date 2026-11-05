@@ -29,10 +29,15 @@ export const toast = {
   info: (message: string): void => {
     void api?.info(message, DISMISS_SECONDS);
   },
-  error: (message: string): void => {
+  /**
+   * `cause` is the caught error behind the message. Passing it lets the beacon
+   * carry the real status and ref, so the admin table links the toast to the
+   * server log line; the person still sees `message`.
+   */
+  error: (message: string, cause?: unknown): void => {
     // Centralized here, not at call sites, so every surfaced error is
     // reported.
-    reportClientFailure(new Error(message), "toast");
+    reportClientFailure(cause ?? new Error(message), "toast", message);
     void api?.error(message, DISMISS_SECONDS);
   },
 };

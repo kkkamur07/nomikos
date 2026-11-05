@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../api/client";
-import { ApiError } from "../../api/errors";
+import { userFacingMessage } from "../../api/userFacingError";
 import { toast } from "../ui/toast";
 
 type PageEditorPageXmlButtonProps = {
@@ -46,11 +46,11 @@ export function PageEditorPageXmlButton({
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Failed to download PAGE XML and page image";
-      toast.error(message);
+      const message = userFacingMessage(
+        err,
+        "Failed to download PAGE XML and page image",
+      );
+      toast.error(message, err);
     } finally {
       setDownloading(false);
     }

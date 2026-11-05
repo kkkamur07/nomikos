@@ -1847,6 +1847,18 @@
             "title": "Database",
             "type": "string"
           },
+          "expected_schema_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The alembic head shipped with the running code, if readable.",
+            "title": "Expected Schema Revision"
+          },
           "oldest_pending_job_seconds": {
             "anyOf": [
               {
@@ -1858,6 +1870,31 @@
             ],
             "description": "Age of the oldest job still in `pending`, in seconds. `null` means the queue is empty, or - on a 503 - that it could not be read. Reported, never gated on: see the route docstring.",
             "title": "Oldest Pending Job Seconds"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "enum": ["ok", "behind", "ahead", "unknown"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Database revision against the alembic head the code ships: `ok` (equal), `behind` (an older known revision, which answers 503), `ahead` (a revision the code does not know, which is the apply-SQL-before-merge window), `unknown` (either side unreadable). `null` when the database is unreachable.",
+            "title": "Schema"
+          },
+          "schema_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`alembic_version.version_num` in the database, if readable.",
+            "title": "Schema Revision"
           },
           "status": {
             "title": "Status",
@@ -7587,7 +7624,7 @@
     },
     "/health": {
       "get": {
-        "description": "Liveness/readiness (``SELECT 1``) plus the age of the oldest pending job.\n\nDev-user seeding lives in app lifespan.\n\n**The queue age never changes the status code.** A pending job piles up\nbecause a *different* host stopped claiming - the platform worker\n(``JOB_WORKER_ENABLED``, which the API deployment sets false) or a\nresearcher's inference agent. Returning 503 for that would pull a perfectly\nhealthy API out of rotation, or restart it, and neither brings the missing\nconsumer back. The status code answers \"can this process serve requests\";\nthe queue age is reported next to it, and the WARNING in\n``_oldest_pending_job_seconds`` is what pages someone.\n\nIt rides on ``/health`` rather than a separate ``/health/jobs`` because the\nthing that has to happen on a schedule is the threshold check, and ``/health``\nis the only route infrastructure already polls on a schedule. A route nobody\nis configured to call would put the queue's one alarm behind another manual\ndeployment step - the same class of gap that leaves the queue unclaimed in\nthe first place. The cost is one ``min(created_at)`` against the\n``ix_jobs_claim_pending`` partial index per probe.",
+        "description": "Liveness/readiness (``SELECT 1``, schema revision) plus the oldest pending job's age.\n\nDev-user seeding lives in app lifespan.\n\n**The queue age never changes the status code.** A pending job piles up\nbecause a *different* host stopped claiming - the platform worker\n(``JOB_WORKER_ENABLED``, which the API deployment sets false) or a\nresearcher's inference agent. Returning 503 for that would pull a perfectly\nhealthy API out of rotation, or restart it, and neither brings the missing\nconsumer back. The status code answers \"can this process serve requests\";\nthe queue age is reported next to it, and the WARNING in\n``_oldest_pending_job_seconds`` is what pages someone.\n\nIt rides on ``/health`` rather than a separate ``/health/jobs`` because the\nthing that has to happen on a schedule is the threshold check, and ``/health``\nis the only route infrastructure already polls on a schedule. A route nobody\nis configured to call would put the queue's one alarm behind another manual\ndeployment step - the same class of gap that leaves the queue unclaimed in\nthe first place. The cost is one ``min(created_at)`` against the\n``ix_jobs_claim_pending`` partial index per probe.\n\n**A schema behind the code is the one other 503.** Production never runs\nalembic; migration SQL is applied by hand. When the code ships a revision\nthe database does not have yet, every query touching the new columns fails,\nso this process genuinely cannot serve requests, and that is exactly what the\nstatus code answers. Unlike the queue age, the fix belongs to this deploy:\na 503 keeps the new container from going healthy, so the image's\nHEALTHCHECK holds the rollout instead of letting it 500 on real traffic. A\ndatabase *ahead* of the code is the documented release order (SQL before\nmerge) and stays 200; an unreadable revision on either side stays 200 too,\nbecause \"could not check\" is not \"cannot serve\". The revision read runs last\nso a failure there cannot poison the queue query's transaction.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -7678,7 +7715,7 @@
                 }
               }
             },
-            "description": "Database unreachable"
+            "description": "Database unreachable, or its schema is behind the code's alembic head"
           }
         },
         "summary": "Health",
