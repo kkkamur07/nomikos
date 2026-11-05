@@ -10,6 +10,13 @@ class ApiErrorDetail(BaseModel):
         default=None,
         description="Correlation id for support / log lookup",
     )
+    summary: str | None = Field(
+        default=None,
+        description=(
+            "Short user-safe cause of a server error; never carries SQL, parameters, "
+            "paths or tracebacks"
+        ),
+    )
 
 
 class ApiErrorResponse(BaseModel):
