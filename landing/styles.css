@@ -407,6 +407,11 @@ main {
   margin-top: 2.5rem;
 }
 
+/* Clears the sticky header when the README links to /#walkthrough. */
+#walkthrough {
+  scroll-margin-top: 6rem;
+}
+
 .video--wide .video__frame {
   aspect-ratio: 16 / 9;
 }
