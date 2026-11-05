@@ -55,19 +55,19 @@ async def _oldest_pending_job_seconds(db: AsyncSession) -> float | None:
     return age_seconds
 
 
-async def _schema_check(db: AsyncSession) -> tuple[SchemaState, str | None, str | None]:
-    """Compare ``alembic_version`` with the shipped head and log anything but a match.
+#: The last ``(state, database revision, code head)`` this process logged. The
+#: schema line is written only when this changes, so an unauthenticated client
+#: looping ``/health`` cannot turn a lasting state into a log flood.
+_last_schema_report: tuple[SchemaState, str | None, str | None] | None = None
 
-    Returns ``(state, database revision, code head)``. Only ``behind`` is an ERROR:
-    it is the one state in which this process cannot serve requests. ``ahead`` is
-    the documented release order (SQL applied before merge, old code still
-    running) and ``unknown`` means one side could not be read; both warn and are
-    otherwise reported only.
-    """
-    code = code_revisions()
-    db_revision = await read_database_revision(db)
-    state = compare_schema_revision(db_revision, code)
-    head = code.head if code is not None else None
+
+def _log_schema_transition(state: SchemaState, db_revision: str | None, head: str | None) -> None:
+    global _last_schema_report
+    report = (state, db_revision, head)
+    if report == _last_schema_report:
+        return
+    previous = _last_schema_report
+    _last_schema_report = report
     if state == "behind":
         logger.error(
             "database schema %s is behind code head %s: apply the migration SQL",
@@ -81,7 +81,31 @@ async def _schema_check(db: AsyncSession) -> tuple[SchemaState, str | None, str 
             db_revision,
             head,
         )
-    return state, db_revision, head
+    elif state == "unknown":
+        logger.warning(
+            "database schema could not be compared (database %s, code head %s)",
+            db_revision,
+            head,
+        )
+    elif previous is not None:
+        logger.info("database schema %s matches code head %s again", db_revision, head)
+
+
+async def _schema_check(db: AsyncSession) -> SchemaState:
+    """Compare ``alembic_version`` with the shipped head; log the state on a change.
+
+    Only ``behind`` is an ERROR: it is the one state in which this process cannot
+    serve requests. ``ahead`` is the documented release order (SQL applied before
+    merge, old code still running) and ``unknown`` means one side could not be
+    read; both warn and are otherwise reported only. The log names both revisions;
+    the public body carries only the state, so the probe does not fingerprint the
+    deployed release.
+    """
+    code = code_revisions()
+    db_revision = await read_database_revision(db)
+    state = compare_schema_revision(db_revision, code)
+    _log_schema_transition(state, db_revision, code.head if code is not None else None)
+    return state
 
 
 @router.get(
@@ -135,15 +159,13 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse | JSONRes
         return JSONResponse(status_code=503, content=body.model_dump(by_alias=True))
 
     oldest_pending_job_seconds = await _oldest_pending_job_seconds(db)
-    schema_state, schema_revision, expected_schema_revision = await _schema_check(db)
+    schema_state = await _schema_check(db)
     if schema_state == "behind":
         body = HealthResponse(
             status="degraded",
             database="ok",
             oldest_pending_job_seconds=oldest_pending_job_seconds,
             schema_state=schema_state,
-            schema_revision=schema_revision,
-            expected_schema_revision=expected_schema_revision,
         )
         return JSONResponse(status_code=503, content=body.model_dump(by_alias=True))
 
@@ -152,6 +174,4 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse | JSONRes
         database="ok",
         oldest_pending_job_seconds=oldest_pending_job_seconds,
         schema_state=schema_state,
-        schema_revision=schema_revision,
-        expected_schema_revision=expected_schema_revision,
     )

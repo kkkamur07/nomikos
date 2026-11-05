@@ -62,14 +62,13 @@ def test_health_returns_ok_when_database_is_reachable(client: TestClient):
     # An empty queue is null, not 0: "nothing is pending" and "something has been
     # pending for no time at all" are different answers and only one of them is
     # ever true of a queue with no rows.
-    head = code_revisions().head
+    # The revision ids are logged, never returned: the public probe must not
+    # fingerprint the deployed release.
     assert body == {
         "status": "ok",
         "database": "ok",
         "oldest_pending_job_seconds": None,
         "schema": "ok",
-        "schema_revision": head,
-        "expected_schema_revision": head,
     }
 
 
@@ -104,8 +103,8 @@ def test_health_returns_503_when_the_schema_is_behind_the_code(client: TestClien
     assert body["status"] == "degraded"
     assert body["database"] == "ok"
     assert body["schema"] == "behind"
-    assert body["schema_revision"] == parent
-    assert body["expected_schema_revision"] == head
+    assert parent not in response.text
+    assert head not in response.text
 
 
 # --- The queue's only alarm ---

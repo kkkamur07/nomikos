@@ -2142,7 +2142,7 @@ export interface components {
       ref?: string | null;
       /**
        * Summary
-       * @description Short user-safe cause of a server error; never carries SQL, parameters, paths or tracebacks
+       * @description Short user-safe cause of a server error. In production an allowlisted reason plus the root exception type, e.g. `database schema out of date (UndefinedColumnError)`, never the exception text; elsewhere a redacted first line. Never carries SQL, parameters, credentials, paths or tracebacks
        */
       summary?: string | null;
     };
@@ -2832,25 +2832,15 @@ export interface components {
        */
       database: "ok" | "error";
       /**
-       * Expected Schema Revision
-       * @description The alembic head shipped with the running code, if readable.
-       */
-      expected_schema_revision?: string | null;
-      /**
        * Oldest Pending Job Seconds
        * @description Age of the oldest job still in `pending`, in seconds. `null` means the queue is empty, or - on a 503 - that it could not be read. Reported, never gated on: see the route docstring.
        */
       oldest_pending_job_seconds?: number | null;
       /**
        * Schema
-       * @description Database revision against the alembic head the code ships: `ok` (equal), `behind` (an older known revision, which answers 503), `ahead` (a revision the code does not know, which is the apply-SQL-before-merge window), `unknown` (either side unreadable). `null` when the database is unreachable.
+       * @description Database revision against the alembic head the code ships: `ok` (equal), `behind` (an older known revision, which answers 503), `ahead` (a revision the code does not know, which is the apply-SQL-before-merge window), `unknown` (either side unreadable). `null` when the database is unreachable. The revision ids themselves are logged, never returned.
        */
       schema?: ("ok" | "behind" | "ahead" | "unknown") | null;
-      /**
-       * Schema Revision
-       * @description `alembic_version.version_num` in the database, if readable.
-       */
-      schema_revision?: string | null;
       /** Status */
       status: string;
     };
@@ -3104,7 +3094,7 @@ export interface components {
       ref?: string | null;
       /**
        * Summary
-       * @description Short user-safe cause of a server error; never carries SQL, parameters, paths or tracebacks
+       * @description Short user-safe cause of a server error. In production an allowlisted reason plus the root exception type, e.g. `database schema out of date (UndefinedColumnError)`, never the exception text; elsewhere a redacted first line. Never carries SQL, parameters, credentials, paths or tracebacks
        */
       summary?: string | null;
     };

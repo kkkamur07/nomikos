@@ -240,6 +240,13 @@ class _FakeSession:
         self.rolled_back = True
 
 
+@pytest.fixture(autouse=True)
+def _fresh_log_state(monkeypatch):
+    """Each test starts as a fresh process: nothing logged yet."""
+    monkeypatch.setattr("backend.core.api.health._last_schema_report", None)
+    monkeypatch.setattr(schema_revision, "_last_unreadable", None)
+
+
 @pytest.fixture
 def make_client(monkeypatch):
     def _make(
@@ -267,8 +274,8 @@ def test_route_is_ok_when_schema_matches(make_client) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["schema"] == "ok"
-    assert body["schema_revision"] == "003_c"
-    assert body["expected_schema_revision"] == "003_c"
+    assert "schema_revision" not in body
+    assert "expected_schema_revision" not in body
 
 
 def test_route_is_503_and_logs_error_when_schema_is_behind(make_client, caplog) -> None:
@@ -282,8 +289,9 @@ def test_route_is_503_and_logs_error_when_schema_is_behind(make_client, caplog) 
     assert body["status"] == "degraded"
     assert body["database"] == "ok"
     assert body["schema"] == "behind"
-    assert body["schema_revision"] == "002_b"
-    assert body["expected_schema_revision"] == "003_c"
+    assert "schema_revision" not in body
+    assert "expected_schema_revision" not in body
+    assert "002_b" not in response.text and "003_c" not in response.text
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert any("002_b" in r.getMessage() and "003_c" in r.getMessage() for r in errors)
 
@@ -309,8 +317,7 @@ def test_route_stays_200_and_warns_when_alembic_version_is_missing(make_client, 
     assert response.status_code == 200
     body = response.json()
     assert body["schema"] == "unknown"
-    assert body["schema_revision"] is None
-    assert body["expected_schema_revision"] == "003_c"
+    assert "schema_revision" not in body
     assert session.rolled_back
     assert any(
         r.levelno == logging.WARNING and "alembic_version" in r.getMessage() for r in caplog.records
@@ -325,5 +332,82 @@ def test_route_stays_200_when_script_directory_is_unreadable(make_client) -> Non
     assert response.status_code == 200
     body = response.json()
     assert body["schema"] == "unknown"
-    assert body["schema_revision"] == "002_b"
-    assert body["expected_schema_revision"] is None
+    assert "expected_schema_revision" not in body
+
+
+def _schema_records(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if "database schema" in r.getMessage()]
+
+
+def test_schema_state_is_logged_only_on_a_transition(make_client, caplog) -> None:
+    client, session = make_client(["002_b"])
+
+    with caplog.at_level(logging.INFO):
+        for _ in range(5):
+            assert client.get("/health").status_code == 503
+    behind = _schema_records(caplog)
+    assert len(behind) == 1
+    assert behind[0].levelno == logging.ERROR
+    assert "002_b" in behind[0].getMessage() and "003_c" in behind[0].getMessage()
+
+    caplog.clear()
+    session._version_rows = ["003_c"]
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            assert client.get("/health").status_code == 200
+    recovered = _schema_records(caplog)
+    assert len(recovered) == 1
+    assert recovered[0].levelno == logging.INFO
+
+    caplog.clear()
+    session._version_rows = ["004_d"]
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            assert client.get("/health").status_code == 200
+    ahead = _schema_records(caplog)
+    assert len(ahead) == 1
+    assert ahead[0].levelno == logging.WARNING
+
+
+def test_first_healthy_probe_logs_nothing(make_client, caplog) -> None:
+    client, _ = make_client(["003_c"])
+
+    with caplog.at_level(logging.INFO):
+        client.get("/health")
+
+    assert _schema_records(caplog) == []
+
+
+def test_unreadable_alembic_version_is_logged_only_on_a_transition(make_client, caplog) -> None:
+    client, session = make_client(None)
+
+    def unreadable() -> list[logging.LogRecord]:
+        return [r for r in caplog.records if "could not read alembic_version" in r.getMessage()]
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(4):
+            assert client.get("/health").status_code == 200
+    assert len(unreadable()) == 1
+    assert unreadable()[0].exc_info
+    assert len(_schema_records(caplog)) == 1
+
+    caplog.clear()
+    session._version_rows = ["003_c"]
+    with caplog.at_level(logging.WARNING):
+        client.get("/health")
+    session._version_rows = None
+    with caplog.at_level(logging.WARNING):
+        client.get("/health")
+        client.get("/health")
+    assert len(unreadable()) == 1
+
+
+def test_wrong_alembic_version_row_count_is_logged_once(make_client, caplog) -> None:
+    client, _ = make_client(["003_c", "002_b"])
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            client.get("/health")
+
+    rows = [r for r in caplog.records if "holds 2 rows" in r.getMessage()]
+    assert len(rows) == 1

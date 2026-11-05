@@ -27,12 +27,7 @@ class HealthResponse(BaseModel):
             "Database revision against the alembic head the code ships: `ok` (equal), "
             "`behind` (an older known revision, which answers 503), `ahead` (a revision "
             "the code does not know, which is the apply-SQL-before-merge window), "
-            "`unknown` (either side unreadable). `null` when the database is unreachable."
+            "`unknown` (either side unreadable). `null` when the database is unreachable. "
+            "The revision ids themselves are logged, never returned."
         ),
-    )
-    schema_revision: str | None = Field(
-        default=None, description="`alembic_version.version_num` in the database, if readable."
-    )
-    expected_schema_revision: str | None = Field(
-        default=None, description="The alembic head shipped with the running code, if readable."
     )

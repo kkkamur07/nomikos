@@ -13,8 +13,10 @@ class ApiErrorDetail(BaseModel):
     summary: str | None = Field(
         default=None,
         description=(
-            "Short user-safe cause of a server error; never carries SQL, parameters, "
-            "paths or tracebacks"
+            "Short user-safe cause of a server error. In production an allowlisted "
+            "reason plus the root exception type, e.g. `database schema out of date "
+            "(UndefinedColumnError)`, never the exception text; elsewhere a redacted "
+            "first line. Never carries SQL, parameters, credentials, paths or tracebacks"
         ),
     )
 
