@@ -34,6 +34,7 @@ from backend.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from backend.core.log_sanitize import redact_secrets, sanitize_log_field
 from backend.core.schemas.errors import ApiErrorResponse
 from backend.core.settings import (
     get_app_settings,
@@ -290,6 +291,43 @@ _PATH_PATTERN = re.compile(r"(?:/[\w.@+-]+){2,}/?")
 #: SQLAlchemy appends these to its own message; never let one reach a client.
 _SQLALCHEMY_TAILS = (" [SQL:", " [parameters:", " (Background on this error")
 
+#: Production clients get one of these reasons, chosen by the root exception's
+#: class (or any base class) name, and never the exception's own text: that text
+#: can carry bound values, DSNs, signed URLs and internal hosts.
+_SCHEMA_OUT_OF_DATE = "database schema out of date"
+_DATABASE_UNAVAILABLE = "database unavailable"
+_INVALID_VALUE = "invalid value sent to the database"
+_CONFLICTING_DATA = "conflicting or missing data"
+_UPSTREAM_FAILED = "an upstream service failed"
+_UNEXPECTED = "unexpected server error"
+_REASON_BY_TYPE_NAME: dict[str, str] = {
+    "UndefinedColumnError": _SCHEMA_OUT_OF_DATE,
+    "UndefinedTableError": _SCHEMA_OUT_OF_DATE,
+    "UndefinedFunctionError": _SCHEMA_OUT_OF_DATE,
+    "UndefinedObjectError": _SCHEMA_OUT_OF_DATE,
+    "ConnectionRefusedError": _DATABASE_UNAVAILABLE,
+    "OperationalError": _DATABASE_UNAVAILABLE,
+    "InterfaceError": _DATABASE_UNAVAILABLE,
+    "CannotConnectNowError": _DATABASE_UNAVAILABLE,
+    "TooManyConnectionsError": _DATABASE_UNAVAILABLE,
+    "ConnectionDoesNotExistError": _DATABASE_UNAVAILABLE,
+    "PostgresConnectionError": _DATABASE_UNAVAILABLE,
+    "TimeoutError": _DATABASE_UNAVAILABLE,
+    "DataError": _INVALID_VALUE,
+    "InvalidTextRepresentationError": _INVALID_VALUE,
+    "InvalidParameterValueError": _INVALID_VALUE,
+    "InvalidParameterValue": _INVALID_VALUE,
+    "IntegrityError": _CONFLICTING_DATA,
+    "IntegrityConstraintViolationError": _CONFLICTING_DATA,
+    "NotNullViolationError": _CONFLICTING_DATA,
+    "ForeignKeyViolationError": _CONFLICTING_DATA,
+    "UniqueViolationError": _CONFLICTING_DATA,
+    "CheckViolationError": _CONFLICTING_DATA,
+}
+#: Any class defined in these packages is an outbound HTTP or storage call.
+_UPSTREAM_PACKAGES = frozenset({"httpx", "requests", "urllib3", "botocore", "boto3", "aiohttp"})
+_TYPE_NAME_MAX_CHARS = 80
+
 
 def _root_exception(exc: BaseException) -> BaseException:
     """The exception that names the real failure, not the wrapper around it.
@@ -308,24 +346,77 @@ def _root_exception(exc: BaseException) -> BaseException:
     return root
 
 
-def error_summary(exc: BaseException) -> str:
-    """One public line, ``Type: first line``, condensed from the root exception.
+def _type_name(exc: BaseException) -> str:
+    return sanitize_log_field(type(exc).__name__, max_len=_TYPE_NAME_MAX_CHARS) or "Exception"
 
-    Shown to the person who hit the failure, so it carries the reason and nothing
-    an attacker could use: only the first line (no traceback, no SQL statement or
-    bound parameters, which SQLAlchemy puts after it), SQLAlchemy's own tails cut
-    defensively, absolute paths masked, and a hard length cap.
-    """
-    root = _root_exception(exc)
+
+def _friendly_reason(root: BaseException) -> str:
+    """The allowlisted reason for ``root``: first match walking its class hierarchy."""
+    for cls in type(root).__mro__:
+        reason = _REASON_BY_TYPE_NAME.get(cls.__name__)
+        if reason is not None:
+            return reason
+        if str(getattr(cls, "__module__", "")).split(".", 1)[0] in _UPSTREAM_PACKAGES:
+            return _UPSTREAM_FAILED
+    return _UNEXPECTED
+
+
+def _redacted_detail(root: BaseException) -> str:
+    """``Type: first line`` of ``root`` with secrets, paths and controls masked."""
     lines = str(root).strip().splitlines()
     text = lines[0].strip() if lines else ""
     for tail in _SQLALCHEMY_TAILS:
         text = text.split(tail, 1)[0]
-    text = _PATH_PATTERN.sub("<path>", text).strip()
-    summary = f"{type(root).__name__}: {text}" if text else type(root).__name__
+    text = redact_secrets(text)
+    text = _PATH_PATTERN.sub("<path>", text)
+    text = sanitize_log_field(text, max_len=SUMMARY_MAX_CHARS)
+    name = _type_name(root)
+    summary = f"{name}: {text}" if text else name
     if len(summary) > SUMMARY_MAX_CHARS:
         summary = summary[: SUMMARY_MAX_CHARS - 3] + "..."
     return summary
+
+
+def error_detail(exc: BaseException) -> str:
+    """The log line's summary: the root's first line, redacted, never the allowlist.
+
+    Never raises: an exception whose ``__str__`` fails yields its type name.
+    """
+    try:
+        root = _root_exception(exc)
+    except Exception:
+        root = exc
+    try:
+        return _redacted_detail(root)
+    except Exception:
+        return _type_name(root)
+
+
+def error_summary(exc: BaseException, *, production: bool | None = None) -> str:
+    """One public line for the person who hit the failure.
+
+    In production it is an allowlisted reason chosen by the root exception's
+    type plus that type's name, ``database schema out of date
+    (UndefinedColumnError)``, and never the exception's text. Elsewhere it is
+    :func:`error_detail`: the first line only (no traceback, SQL statement or
+    bound parameters), redacted, paths masked, length capped. ``production``
+    defaults to ``ENVIRONMENT``. Never raises.
+    """
+    try:
+        root = _root_exception(exc)
+    except Exception:
+        root = exc
+    try:
+        if production is None:
+            production = get_infrastructure_settings().is_production
+    except Exception:
+        production = True
+    if not production:
+        return error_detail(exc)
+    try:
+        return f"{_friendly_reason(root)} ({_type_name(root)})"
+    except Exception:
+        return _UNEXPECTED
 
 
 def _scope_user_id(scope: Scope) -> str:
@@ -345,16 +436,18 @@ def _unhandled_error_response(scope: Scope, exc: BaseException) -> JSONResponse:
     """
     correlation_id = uuid.uuid4().hex
     summary = error_summary(exc)
-    route = getattr(scope.get("route"), "path", None) or "-"
+    route = str(getattr(scope.get("route"), "path", None) or "-")
+    # ``scope["path"]`` is percent-decoded, so it can hold CR, LF and ESC: every
+    # free-text field is flattened to one line before it reaches the log.
     logger.exception(
         "unhandled_api_error ref=%s method=%s path=%s route=%s user_id=%s exception=%s summary=%s",
         correlation_id,
-        scope.get("method", "-"),
-        scope.get("path", "-"),
-        route,
-        _scope_user_id(scope),
-        type(exc).__name__,
-        summary,
+        sanitize_log_field(str(scope.get("method", "-")), max_len=16),
+        sanitize_log_field(str(scope.get("path", "-")), max_len=512),
+        sanitize_log_field(route, max_len=512),
+        sanitize_log_field(_scope_user_id(scope), max_len=64),
+        _type_name(exc),
+        error_detail(exc),
         exc_info=exc,
     )
     return _error_response(

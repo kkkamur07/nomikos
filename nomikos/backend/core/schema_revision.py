@@ -30,6 +30,11 @@ DEFAULT_SCRIPT_LOCATION = Path(__file__).resolve().parents[2] / "infrastructure"
 
 SchemaState = Literal["ok", "behind", "ahead", "unknown"]
 
+#: The last way ``alembic_version`` failed to read (``"error"`` or ``"rows:<n>"``),
+#: ``None`` after a good read. Its warning is written only when this changes, so a
+#: client looping the unauthenticated ``/health`` cannot flood the logs.
+_last_unreadable: str | None = None
+
 
 @dataclass(frozen=True)
 class CodeRevisions:
@@ -173,16 +178,23 @@ async def read_database_revision(db: AsyncSession) -> str | None:
     """``alembic_version.version_num``, or ``None`` if it is missing or unreadable.
 
     A failed read rolls the session back so the connection goes back to the pool
-    clean. Callers should run this last on the session for the same reason.
+    clean. Callers should run this last on the session for the same reason. The
+    failure is logged, with its traceback, only when it differs from the last one.
     """
+    global _last_unreadable
     try:
         result = await db.execute(text("SELECT version_num FROM alembic_version"))
         rows = result.scalars().all()
     except SQLAlchemyError:
-        logger.warning("health check could not read alembic_version", exc_info=True)
+        if _last_unreadable != "error":
+            logger.warning("health check could not read alembic_version", exc_info=True)
+        _last_unreadable = "error"
         await db.rollback()
         return None
     if len(rows) != 1:
-        logger.warning("alembic_version holds %d rows, expected exactly one", len(rows))
+        if _last_unreadable != f"rows:{len(rows)}":
+            logger.warning("alembic_version holds %d rows, expected exactly one", len(rows))
+        _last_unreadable = f"rows:{len(rows)}"
         return None
+    _last_unreadable = None
     return str(rows[0])
