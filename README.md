@@ -14,6 +14,12 @@
     <a href="https://nomikos.app"><strong>Website</strong></a>
   </p>
 
+  <p>
+    <a href="https://nomikos.app/assets/video/nomikos-walkthrough.mp4"><img src="landing/assets/video/nomikos-walkthrough-poster.webp" alt="Play the Nomikos walkthrough video" width="720"></a>
+    <br>
+    <em>Watch the full walkthrough (2.5 minutes, with narration): <a href="https://nomikos.app/#walkthrough">on the website</a> or <a href="landing/assets/video/nomikos-walkthrough.mp4">as an MP4</a>.</em>
+  </p>
+
   <a href="https://nomikos.app"><img src="https://img.shields.io/badge/Website-nomikos.app-navy" alt="Website"></a>
   <a href="https://app.nomikos.app"><img src="https://img.shields.io/badge/App-app.nomikos.app-green" alt="Application"></a>
   <a href="https://huggingface.co/nomikos-project"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Hugging Face models"></a>

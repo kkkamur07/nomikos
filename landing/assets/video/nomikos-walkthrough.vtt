@@ -1,0 +1,190 @@
+WEBVTT
+
+00:00:00.280 --> 00:00:01.290
+This is Nomikos.
+
+00:00:01.570 --> 00:00:05.580
+It helps researchers transcribe
+historical manuscripts in Greek, Syriac,
+
+00:00:05.810 --> 00:00:06.680
+Coptic and Armenian.
+
+00:00:06.985 --> 00:00:08.775
+Models draft the lines and the text.
+
+00:00:08.960 --> 00:00:10.950
+You review their work
+and fix what is wrong.
+
+00:00:11.747 --> 00:00:13.417
+Sign in with your email and password.
+
+00:00:13.642 --> 00:00:15.072
+Your work lives in projects.
+
+00:00:15.347 --> 00:00:18.697
+Create a new project for a manuscript
+collection and give it a name.
+
+00:00:18.832 --> 00:00:21.082
+You can now pick default
+models for the project,
+
+00:00:21.232 --> 00:00:23.102
+so every new job starts with them.
+
+00:00:23.813 --> 00:00:26.503
+Inside a project,
+each manuscript is a document.
+
+00:00:26.723 --> 00:00:29.313
+Open it and upload the
+page images, or a PDF.
+
+00:00:29.813 --> 00:00:31.943
+Each image becomes a page you can work on.
+
+00:00:32.647 --> 00:00:34.157
+The first step is segmentation.
+
+00:00:34.362 --> 00:00:36.772
+A model finds every line
+of writing on the page.
+
+00:00:37.002 --> 00:00:39.412
+You can now choose which
+segmentation model runs.
+
+00:00:39.637 --> 00:00:42.667
+One is called seg-1,
+and the other is called seg-2.
+
+00:00:42.807 --> 00:00:44.737
+The lines appear as outlines on the image.
+
+00:00:45.513 --> 00:00:48.963
+Next, a recognition model reads
+each line and writes out its text.
+
+00:00:49.163 --> 00:00:52.263
+Jobs run on your own computer
+while the Nomikos agent is running,
+
+00:00:52.263 --> 00:00:53.713
+and in the cloud otherwise.
+
+00:00:54.113 --> 00:00:55.663
+Each job says which one it used.
+
+00:00:56.513 --> 00:01:00.043
+Corrections happen in the page editor,
+which now splits the screen in two.
+
+00:01:00.223 --> 00:01:01.793
+The manuscript is on the left.
+
+00:01:01.978 --> 00:01:04.488
+The transcript is on the right,
+one row per line.
+
+00:01:04.628 --> 00:01:07.498
+Click a line on the image and
+its row lights up beside it.
+
+00:01:08.147 --> 00:01:10.397
+For the selected line,
+you see the model output.
+
+00:01:10.637 --> 00:01:13.707
+Letters the model was unsure of are
+coloured, so you know where to look.
+
+00:01:13.852 --> 00:01:16.342
+Accept the text as it is,
+or type your correction.
+
+00:01:17.147 --> 00:01:19.497
+Sometimes the model cuts
+one line into pieces.
+
+00:01:19.772 --> 00:01:21.222
+Hold shift and click each piece.
+
+00:01:21.452 --> 00:01:23.542
+Then press merge,
+and they become one line.
+
+00:01:23.747 --> 00:01:25.717
+The piece with your
+corrected text keeps it.
+
+00:01:25.777 --> 00:01:29.567
+You can also draw a region around a
+folio or a column, and give it a label.
+
+00:01:30.313 --> 00:01:33.663
+Nomikos now keeps what the model
+proposed next to what you corrected.
+
+00:01:33.973 --> 00:01:37.143
+So the model's first draft is
+never lost when you edit a page.
+
+00:01:37.333 --> 00:01:40.923
+Your corrections become training data,
+and the next model learns from them.
+
+00:01:41.613 --> 00:01:43.623
+When a document is ready, download it.
+
+00:01:43.728 --> 00:01:48.918
+There is a transcription PDF, plain text,
+a Word file, and PAGE XML with the images.
+
+00:01:49.213 --> 00:01:52.223
+The PAGE XML now carries
+real baselines and regions,
+
+00:01:52.533 --> 00:01:54.123
+so other tools can train on it.
+
+00:01:54.747 --> 00:01:56.357
+You can also publish a document.
+
+00:01:56.557 --> 00:01:59.307
+The project owner copies a
+private link and shares it.
+
+00:01:59.412 --> 00:02:03.222
+Anyone with the link can read the
+pages and the transcript side by side.
+
+00:02:03.913 --> 00:02:05.043
+Projects can be shared.
+
+00:02:05.218 --> 00:02:07.148
+Add a colleague by email or username,
+
+00:02:07.518 --> 00:02:09.588
+and they can open the project
+and edit its documents.
+
+00:02:10.023 --> 00:02:12.853
+Write guidelines,
+so everyone transcribes the same way.
+
+00:02:13.547 --> 00:02:15.277
+Found a problem, or have an idea?
+
+00:02:15.472 --> 00:02:19.082
+Press Feedback in the top bar, write
+a short note, and send it to the team.
+
+00:02:19.847 --> 00:02:20.877
+That is the whole tour.
+
+00:02:21.087 --> 00:02:25.377
+Models draft the pages, you correct them,
+and every correction helps the next model.
+

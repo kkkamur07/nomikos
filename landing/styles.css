@@ -402,6 +402,15 @@ main {
   object-fit: contain;
 }
 
+.video-grid--wide {
+  max-width: 960px;
+  margin-top: 2.5rem;
+}
+
+.video--wide .video__frame {
+  aspect-ratio: 16 / 9;
+}
+
 .video figcaption {
   margin-top: 0.875rem;
 }
