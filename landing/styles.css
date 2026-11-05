@@ -404,7 +404,6 @@ main {
 
 .video-grid--wide {
   max-width: 960px;
-  margin-top: 2.5rem;
 }
 
 /* Clears the sticky header when the README links to /#walkthrough. */
