@@ -179,12 +179,16 @@ def test_shipped_chain_matches_alembic() -> None:
 def test_runtime_import_does_not_load_alembic() -> None:
     """Stand-in for the API image build, whose ``platform-prod`` group has no alembic."""
     repo = Path(__file__).resolve().parents[3]
+    # Same import and secrets as the Dockerfile's build-time check, so an alembic
+    # import added anywhere in the app fails here before it fails the image build.
     env = {
         **os.environ,
         "PYTHONPATH": os.pathsep.join([str(repo / "nomikos"), str(repo)]),
+        "JWT_SECRET": "container-build-validation-secret",
+        "INFERENCE_WEBHOOK_SECRET": "container-build-validation-secret",
     }
     code = (
-        "import sys; import backend.core.schema_revision; import backend.core.api.health; "
+        "import sys; from backend.core.main import app; assert app.title; "
         "assert 'alembic' not in sys.modules, sorted(m for m in sys.modules if 'alembic' in m)"
     )
 
