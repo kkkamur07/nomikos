@@ -291,6 +291,36 @@ def test_redaction_rules_individually() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("message", "expected", "absent"),
+    [
+        (
+            'invalid input syntax for type uuid: "prefix"private-value"',
+            "invalid input syntax for type uuid: <value>",
+            ("prefix", "private-value"),
+        ),
+        (
+            "invalid input for query argument $1: 'a'b' (expected str, got int)",
+            "invalid input for query argument $1: <value>",
+            ("'a'", "b'", "expected str"),
+        ),
+        (
+            'invalid input value for enum job_status: "never-closed',
+            "invalid input value for enum job_status: <value>",
+            ("never-closed",),
+        ),
+    ],
+)
+def test_value_echo_masks_everything_from_the_first_quote(
+    message: str, expected: str, absent: tuple[str, ...]
+) -> None:
+    redacted = redact_secrets(message)
+
+    assert redacted == expected
+    for fragment in absent:
+        assert fragment not in redacted
+
+
 def test_sanitize_log_field_flattens_controls_and_caps() -> None:
     assert sanitize_log_field("a\nb\rc\x1b[2Kd\x7fe\tf", max_len=100) == "a b c [2Kd e f"
     assert sanitize_log_field("x" * 50, max_len=10) == "x" * 10

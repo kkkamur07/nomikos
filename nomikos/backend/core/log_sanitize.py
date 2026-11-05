@@ -36,17 +36,12 @@ _WINDOWS_PATH = re.compile(r"(?<![\w/])[A-Za-z]:\\[^\s'\"]*")
 _HOME_PATH = re.compile(r"(?<![\w/])~[\w.-]*/[^\s'\"]*")
 #: Postgres and asyncpg quote the offending bound value after these phrases.
 _VALUE_ECHO = re.compile(r"(?i)invalid input|for type|value for enum")
-_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+_QUOTE = re.compile(r"['\"]")
 
 
 def sanitize_log_field(value: str, *, max_len: int) -> str:
     """``value`` on one line: every control character a space, then capped."""
     return _CONTROL_CHARS.sub(" ", value).strip()[:max_len]
-
-
-def _mask_quoted(match: re.Match[str]) -> str:
-    quote = match.group(0)[0]
-    return f"{quote}<value>{quote}"
 
 
 def redact_secrets(text: str) -> str:
@@ -61,8 +56,11 @@ def redact_secrets(text: str) -> str:
     text = _HOST_PARAM.sub("host=<redacted>", text)
     echo = _VALUE_ECHO.search(text)
     if echo is not None:
-        start = echo.start()
-        text = text[:start] + _QUOTED.sub(_mask_quoted, text[start:])
+        # The echoed value may itself hold quotes, so pairs cannot be trusted:
+        # everything from the first quote after the phrase to the end goes.
+        quote = _QUOTE.search(text, echo.end())
+        if quote is not None:
+            text = text[: quote.start()] + "<value>"
     text = _EMAIL.sub("<email>", text)
     text = _UUID.sub("<uuid>", text)
     text = _WINDOWS_PATH.sub("<path>", text)
