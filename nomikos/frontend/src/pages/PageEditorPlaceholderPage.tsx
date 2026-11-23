@@ -55,6 +55,7 @@ import { useEditorDrawState } from "../components/page-editor/hooks/useEditorDra
 import { useEditorSelection } from "../components/page-editor/hooks/useEditorSelection";
 import { useEditorShortcuts } from "../components/page-editor/hooks/useEditorShortcuts";
 import { segmentIdsWithGroundTruth } from "../components/page-editor/hooks/utils";
+import { scriptFontAttributes } from "../components/document/scriptFonts";
 
 function documentHrefFor(
   projectId: string | undefined,
@@ -625,7 +626,10 @@ export function PageEditorPlaceholderPage() {
       }
     >
       {loaded && (
-        <div className="pe-workspace">
+        <div
+          className="pe-workspace"
+          {...scriptFontAttributes(loaded.document.script_fonts)}
+        >
           <div className="pe-body">
             <PageEditorPageRailSlot
               parts={parts}

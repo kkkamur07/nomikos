@@ -7,6 +7,7 @@ import {
   DocumentTitlePanel,
 } from "../components/document/DocumentDetailSections";
 import { JobsNotice } from "../components/document/JobsNotice";
+import { scriptFontAttributes } from "../components/document/scriptFonts";
 import { AppPageShell } from "../components/layout/AppPageShell";
 import { ContentRegionLoading } from "../components/layout/ContentRegionLoading";
 import { WorkflowBadge } from "../components/WorkflowBadge";
@@ -136,7 +137,11 @@ function DocumentDetailTitlePanel(model: DocumentDetailModel): ReactNode {
       projectId={projectId}
       documentId={documentId}
       name={document.name}
+      scriptFonts={document.script_fonts}
       onRenamed={model.handleRenamed}
+      onScriptFontsChange={(scriptFonts) =>
+        model.applyDocumentPatch({ script_fonts: scriptFonts })
+      }
     />
   );
 }
@@ -170,7 +175,13 @@ export function DocumentDetailPage() {
       headerActions={DocumentDetailHeader(model)}
       titlePanel={DocumentDetailTitlePanel(model)}
     >
-      <DocumentDetailBody {...model} />
+      {/* display: contents, so the font choice reaches the page text without a layout box. */}
+      <div
+        style={{ display: "contents" }}
+        {...scriptFontAttributes(document?.script_fonts)}
+      >
+        <DocumentDetailBody {...model} />
+      </div>
     </AppPageShell>
   );
 }

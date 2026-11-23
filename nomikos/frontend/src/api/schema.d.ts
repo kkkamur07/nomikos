@@ -2601,6 +2601,10 @@ export interface components {
       project_id: string;
       /** Public Share Token */
       public_share_token?: string | null;
+      /** Script Fonts */
+      script_fonts?: {
+        [key: string]: string;
+      };
       /**
        * Updated At
        * Format: date-time
@@ -2619,6 +2623,10 @@ export interface components {
     DocumentUpdateRequest: {
       /** Name */
       name?: string;
+      /** Script Fonts */
+      script_fonts?: {
+        [key: string]: string;
+      };
       /** Workflow */
       workflow?: components["schemas"]["DocumentWorkflow"];
     };
@@ -2650,6 +2658,10 @@ export interface components {
       project_id: string;
       /** Public Share Token */
       public_share_token?: string | null;
+      /** Script Fonts */
+      script_fonts?: {
+        [key: string]: string;
+      };
       /**
        * Updated At
        * Format: date-time

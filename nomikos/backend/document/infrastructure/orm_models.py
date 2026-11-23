@@ -68,6 +68,10 @@ class Document(Base):
     public_share_token: Mapped[str | None] = mapped_column(
         String(64), unique=True, index=True, nullable=True
     )
+    # The font this document renders each script in, as ``{script: choice id}`` from
+    # ``backend.core.fonts.SCRIPT_FONTS``. NULL (never ``{}``) means every script uses
+    # its default; a script missing from the map does too. Reassign, never mutate.
+    script_fonts: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

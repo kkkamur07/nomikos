@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from backend.core.exceptions import ValidationError
 
-DOCUMENT_UPDATE_FIELDS = frozenset({"name", "workflow"})
+DOCUMENT_UPDATE_FIELDS = frozenset({"name", "workflow", "script_fonts"})
 BLOCK_PATCH_FIELDS = frozenset({"order", "box", "label"})
 LINE_PATCH_FIELDS = frozenset({"order", "block_id", "baseline", "mask", "points"})
 
