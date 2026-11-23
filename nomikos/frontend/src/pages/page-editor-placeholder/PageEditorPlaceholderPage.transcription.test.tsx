@@ -415,8 +415,8 @@ describe("PageEditorPlaceholderPage transcription", () => {
       screen.getByLabelText(/approved text for selected segment/i),
       { target: { value: "my own reading" } },
     );
-    // The model output is copied in first, which records where the Ground
-    // truth came from, and the correction is written over it.
+    // One checked write stores the correction and names the model layer it
+    // came from; the uncorrected model output is never copied in.
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
@@ -425,15 +425,15 @@ describe("PageEditorPlaceholderPage transcription", () => {
         "doc-1",
         "ground-truth-1",
         "line-1",
-        { text: "my own reading", previous_text: "model suggestion" },
+        {
+          text: "my own reading",
+          previous_text: "",
+          seeded_from_transcription_id: "model-1",
+        },
       );
     });
-    expect(mockedApi.copyToGroundTruth).toHaveBeenCalledWith(
-      "project-1",
-      "doc-1",
-      "model-1",
-      { line_ids: ["line-1"] },
-    );
+    expect(mockedApi.updateGroundTruthLineText).toHaveBeenCalledTimes(1);
+    expect(mockedApi.copyToGroundTruth).not.toHaveBeenCalled();
   });
 
   it("approves with Ctrl+Enter and moves on to the next Segment", async () => {
@@ -476,6 +476,65 @@ describe("PageEditorPlaceholderPage transcription", () => {
       ).toHaveValue("second reading");
     });
     expect(mockedApi.updateGroundTruthLineText).not.toHaveBeenCalled();
+  });
+
+  it("stays on the Segment picked while a Ctrl+Enter save was in flight", async () => {
+    const modelRow = (lineId: string, text: string) => ({
+      id: `tx-${lineId}`,
+      transcription_id: "model-1",
+      transcription_kind: "model" as const,
+      text,
+      confidence: 0.88,
+      character_confidences: null,
+    });
+    mockedApi.getDocument.mockResolvedValue(DOCUMENT);
+    mockedApi.listPartLines.mockResolvedValue([
+      line({ line_transcriptions: [modelRow("line-1", "first reading")] }),
+      line({
+        id: "line-2",
+        order: 1,
+        line_transcriptions: [modelRow("line-2", "second reading")],
+      }),
+      line({
+        id: "line-3",
+        order: 2,
+        line_transcriptions: [modelRow("line-3", "third reading")],
+      }),
+    ]);
+    let resolveSave: (value: { line_ids: string[] }) => void = () => {};
+    mockedApi.copyToGroundTruth.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve as typeof resolveSave;
+        }) as never,
+    );
+
+    renderPageEditor();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
+    fireEvent.keyDown(
+      screen.getByLabelText(/approved text for selected segment/i),
+      { key: "Enter", ctrlKey: true },
+    );
+    await waitFor(() => {
+      expect(mockedApi.copyToGroundTruth).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Segment 3/ }));
+    const box = screen.getByLabelText(/approved text for selected segment/i);
+    expect(box).toHaveValue("third reading");
+    fireEvent.change(box, { target: { value: "third, fixed" } });
+
+    resolveSave({ line_ids: ["line-1"] });
+    await flushPageEditorEffects();
+
+    expect(screen.getByRole("button", { name: /^Segment 3/ })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(
+      screen.getByLabelText(/approved text for selected segment/i),
+    ).toHaveValue("third, fixed");
   });
 
   it("leaves plain Enter to the text box", async () => {

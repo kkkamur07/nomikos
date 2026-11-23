@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ChangeEventHandler, KeyboardEvent } from "react";
 import type {
   InferenceModelResponse,
@@ -201,6 +202,12 @@ export function PageEditorTranscriptionStrip(
     240,
     props.visible,
   );
+  // The Segment open now, read when an async save resolves: the render that
+  // started the save holds the id from keypress time.
+  const currentSegmentIdRef = useRef(selectedSegmentId);
+  useEffect(() => {
+    currentSegmentIdRef.current = selectedSegmentId;
+  }, [selectedSegmentId]);
 
   if (!props.visible) {
     return null;
@@ -224,13 +231,18 @@ export function PageEditorTranscriptionStrip(
   const acceptEnabled =
     accept !== null && !accept.disabled && Boolean(selectedSegmentNumber);
 
-  // Cmd/Ctrl+Enter: approve or save, then move on to the next Segment.
+  // Cmd/Ctrl+Enter: approve or save, then move on to the next Segment. Only
+  // when the saved Segment is still the open one: a researcher who moved on
+  // while the save was in flight keeps the Segment (and draft) they chose.
   function onEditKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
     event.preventDefault();
     if (!accept || !acceptEnabled) return;
+    const savedSegmentId = selectedSegmentId;
     void runAccept(accept, props).then((done) => {
-      if (done) props.onNavigateSegment(1);
+      if (done && currentSegmentIdRef.current === savedSegmentId) {
+        props.onNavigateSegment(1);
+      }
     });
   }
 
