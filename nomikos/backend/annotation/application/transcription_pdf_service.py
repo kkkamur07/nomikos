@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import math
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -21,8 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Imported for its side effect: fpdf2 must keep combining marks with their letters.
 import backend.core.fpdf_marks  # noqa: F401
+from backend.annotation.application.line_geometry import geometry_points
 from backend.core.exceptions import NotFoundError, ValidationError
-from backend.core.fonts import font_for_script, resolve_unicode_font
+from backend.core.fonts import font_file_for, resolve_unicode_font
 from backend.document.application.document_service import DocumentService
 from backend.document.application.script_detection import Script, detect_script, is_rtl
 from backend.document.infrastructure.document_repository import DocumentRepository
@@ -99,7 +100,13 @@ class TranscriptionPdfService:
         lines = self._pdf_lines(await self._documents.list_part_lines(session, part.id))
         # fpdf2 shapes, lays out and compresses the page synchronously; on a single-worker
         # event loop that would stall every other in-flight request.
-        return await asyncio.to_thread(self._render_pdf, width=width, height=height, lines=lines)
+        return await asyncio.to_thread(
+            self._render_pdf,
+            width=width,
+            height=height,
+            lines=lines,
+            script_fonts=document_script_fonts(document),
+        )
 
     async def generate_part_pdf_public(
         self,
@@ -110,12 +117,19 @@ class TranscriptionPdfService:
         *,
         token: str | None = None,
     ) -> bytes:
-        part = await self._document_service.get_published_part(
+        context = await self._document_service.get_published_part_context(
             session, project_id, document_id, part_id, token=token
         )
+        part = context.part
         width, height = await self._page_size(session, part)
         lines = self._pdf_lines(await self._documents.list_part_lines(session, part.id))
-        return await asyncio.to_thread(self._render_pdf, width=width, height=height, lines=lines)
+        return await asyncio.to_thread(
+            self._render_pdf,
+            width=width,
+            height=height,
+            lines=lines,
+            script_fonts=document_script_fonts(context.document),
+        )
 
     async def _page_size(self, session: AsyncSession, part: DocumentPart) -> tuple[int, int]:
         """Page dimensions come from the row, not from re-decoding the stored image.
@@ -155,8 +169,15 @@ class TranscriptionPdfService:
                 )
         return prepared
 
-    def _render_pdf(self, *, width: int, height: int, lines: list[_PdfLine]) -> bytes:
-        pdf = _TranscriptionPdf()
+    def _render_pdf(
+        self,
+        *,
+        width: int,
+        height: int,
+        lines: list[_PdfLine],
+        script_fonts: Mapping[str, str] | None = None,
+    ) -> bytes:
+        pdf = _TranscriptionPdf(script_fonts=script_fonts)
         draw_page(pdf, width=width, height=height, lines=lines)
         return pdf.finish()
 
@@ -183,14 +204,27 @@ class TranscriptionPdfService:
         return newest.text
 
 
+def document_script_fonts(document: object) -> dict[str, str]:
+    """A document's saved ``{script: choice}`` font map, empty when it has none.
+
+    Read leniently, like the baseline: a stub document without the column still renders
+    in the default fonts.
+    """
+    value = getattr(document, "script_fonts", None)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
 def _baseline_points(baseline: object) -> list[list[float]] | None:
-    """The points of a stored ``{"points": [[x, y], ...]}`` baseline, or None."""
+    """The finite ``[x, y]`` points of a stored baseline, or None when fewer than two.
+
+    A stored baseline is JSON nobody validated: points may be empty, short, non-numeric
+    or NaN. Those are dropped, and a baseline left with fewer than two points is treated
+    as missing, so the line stands on its box instead of failing the whole PDF.
+    """
     if not isinstance(baseline, dict):
         return None
-    points = baseline.get("points")
-    if not isinstance(points, list):
-        return None
-    return [list(point[:2]) for point in points if isinstance(point, list | tuple)]
+    points = [point for point in geometry_points(baseline) if all(map(math.isfinite, point))]
+    return points if len(points) >= 2 else None
 
 
 def _layer_age(transcription: LineTranscription) -> float:
@@ -207,7 +241,7 @@ class _TranscriptionPdf(FPDF):
     page with no Syriac on it never parses the Syriac font.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, script_fonts: Mapping[str, str] | None = None) -> None:
         super().__init__(unit="pt")
         self.set_auto_page_break(False)
         self.set_margin(0)
@@ -218,10 +252,13 @@ class _TranscriptionPdf(FPDF):
         except RuntimeError as exc:
             raise ValidationError(str(exc)) from exc
         self._families: dict[Script, str] = {}
+        # The document's font choice per script; a script it has not chosen for, or a
+        # choice the registry no longer offers, gets the script's default.
+        self._script_fonts = dict(script_fonts or {})
 
     def family_for(self, script: Script) -> str:
         if script not in self._families:
-            path = font_for_script(script.value)
+            path = font_file_for(script.value, self._script_fonts.get(script.value))
             family = f"nomikos-{script.value}"
             self.add_font(family, fname=path)
             self._families[script] = family
