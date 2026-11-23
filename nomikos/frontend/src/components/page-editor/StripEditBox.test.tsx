@@ -158,3 +158,22 @@ describe("StripEditBox direction and keys", () => {
     expect(onKeyDown).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("StripEditBox script font", () => {
+  it.each([
+    ["syriac", "ܫܠܡܐ ܥܠܡܐ"],
+    ["coptic", "ⲡⲛⲟⲩⲧⲉ ⲡⲉ"],
+  ])(
+    "gives the textarea and mirror the same %s script font",
+    (script, text) => {
+      const { textarea, mirror } = setup({
+        draft: text,
+        modelReading: reading(text, null),
+      });
+      for (const layer of [textarea(), mirror()]) {
+        expect(layer.classList.contains("script-text")).toBe(true);
+        expect(layer.getAttribute("data-script")).toBe(script);
+      }
+    },
+  );
+});
