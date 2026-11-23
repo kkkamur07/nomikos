@@ -3208,6 +3208,8 @@ export interface components {
     LineTranscriptionPatchRequest: {
       /** Previous Text */
       previous_text?: string | null;
+      /** Seeded From Transcription Id */
+      seeded_from_transcription_id?: string | null;
       /** Text */
       text: string;
     };

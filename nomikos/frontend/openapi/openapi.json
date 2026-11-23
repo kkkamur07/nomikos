@@ -2722,6 +2722,18 @@
             ],
             "title": "Previous Text"
           },
+          "seeded_from_transcription_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seeded From Transcription Id"
+          },
           "text": {
             "maxLength": 10000,
             "title": "Text",
