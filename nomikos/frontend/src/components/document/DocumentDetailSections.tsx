@@ -7,6 +7,8 @@ import {
   type DocumentWorkflowCounts,
 } from "../../api/client";
 import { DocumentSettingsPanel } from "../sharing/DocumentSettingsPanel";
+import { DocumentFontSettings } from "./DocumentFontSettings";
+import type { ScriptFonts } from "./scriptFonts";
 import { PartList } from "./PartList";
 
 export function DocumentHeaderActions(options: {
@@ -76,16 +78,33 @@ export function DocumentTitlePanel(options: {
   projectId: string;
   documentId: string;
   name: string;
+  scriptFonts: ScriptFonts | null | undefined;
   onRenamed: (name: string) => void;
+  onScriptFontsChange: (scriptFonts: ScriptFonts) => void;
 }): ReactNode {
-  const { projectId, documentId, name, onRenamed } = options;
+  const {
+    projectId,
+    documentId,
+    name,
+    scriptFonts,
+    onRenamed,
+    onScriptFontsChange,
+  } = options;
   return (
-    <DocumentSettingsPanel
-      projectId={projectId}
-      documentId={documentId}
-      name={name}
-      onUpdated={(updated) => onRenamed(updated.name)}
-    />
+    <>
+      <DocumentSettingsPanel
+        projectId={projectId}
+        documentId={documentId}
+        name={name}
+        onUpdated={(updated) => onRenamed(updated.name)}
+      />
+      <DocumentFontSettings
+        projectId={projectId}
+        documentId={documentId}
+        scriptFonts={scriptFonts}
+        onUpdated={onScriptFontsChange}
+      />
+    </>
   );
 }
 

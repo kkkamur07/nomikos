@@ -13,6 +13,7 @@ published-workflow rule in two places again.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from typing import NamedTuple
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.api.pagination import PageCursor
 from backend.core.exceptions import AccessDeniedError, ValidationError
+from backend.core.fonts import validate_script_fonts
 from backend.document.application.document_access import DocumentAccess, PartContext
 from backend.document.application.patch_fields import (
     DOCUMENT_UPDATE_FIELDS,
@@ -194,6 +196,18 @@ class DocumentCatalog:
                 # breaking whatever was already shared - rotating is a separate,
                 # explicit operation the owner reaches for on purpose.
                 fields = {**fields, "public_share_token": secrets.token_urlsafe(32)}
+        if "script_fonts" in fields:
+            # A fresh dict, never the stored one mutated: SQLAlchemy only notices a JSONB
+            # change on reassignment. Empty means "all defaults", which is stored as NULL.
+            # Checked again here for callers that skip the request model.
+            script_fonts = fields["script_fonts"]
+            if not isinstance(script_fonts, Mapping):
+                raise ValidationError("Invalid script_fonts value")
+            try:
+                checked = validate_script_fonts(script_fonts)
+            except ValueError as exc:
+                raise ValidationError(f"Invalid script_fonts value: {exc}") from exc
+            fields = {**fields, "script_fonts": checked or None}
         return await self._documents.update(session, document, **fields)
 
     async def rotate_share_token(

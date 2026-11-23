@@ -1441,6 +1441,13 @@
             ],
             "title": "Public Share Token"
           },
+          "script_fonts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Script Fonts",
+            "type": "object"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1470,6 +1477,13 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "script_fonts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Script Fonts",
+            "type": "object"
           },
           "workflow": {
             "$ref": "#/components/schemas/DocumentWorkflow",
@@ -1522,6 +1536,13 @@
               }
             ],
             "title": "Public Share Token"
+          },
+          "script_fonts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Script Fonts",
+            "type": "object"
           },
           "updated_at": {
             "format": "date-time",
