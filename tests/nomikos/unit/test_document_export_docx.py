@@ -9,6 +9,7 @@ import pytest
 from docx import Document as open_word_document
 from docx.oxml.ns import qn
 
+from backend.core.fonts import SCRIPT_FONT_FAMILIES
 from backend.document.application.document_export_docx import (
     UNAPPROVED_COLOR,
     UNAPPROVED_NOTE,
@@ -421,7 +422,7 @@ def test_an_unapproved_syriac_line_keeps_its_font_and_right_to_left_layout() -> 
 
     assert _is_grey_italic(syriac)
     assert syriac.runs[0]._r.rPr.find(qn("w:iCs")) is not None
-    assert _fonts(syriac) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans Syriac Eastern")
+    assert _fonts(syriac) == dict.fromkeys(("ascii", "hAnsi", "cs"), SCRIPT_FONT_FAMILIES["syriac"])
     assert syriac._p.pPr.find(qn("w:bidi")) is not None
     assert syriac.runs[0].font.rtl is True
 
