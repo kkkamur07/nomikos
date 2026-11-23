@@ -5,13 +5,13 @@ import type {
   TranscriptionLayerResponse,
 } from "../../../api/client";
 import {
+  initialDraftFor,
   mergeSavedLine,
   modelLayerIdForPromotion,
+  modelReadingFor,
   segmentHasGroundTruth,
   segmentIdsWithGroundTruth,
-  showsModelSourceReview,
   syncLayoutLinesFromSegments,
-  transcriptionForOcrReview,
 } from "./utils";
 
 const MODEL_LAYER: TranscriptionLayerResponse = {
@@ -82,18 +82,6 @@ const LINE = {
 } satisfies LineResponse;
 
 describe("page editor transcription utils", () => {
-  it("shows OCR review for model transcriptions", () => {
-    expect(showsModelSourceReview(LINE.line_transcriptions[1])).toBe(true);
-    expect(showsModelSourceReview(LINE.line_transcriptions[0])).toBe(false);
-  });
-
-  it("selects OCR review only for a model transcription layer", () => {
-    expect(transcriptionForOcrReview(LINE, GROUND_TRUTH_LAYER)).toBeNull();
-    expect(transcriptionForOcrReview(LINE, MODEL_LAYER)).toEqual(
-      LINE.line_transcriptions[1],
-    );
-  });
-
   it("resolves the model layer id used for ground truth promotion", () => {
     expect(modelLayerIdForPromotion(LINE, MODEL_LAYER)).toBe("model-1");
     expect(modelLayerIdForPromotion(LINE, GROUND_TRUTH_LAYER)).toBe("model-1");
@@ -211,5 +199,70 @@ describe("page editor transcription utils", () => {
         ],
       },
     ]);
+  });
+});
+
+function lineWith(
+  ...rows: [kind: "ground_truth" | "model", layerId: string, text: string][]
+): LineResponse {
+  return {
+    ...LINE,
+    line_transcriptions: rows.map(([kind, layerId, text]) => ({
+      id: `${layerId}-line`,
+      transcription_id: layerId,
+      transcription_kind: kind,
+      text,
+      confidence: null,
+    })),
+  };
+}
+
+describe("initialDraftFor", () => {
+  it("returns Ground truth even when model rows exist", () => {
+    const line = lineWith(
+      ["ground_truth", "ground-truth-1", "typed"],
+      ["model", "model-1", "read"],
+    );
+    expect(initialDraftFor(line, "model-1")).toBe("typed");
+  });
+
+  it("returns the model text for a model-only line", () => {
+    expect(initialDraftFor(lineWith(["model", "model-1", "read"]), null)).toBe(
+      "read",
+    );
+  });
+
+  it("prefers the selected layer's model row, else the newest", () => {
+    const line = lineWith(
+      ["model", "model-1", "older"],
+      ["model", "model-2", "newer"],
+    );
+    expect(initialDraftFor(line, "model-1")).toBe("older");
+    expect(initialDraftFor(line, null)).toBe("newer");
+  });
+
+  it("falls through to the model when Ground truth is blank", () => {
+    const line = lineWith(
+      ["ground_truth", "ground-truth-1", "   "],
+      ["model", "model-1", "read"],
+    );
+    expect(initialDraftFor(line, null)).toBe("read");
+  });
+
+  it("returns an empty string when there is nothing", () => {
+    expect(initialDraftFor(lineWith(), null)).toBe("");
+  });
+});
+
+describe("modelReadingFor", () => {
+  it("picks the selected model layer's row, else the newest", () => {
+    const line = lineWith(
+      ["model", "model-1", "older"],
+      ["model", "model-2", "newer"],
+    );
+    expect(modelReadingFor(line, MODEL_LAYER)?.text).toBe("older");
+    expect(modelReadingFor(line, GROUND_TRUTH_LAYER)?.text).toBe("newer");
+    expect(modelReadingFor(line, null)?.text).toBe("newer");
+    expect(modelReadingFor(lineWith(), null)).toBeNull();
   });
 });

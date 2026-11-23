@@ -85,3 +85,43 @@ bundled (`NotoSansSyriacEastern-Regular.ttf` and `NotoSansSyriacWestern-Regular.
 v3.001 unhinted TTFs from the notofonts syriac releases, next to the v3.000 Estrangela
 file) with `core/fonts.py::SYRIAC_STYLE_FONT_FILES` mapping each style to its file, so a
 later per-document style choice has somewhere to plug in. No per-document setting yet.
+
+## Update 2026-11-22: combining marks and baseline layout
+
+**Combining marks stay on their letters.** fpdf2 2.8.9 splits a line into shaping runs
+wherever the Unicode script changes, and combining marks (U+0300 to U+036F, U+FE20 to U+FE2F)
+report the `Inherited` script, so each mark was shaped alone: Coptic overlines and dots were drawn
+beside their letters instead of over them, and a Syriac seyame broke the cursive join of its word.
+`backend/core/fpdf_marks.py` replaces fpdf2's script lookup (once, at import) with one that maps
+`Inherited` to `Common`, which fpdf2 already lets join the run around it; that is Unicode's own
+rule for inherited characters. A canary test fails once upstream stops splitting, and the module
+can then be deleted.
+
+**Lines sit on their baselines, in one size per page.** Fitting each line to its own polygon made
+sizes jump from 8 to 48 points down one Coptic page and stacked lines on each other, because
+segmenter polygons overlap and some are malformed. `draw_page` now takes the page's text size as
+0.7 of the median gap between consecutive baselines (steps under half or over twice a first
+median are dropped, as is the jump to the next column), shrinks a line below it only when the
+line is wider than 0.98 of its baseline, and sets the text baseline at the mean height of the
+line's baseline points, from its left end (right end for Syriac). A baseline with fewer than two
+points, one that is the stored polygon itself (a hand-drawn line), or one that climbs more than
+1.5 line gaps falls back to the bottom of the line's box, lifted by the font's descent. A page
+with fewer than two usable baselines kept the previous fit to each box (replaced below). Lines whose polygons
+overlap in the source data can still touch.
+
+**Pages whose baselines are stubs.** Some segmenters store a baseline as two equal points or a
+short piece under a few words (Grec 1360 page 2: 51 lines, none with a whole baseline). Those
+pages fell back to fitting each box, so sizes ran from 6 to 14 points, and a stub's left end sent
+right-column lines off the page. Now a baseline spanning less than 0.8 of its box is not used for
+placement (the line stands on its box bottom), and every page gets one size: from the baseline gap
+when at least half the lines have a usable baseline (steps counted only between neighbours that
+both have one), else from the median pitch of box centres, else the median box height; times 0.7
+and clamped as before, and capped at the size where three lines in four fit their width, so a
+page whose text runs wider than its boxes does not end up with every line shrunk to a size of its
+own. A line still too wide shrinks alone, with no lower bound, to fit its span cut to the page
+(4 points from each edge): no text runs past the page or its box.
+
+**Unapproved lines print like approved ones.** Researchers leave most lines unapproved, so a PDF
+that drew a model's unapproved output in grey made a finished page look like a draft. The
+selection rule is unchanged (approved text, else the newest model output), but every line is now
+drawn in the same ink and the grey path is gone.

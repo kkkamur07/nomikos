@@ -17,7 +17,7 @@ import type {
 } from "./editorHookTypes";
 import { useGroundTruthText } from "./useGroundTruthText";
 import { useOcrRun } from "./useOcrRun";
-import { lineTextForLayer } from "./utils";
+import { initialDraftFor } from "./utils";
 
 type PairingStateInput = {
   projectId: string | undefined;
@@ -158,7 +158,7 @@ export function usePairingState({
     setTranscriptionSaveMessage(null);
     setPairingError(null);
     if (selectedSegment) {
-      setApprovedTextDraft(lineTextForLayer(selectedSegment, nextLayerId));
+      setApprovedTextDraft(initialDraftFor(selectedSegment, nextLayerId));
     }
   }
 
@@ -231,7 +231,7 @@ export function usePairingState({
         : (lines.find((line) => line.id === next.anchorId) ?? null);
     setTranscriptionSaveMessage(null);
     setApprovedTextDraft(
-      selected ? lineTextForLayer(selected, selectedTranscriptionLayerId) : "",
+      selected ? initialDraftFor(selected, selectedTranscriptionLayerId) : "",
     );
   }
 
@@ -247,7 +247,7 @@ export function usePairingState({
     setSelectedSegmentId(survivor?.id ?? null);
     setTranscriptionSaveMessage(null);
     setApprovedTextDraft(
-      survivor ? lineTextForLayer(survivor, selectedTranscriptionLayerId) : "",
+      survivor ? initialDraftFor(survivor, selectedTranscriptionLayerId) : "",
     );
   }
 
@@ -297,9 +297,8 @@ export function usePairingState({
     pairTextLine: groundTruthText.pairTextLine,
     commitLineText: groundTruthText.commitLineText,
     reloadLineText,
-    saveApprovedText: groundTruthText.saveApprovedText,
+    saveSelectedSegmentText: groundTruthText.saveSelectedSegmentText,
     selectTranscriptionLayer,
-    saveGroundTruthText: groundTruthText.saveGroundTruthText,
     runSegmentOcr: ocrRun.runSegmentOcr,
     runPageOcr: ocrRun.runPageOcr,
     promoteSelectedSegmentToGroundTruth:

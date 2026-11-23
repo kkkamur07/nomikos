@@ -4,7 +4,7 @@
 wrapping it, so a page in the chapter PDF is built from exactly the values a page in the
 single-page PDF is built from: the page size off the same row (with the same lazy
 backfill for parts uploaded before dimensions were persisted), the same text selection
-(approved text in ink, a model's unapproved output in grey), the same font fitting.
+(approved text, else a model's output, drawn alike), the same font fitting.
 
 What is *not* reused is ``generate_part_pdf`` itself, and the reason is the dependency
 closure. That method returns a finished one-page PDF, and turning eighteen of those into
@@ -20,6 +20,7 @@ here: each labelled region gets its label as a small heading just above its box.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from backend.annotation.application.transcription_pdf_service import (
     TranscriptionPdfService,
     _PdfLine,
     _TranscriptionPdf,
+    document_script_fonts,
     draw_page,
 )
 from backend.document.application.document_export_selection import (
@@ -146,20 +148,24 @@ class DocumentTranscriptionPdfService(TranscriptionPdfService):
             # silently renumber everything after it, and the reader comparing this
             # against the scans needs page 7 to be page 7.
             pages.append(_PdfPage(width=width, height=height, lines=lines, regions=regions))
-        content = await asyncio.to_thread(self._render_document_pdf, pages)
+        content = await asyncio.to_thread(
+            self._render_document_pdf, pages, document_script_fonts(selection.document)
+        )
         return DocumentPdfExport(
             filename=document_download_name(selection.document.name, "transcription.pdf"),
             content=content,
         )
 
-    def _render_document_pdf(self, pages: list[_PdfPage]) -> bytes:
+    def _render_document_pdf(
+        self, pages: list[_PdfPage], script_fonts: Mapping[str, str] | None = None
+    ) -> bytes:
         """Draw every page into one PDF.
 
         fpdf2 shapes, lays out and compresses synchronously, which is why the caller
         hands this to a worker thread: on a single-worker event loop it would otherwise
         stall every other in-flight request for the length of a chapter.
         """
-        pdf = _TranscriptionPdf()
+        pdf = _TranscriptionPdf(script_fonts=script_fonts)
         for page in pages:
             # Sized per page, not once: a document can hold a folio spread and a single
             # leaf, and each page's line coordinates are in that page's own pixel grid.

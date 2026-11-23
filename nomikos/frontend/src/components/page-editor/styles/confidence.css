@@ -61,21 +61,6 @@
   box-shadow: 0 0 0 1px var(--border-2);
 }
 
-.pe-model-inline__body [data-conf] {
-  cursor: help;
-}
-.pe-model-inline__empty {
-  font-size: 0.8125rem;
-  color: var(--text-4);
-  font-family: var(--font-ui);
-}
-.pe-model-inline__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
 .pe-tx-block--compact {
   flex: 1;
   min-height: 0;
@@ -145,25 +130,64 @@
   word-break: break-word;
 }
 
-.pe-strip__edit {
+/* The strip's text box: a transparent textarea over a mirror that tints the
+   model's letters by confidence. The two share every property that moves a
+   glyph (box, font, wrapping, direction), so a tint stays under its letter. */
+.pe-strip__edit-box {
+  position: relative;
   flex: 1;
-  width: calc(100% - var(--space-6));
-  margin: 0 var(--space-3) var(--space-2);
   min-height: 0;
-  font-size: 1.0625rem;
-  line-height: 1.7;
-  padding: var(--space-2) var(--space-3);
+  margin: 0 var(--space-3) var(--space-2);
   background: var(--surface);
-  border: 1px solid var(--border-2);
   border-radius: var(--radius-sm);
+}
+.pe-strip__edit,
+.pe-strip__mirror {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  /* Overridden per script by .script-text[data-script] (script-fonts.css),
+     which both layers carry with the same value. */
+  font-family: var(--script-font-latin);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  line-height: 1.7;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  scrollbar-gutter: stable;
+}
+.pe-strip__mirror {
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+.pe-strip__edit {
+  overflow: auto;
+  background: transparent;
+  border-color: var(--border-2);
   color: var(--text);
-  font-family: var(--font-serif);
   resize: none;
 }
 .pe-strip__edit:focus-visible {
   outline: none;
   border-color: var(--navy);
   box-shadow: 0 0 0 2px rgba(13, 31, 60, 0.08);
+}
+/* Inside the mirror a tier is a tint only: the textarea draws the letters, and
+   padding or a weight change would push the tint off them. */
+.pe-strip__mirror .pe-confidence-text [data-conf] {
+  padding: 0;
+  font-weight: inherit;
+  color: transparent;
+  cursor: default;
 }
 
 .pe-strip__footer {

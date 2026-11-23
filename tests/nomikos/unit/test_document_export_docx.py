@@ -9,6 +9,7 @@ import pytest
 from docx import Document as open_word_document
 from docx.oxml.ns import qn
 
+from backend.core.fonts import SCRIPT_FONT_FAMILIES
 from backend.document.application.document_export_docx import (
     DocumentDocxExportService,
     DocxPage,
@@ -120,11 +121,12 @@ async def test_document_docx_has_a_heading_per_page_and_ground_truth_lines() -> 
     assert export.filename == "codex-syriacus-1-transcription.docx"
     word = _word(export.content)
     paragraphs = [(p.style.name, p.text) for p in word.paragraphs]
-    # Unapproved model text and blank lines are not ground truth, as in the text export.
+    # Model text prints too; a blank line is still dropped.
     # The empty Normal paragraph between pages is the page break starting page 3.
     assert paragraphs == [
         ("Heading 2", "Page 1"),
         ("Normal", _SYRIAC),
+        ("Normal", "guess"),
         ("Normal", ""),
         ("Heading 2", "Page 3"),
         ("Normal", _GREEK),
@@ -137,7 +139,7 @@ def test_each_line_names_its_script_font_and_only_syriac_is_right_to_left() -> N
     word = _word(render_docx([DocxPage(number=1, lines=[_SYRIAC, _GREEK, _ARMENIAN, _COPTIC])]))
     syriac, greek, armenian, coptic = word.paragraphs[1:]
 
-    assert _fonts(syriac) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans Syriac Eastern")
+    assert _fonts(syriac) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans Syriac")
     assert _fonts(greek) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans")
     assert _fonts(armenian) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans Armenian")
     assert _fonts(coptic) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans Coptic")
@@ -205,7 +207,7 @@ def test_one_page_holds_no_page_break() -> None:
 
 
 @pytest.mark.asyncio
-async def test_member_part_docx_names_the_page_stem_and_keeps_ground_truth() -> None:
+async def test_member_part_docx_names_the_page_stem_and_prints_the_whole_page() -> None:
     document = Document(id=uuid.uuid4(), project_id=uuid.uuid4(), name="Codex Syriacus 1")
     part = DocumentPart(id=uuid.uuid4(), document_id=document.id, order=1)
     repository = _Repository(
@@ -226,6 +228,7 @@ async def test_member_part_docx_names_the_page_stem_and_keeps_ground_truth() -> 
     assert [(p.style.name, p.text) for p in word.paragraphs] == [
         ("Heading 2", "Page 2"),
         ("Normal", _SYRIAC),
+        ("Normal", "guess"),
     ]
 
 
@@ -304,3 +307,82 @@ def test_xml_invalid_characters_are_dropped_not_a_failed_export() -> None:
         render_docx([DocxPage(number=1, lines=[RegionHeading("fol.\x001r"), "a\x00b\x07c￾￿d"])])
     )
     assert [p.text for p in word.paragraphs] == ["Page 1", "fol.1r", "abcd"]
+
+
+# --- Unapproved lines: model output prints like approved text ---
+
+
+async def _export_one_page(lines: list[Line]):
+    document = Document(id=uuid.uuid4(), project_id=uuid.uuid4(), name="Codex")
+    part = DocumentPart(id=uuid.uuid4(), document_id=document.id, order=0)
+    selection = DocumentExportSelection(document=document, parts=[part], page_numbers={part.id: 1})
+    repository = _Repository({part.id: lines})
+    service = DocumentDocxExportService(documents=repository, selector=_Selector(selection))
+    export = await service.export_document_docx(
+        object(), object(), document.project_id, document.id
+    )
+    return _word(export.content)
+
+
+def _is_plain(paragraph) -> bool:
+    run = paragraph.runs[0]
+    return not run.italic and run.font.color.rgb is None and not run.bold
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_page_prints_every_line_in_the_normal_style_without_a_note() -> None:
+    word = await _export_one_page(
+        [
+            _line(_GREEK),
+            _line(_COPTIC, TranscriptionKind.model),
+            _line(_ARMENIAN),
+            _line(_SYRIAC, TranscriptionKind.model),
+        ]
+    )
+
+    assert [p.text for p in word.paragraphs] == ["Page 1", _GREEK, _COPTIC, _ARMENIAN, _SYRIAC]
+    assert all(_is_plain(p) for p in word.paragraphs[1:])
+    for paragraph in word.paragraphs[1:]:
+        assert paragraph.runs[0]._r.rPr.find(qn("w:iCs")) is None
+
+
+@pytest.mark.asyncio
+async def test_a_model_only_page_prints_its_lines_not_the_placeholder() -> None:
+    word = await _export_one_page(
+        [
+            _line(_COPTIC, TranscriptionKind.model),
+            _line(_SYRIAC, TranscriptionKind.model),
+            _line(None),
+        ]
+    )
+
+    assert [p.text for p in word.paragraphs] == ["Page 1", _COPTIC, _SYRIAC]
+    assert all(_is_plain(p) for p in word.paragraphs[1:])
+
+
+@pytest.mark.asyncio
+async def test_a_ground_truth_line_wins_over_its_model_output() -> None:
+    line = _line(_GREEK)
+    model = Transcription(name="model", kind=TranscriptionKind.model)
+    line.transcriptions.append(LineTranscription(transcription=model, text="guess"))
+
+    word = await _export_one_page([line])
+
+    assert [p.text for p in word.paragraphs] == ["Page 1", _GREEK]
+
+
+@pytest.mark.asyncio
+async def test_an_unapproved_syriac_line_keeps_its_font_and_right_to_left_layout() -> None:
+    word = await _export_one_page([_line(_SYRIAC, TranscriptionKind.model)])
+    syriac = word.paragraphs[1]
+
+    assert _is_plain(syriac)
+    assert _fonts(syriac) == dict.fromkeys(("ascii", "hAnsi", "cs"), SCRIPT_FONT_FAMILIES["syriac"])
+    assert syriac._p.pPr.find(qn("w:bidi")) is not None
+    assert syriac.runs[0].font.rtl is True
+
+
+@pytest.mark.asyncio
+async def test_xml_invalid_characters_in_an_unapproved_line_are_dropped() -> None:
+    word = await _export_one_page([_line("a\x00b\x07c", TranscriptionKind.model)])
+    assert [p.text for p in word.paragraphs] == ["Page 1", "abc"]

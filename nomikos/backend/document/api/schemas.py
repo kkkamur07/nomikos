@@ -11,6 +11,7 @@ from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_
 from pydantic.json_schema import SkipJsonSchema
 
 from backend.annotation.application.line_merge_service import MAX_MERGE_LINES
+from backend.core.fonts import validate_script_fonts
 from backend.core.schemas.errors import ApiErrorDetail
 from backend.document.application.part_service import (
     MAX_PART_UPLOAD_BYTES as _MAX_PART_UPLOAD_BYTES,
@@ -119,13 +120,24 @@ class DocumentUpdateRequest(BaseModel):
 
     name: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=512)
     workflow: DocumentWorkflow | SkipJsonSchema[None] = None
+    # ``{script: choice id}``, replacing the whole map. ``{}`` clears every choice back
+    # to the script defaults; scripts left out of a non-empty map use their default too.
+    script_fonts: dict[str, str] | SkipJsonSchema[None] = None
 
-    @field_validator("name", "workflow", mode="before")
+    @field_validator("name", "workflow", "script_fonts", mode="before")
     @classmethod
     def reject_explicit_null(cls, value: object) -> object:
         if value is None:
             raise ValueError("must not be null")
         return value
+
+    @field_validator("script_fonts")
+    @classmethod
+    def check_script_fonts(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        # ``validate_script_fonts`` raises ValueError, which pydantic reports as 422.
+        return validate_script_fonts(value)
 
 
 class DocumentResponse(BaseModel):
@@ -139,6 +151,9 @@ class DocumentResponse(BaseModel):
     # ``None`` until a document is first published, and again after nothing has
     # regenerated it; never re-derive "is this shared" from anything but this field.
     public_share_token: str | None = None
+    # ``{script: choice id}`` for the scripts this document overrides; ``{}`` when it
+    # uses every default. Always an object, never null.
+    script_fonts: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -512,6 +527,10 @@ class LineTranscriptionPatchRequest(BaseModel):
     # The text the edit started from. When sent and the stored text differs,
     # the save is refused with 409 instead of overwriting another writer.
     previous_text: str | None = Field(default=None, max_length=MAX_LINE_TEXT_CHARS)
+    # The model layer this text corrects, when the edit started from a model
+    # reading. Recorded on the Ground truth row only when it has no seed yet.
+    # Must be a model layer of the same document, else 422.
+    seeded_from_transcription_id: UUID | None = None
 
 
 class PublicBlockResponse(BaseModel):

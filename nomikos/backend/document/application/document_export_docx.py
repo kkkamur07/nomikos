@@ -7,15 +7,22 @@ opens left to right in a Latin font, which is either boxes or a mirror image of 
 manuscript. Both come from the line's own characters (see ``script_detection``), so a
 Greek gloss on a Syriac page stays left to right.
 
-Same pages, same text and same page numbers as the text export: the selector, the
-ground-truth rule and the position-based numbering are shared, not restated. So is the
-region grouping (ADR 0011): a labelled region's lines follow its label in bold.
+Same pages and same page numbers as the text export: the selector and the
+position-based numbering are shared, not restated. So is the region grouping (ADR 0011):
+a labelled region's lines follow its label in bold.
+
+Unlike the text export, this one is for reading, so it carries the whole page: a line
+with approved text prints that, and a line with only model output prints the model's
+output (``line_text_selection``, the rule the transcription PDF applies). Both print in
+the same style: researchers leave most lines unapproved, so marking them would mark
+nearly the whole document.
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -28,18 +35,17 @@ from docx.text.paragraph import Paragraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.annotation.application.page_xml_export_service import export_file_stem
+from backend.annotation.application.transcription_pdf_service import document_script_fonts
 from backend.core.exceptions import NotFoundError
-from backend.core.fonts import SCRIPT_FONT_FAMILIES
+from backend.core.fonts import font_family_for
 from backend.document.application.document_export_selection import (
     DocumentExportSelector,
     document_download_name,
 )
-from backend.document.application.document_export_text import (
-    NO_LINES_PLACEHOLDER,
-    _ground_truth_text,
-)
+from backend.document.application.document_export_text import NO_LINES_PLACEHOLDER
 from backend.document.application.document_service import DocumentService
-from backend.document.application.regions import RegionHeading, region_text
+from backend.document.application.line_text_selection import reading_text
+from backend.document.application.regions import RegionHeading, region_items
 from backend.document.application.script_detection import Script, detect_script, is_rtl
 from backend.document.infrastructure.document_repository import DocumentRepository
 from backend.users.infrastructure.orm_models import User
@@ -102,7 +108,9 @@ class DocumentDocxExportService:
             pages.append(
                 DocxPage(number=selection.page_number(part), lines=_page_text(blocks, lines))
             )
-        content = await asyncio.to_thread(render_docx, pages)
+        content = await asyncio.to_thread(
+            render_docx, pages, document_script_fonts(selection.document)
+        )
         return DocumentDocxExport(
             filename=document_download_name(selection.document.name, "transcription.docx"),
             content=content,
@@ -122,7 +130,7 @@ class DocumentDocxExportService:
         if part is None or part.document_id != document.id:
             raise NotFoundError("Part not found")
         page = await self._part_page(session, part)
-        content = await asyncio.to_thread(render_docx, [page])
+        content = await asyncio.to_thread(render_docx, [page], document_script_fonts(document))
         return DocumentDocxExport(
             filename=f"{export_file_stem(document.name, page.number)}.docx",
             content=content,
@@ -146,7 +154,9 @@ class DocumentDocxExportService:
             session, project_id, document_id, part_id, token=token
         )
         page = await self._part_page(session, context.part)
-        content = await asyncio.to_thread(render_docx, [page])
+        content = await asyncio.to_thread(
+            render_docx, [page], document_script_fonts(context.document)
+        )
         return DocumentDocxExport(
             filename=f"{export_file_stem(context.document.name, page.number)}.docx",
             content=content,
@@ -160,13 +170,23 @@ class DocumentDocxExportService:
 
 
 def _page_text(blocks, lines) -> list[str | RegionHeading]:
-    return region_text(blocks, lines, _ground_truth_text)
+    return region_items(blocks, lines, _line_text)
 
 
-def render_docx(pages: list[DocxPage]) -> bytes:
-    """Write ``pages`` as a Word document: a heading per page, a paragraph per line."""
+def _line_text(line) -> str | None:
+    selected = reading_text(line)
+    return selected.text if selected is not None else None
+
+
+def render_docx(pages: list[DocxPage], script_fonts: Mapping[str, str] | None = None) -> bytes:
+    """Write ``pages`` as a Word document: a heading per page, a paragraph per line.
+
+    ``script_fonts`` is the document's ``{script: choice}`` font map; a script it does
+    not name is set in that script's default font.
+    """
+    fonts = dict(script_fonts or {})
     word = new_word_document()
-    _set_default_font(word)
+    _set_default_font(word, fonts)
     for index, page in enumerate(pages):
         if index > 0:
             # A reader continuing onto the next page should find it at the top of a
@@ -181,17 +201,21 @@ def render_docx(pages: list[DocxPage]) -> bytes:
             if isinstance(item, RegionHeading):
                 _add_region_heading(word, item.label)
             else:
-                _add_line(word, item)
+                _add_line(word, item, fonts)
     buffer = io.BytesIO()
     word.save(buffer)
     return buffer.getvalue()
 
 
-def _set_default_font(word: WordDocument) -> None:
+def _family(script: Script, script_fonts: Mapping[str, str]) -> str:
+    return font_family_for(script.value, script_fonts.get(script.value))
+
+
+def _set_default_font(word: WordDocument, script_fonts: Mapping[str, str]) -> None:
     normal = word.styles["Normal"]
     normal.font.size = _BODY_FONT_SIZE
     run_properties = normal.element.get_or_add_rPr()
-    _set_fonts(run_properties, SCRIPT_FONT_FAMILIES[Script.latin.value])
+    _set_fonts(run_properties, _family(Script.latin, script_fonts))
     # Word sizes complex-script runs (Syriac among them) by ``szCs``, not ``sz``.
     _add_in_schema_order(run_properties, "w:szCs").set(
         qn("w:val"), str(int(_BODY_FONT_SIZE.pt * 2))
@@ -215,13 +239,13 @@ def _add_region_heading(word: WordDocument, label: str) -> Paragraph:
     return paragraph
 
 
-def _add_line(word: WordDocument, text: str) -> Paragraph:
+def _add_line(word: WordDocument, text: str, script_fonts: Mapping[str, str]) -> Paragraph:
     text = _xml_safe(text)
     script = detect_script(text)
     paragraph = word.add_paragraph()
     run = paragraph.add_run(text)
     run_properties = run._r.get_or_add_rPr()
-    _set_fonts(run_properties, SCRIPT_FONT_FAMILIES[script.value])
+    _set_fonts(run_properties, _family(script, script_fonts))
     if is_rtl(script):
         # ``w:bidi`` makes the paragraph right to left, which also makes its natural
         # alignment the right margin; ``w:rtl`` tells Word the run's characters are a

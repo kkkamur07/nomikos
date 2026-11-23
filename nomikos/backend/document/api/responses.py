@@ -29,6 +29,7 @@ def document_response(
         # can read the token can mint an anonymous link to the whole document and the
         # owner has no way to see that it happened.
         public_share_token=share_token,
+        script_fonts=document.script_fonts or {},
         created_at=document.created_at,
         updated_at=document.updated_at,
     )

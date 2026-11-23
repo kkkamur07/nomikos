@@ -73,9 +73,15 @@
 }
 
 .pe-transcript-input[data-script="syriac"] {
-  font-family:
-    "Noto Sans Syriac", "Noto Sans Syriac Eastern", "Estrangelo Edessa",
-    "Segoe UI Historic", serif;
+  font-family: var(--script-font-syriac);
+}
+
+.pe-transcript-input[data-script="greek"] {
+  font-family: var(--script-font-greek);
+}
+
+.pe-transcript-input[data-script="latin"] {
+  font-family: var(--script-font-latin);
 }
 
 .pe-transcript-input[data-script="hebrew"] {
@@ -92,13 +98,11 @@
 }
 
 .pe-transcript-input[data-script="armenian"] {
-  font-family:
-    "Noto Serif Armenian", "Noto Sans Armenian", "Sylfaen", "Arial Unicode MS",
-    serif;
+  font-family: var(--script-font-armenian);
 }
 
 .pe-transcript-input[data-script="coptic"] {
-  font-family: "Noto Sans Coptic", "Antinoou", "Segoe UI Historic", serif;
+  font-family: var(--script-font-coptic);
 }
 
 .pe-transcript-status {

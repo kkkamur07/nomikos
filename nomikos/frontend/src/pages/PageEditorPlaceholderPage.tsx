@@ -55,6 +55,7 @@ import { useEditorDrawState } from "../components/page-editor/hooks/useEditorDra
 import { useEditorSelection } from "../components/page-editor/hooks/useEditorSelection";
 import { useEditorShortcuts } from "../components/page-editor/hooks/useEditorShortcuts";
 import { segmentIdsWithGroundTruth } from "../components/page-editor/hooks/utils";
+import { scriptFontAttributes } from "../components/document/scriptFonts";
 
 function documentHrefFor(
   projectId: string | undefined,
@@ -625,7 +626,10 @@ export function PageEditorPlaceholderPage() {
       }
     >
       {loaded && (
-        <div className="pe-workspace">
+        <div
+          className="pe-workspace"
+          {...scriptFontAttributes(loaded.document.script_fonts)}
+        >
           <div className="pe-body">
             <PageEditorPageRailSlot
               parts={parts}
@@ -714,20 +718,13 @@ export function PageEditorPlaceholderPage() {
             selectedTranscriptionLayer={pairing.selectedTranscriptionLayer}
             approvedTextDraft={pairing.approvedTextDraft}
             onApprovedTextDraftChange={pairing.setApprovedTextDraft}
-            onSaveGroundTruthText={() =>
-              selection.dismissAfterSave(pairing.saveGroundTruthText)
-            }
-            onPromoteSelectedSegmentToGroundTruth={
-              pairing.promoteSelectedSegmentToGroundTruth
-            }
+            onSaveText={pairing.saveSelectedSegmentText}
+            onApproveModelReading={pairing.promoteSelectedSegmentToGroundTruth}
             onRunSegmentOcr={pairing.runSegmentOcr}
             onNavigateSegment={pairing.navigateSegment}
             onDismiss={() => setStripDismissed(true)}
             lines={lines}
             selectedSegmentId={selectedSegmentId}
-            onSaveApprovedText={() =>
-              selection.dismissAfterSave(pairing.saveApprovedText)
-            }
             transcribeModels={transcribeModels}
             selectedTranscribeModelId={selectedTranscribeModelId}
             onSelectedTranscribeModelIdChange={setSelectedTranscribeModelId}

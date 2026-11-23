@@ -14,7 +14,7 @@ import {
   type SetState,
   type TrackJobAndWait,
 } from "./editorHookTypes";
-import { lineTextForLayer } from "./utils";
+import { initialDraftFor } from "./utils";
 
 type OcrScope = "segment" | "page";
 
@@ -176,7 +176,7 @@ export function useOcrRun(input: OcrRunInput) {
     if (!segmentId || segmentId !== segmentIdAtStart) return;
     const segment = reloadedLines.find((line) => line.id === segmentId);
     if (segment) {
-      input.setApprovedTextDraft(lineTextForLayer(segment, layerToShow));
+      input.setApprovedTextDraft(initialDraftFor(segment, layerToShow));
     }
   }
 

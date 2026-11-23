@@ -124,7 +124,7 @@ describe("usePairingState row saves", () => {
 
     let saved = true;
     await act(async () => {
-      saved = await view.result.current.saveApprovedText();
+      saved = await view.result.current.saveSelectedSegmentText();
     });
 
     expect(saved).toBe(false);

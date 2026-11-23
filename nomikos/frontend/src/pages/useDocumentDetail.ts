@@ -61,7 +61,10 @@ export interface DocumentDetailModel {
   handleTogglePublished: (partId: string, published: boolean) => void;
   applyDocumentPatch: (
     patch: Partial<
-      Pick<DocumentWithPartsResponse, "workflow" | "public_share_token">
+      Pick<
+        DocumentWithPartsResponse,
+        "workflow" | "public_share_token" | "script_fonts"
+      >
     >,
   ) => void;
   handleDeleteDocument: () => void;
@@ -298,7 +301,10 @@ export function useDocumentDetail(): DocumentDetailModel {
 
   const applyDocumentPatch = (
     patch: Partial<
-      Pick<DocumentWithPartsResponse, "workflow" | "public_share_token">
+      Pick<
+        DocumentWithPartsResponse,
+        "workflow" | "public_share_token" | "script_fonts"
+      >
     >,
   ) => {
     patchDocument((current) => ({

@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   characterConfidencesForTranscription,
   confidenceRunTitle,
+  caretAfterFirstLowConfidence,
   containsJoiningScript,
   formatConfidencePercent,
+  graphemeClusters,
   groupConfidenceRuns,
   hasDistinctCharacterConfidences,
   type CharacterConfidence,
@@ -290,5 +292,59 @@ describe("confidenceRunTitle", () => {
     expect(
       confidenceRunTitle({ text: "ab", confidence: 0.92, maxConfidence: 0.99 }),
     ).toBe("92.0% to 99.0% confidence (high)");
+  });
+});
+
+function modelLine(
+  text: string,
+  scores: number[] | null,
+  confidence: number | null = 0.8,
+): LineTranscriptionWithCharacterConfidence {
+  return {
+    ...BASE_TRANSCRIPTION,
+    text,
+    confidence,
+    character_confidences:
+      scores === null
+        ? null
+        : Array.from(text, (char, index) => ({
+            char,
+            confidence: scores[index],
+          })),
+  };
+}
+
+describe("caretAfterFirstLowConfidence", () => {
+  it("lands after the first low character", () => {
+    expect(
+      caretAfterFirstLowConfidence(
+        modelLine("abcde", [0.99, 0.95, 0.4, 0.2, 0.99]),
+      ),
+    ).toBe(3);
+  });
+
+  it("lands at the end when no character is low", () => {
+    expect(
+      caretAfterFirstLowConfidence(modelLine("abc", [0.99, 0.7, 0.95])),
+    ).toBe(3);
+  });
+
+  it("lands at the end when only a line-level confidence exists", () => {
+    expect(caretAfterFirstLowConfidence(modelLine("abc", null, 0.1))).toBe(3);
+  });
+
+  it("lands after the whole cluster when its combining mark is low", () => {
+    const text = "ⲡⲉⲝ\uFE26ⲥ";
+    expect(
+      caretAfterFirstLowConfidence(
+        modelLine(text, [0.99, 0.99, 0.99, 0.3, 0.99]),
+      ),
+    ).toBe(4);
+  });
+});
+
+describe("graphemeClusters", () => {
+  it("keeps a Coptic letter and its overline together", () => {
+    expect(graphemeClusters("ⲝ\uFE26ⲥ")).toEqual(["ⲝ\uFE26", "ⲥ"]);
   });
 });
