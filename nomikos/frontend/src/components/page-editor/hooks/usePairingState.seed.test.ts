@@ -3,9 +3,9 @@
  * to the model output it corrected.
  *
  * A model-only line opens holding the model's reading, so the researcher fixes
- * a few characters instead of retyping the line. Saving that correction
- * copies the reading into Ground truth first (which records the model layer it
- * came from) and writes the correction over it.
+ * a few characters instead of retyping the line. Saving that correction is
+ * one checked write that stores the corrected text and names the model layer
+ * it came from; the uncorrected reading is never written to Ground truth.
  */
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -164,7 +164,7 @@ describe("usePairingState draft seeding", () => {
 });
 
 describe("usePairingState strip save", () => {
-  it("copies the model reading before writing a correction over it", async () => {
+  it("saves a corrected model reading in one write that names its layer", async () => {
     const { view } = setup();
     act(() => view.result.current.selectSegment("B"));
     act(() => view.result.current.setApprovedTextDraft("read B, fixed"));
@@ -175,22 +175,36 @@ describe("usePairingState strip save", () => {
     });
 
     expect(saved).toBe(true);
-    expect(api.copyToGroundTruth).toHaveBeenCalledWith(
-      "project-1",
-      "document-1",
-      "m2",
-      { line_ids: ["B"] },
-    );
+    expect(api.copyToGroundTruth).not.toHaveBeenCalled();
+    expect(api.updateGroundTruthLineText).toHaveBeenCalledTimes(1);
     expect(api.updateGroundTruthLineText).toHaveBeenCalledWith(
       "project-1",
       "document-1",
       "gt",
       "B",
-      { text: "read B, fixed", previous_text: "read B" },
+      {
+        text: "read B, fixed",
+        previous_text: "",
+        seeded_from_transcription_id: "m2",
+      },
     );
-    expect(api.copyToGroundTruth.mock.invocationCallOrder[0]).toBeLessThan(
-      api.updateGroundTruthLineText.mock.invocationCallOrder[0],
-    );
+  });
+
+  it("leaves no Ground truth write behind when the save fails", async () => {
+    const { view, setPairingError } = setup();
+    api.updateGroundTruthLineText.mockRejectedValueOnce(new Error("offline"));
+    act(() => view.result.current.selectSegment("B"));
+    act(() => view.result.current.setApprovedTextDraft("read B, fixed"));
+
+    let saved = true;
+    await act(async () => {
+      saved = await view.result.current.saveSelectedSegmentText();
+    });
+
+    expect(saved).toBe(false);
+    expect(api.updateGroundTruthLineText).toHaveBeenCalledTimes(1);
+    expect(api.copyToGroundTruth).not.toHaveBeenCalled();
+    expect(setPairingError).toHaveBeenLastCalledWith("offline");
   });
 
   it("writes an edit of existing Ground truth directly", async () => {

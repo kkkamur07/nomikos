@@ -527,6 +527,10 @@ class LineTranscriptionPatchRequest(BaseModel):
     # The text the edit started from. When sent and the stored text differs,
     # the save is refused with 409 instead of overwriting another writer.
     previous_text: str | None = Field(default=None, max_length=MAX_LINE_TEXT_CHARS)
+    # The model layer this text corrects, when the edit started from a model
+    # reading. Recorded on the Ground truth row only when it has no seed yet.
+    # Must be a model layer of the same document, else 422.
+    seeded_from_transcription_id: UUID | None = None
 
 
 class PublicBlockResponse(BaseModel):

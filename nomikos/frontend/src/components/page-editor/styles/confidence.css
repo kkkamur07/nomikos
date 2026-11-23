@@ -152,7 +152,9 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  font-family: var(--font-serif);
+  /* Overridden per script by .script-text[data-script] (script-fonts.css),
+     which both layers carry with the same value. */
+  font-family: var(--script-font-latin);
   font-size: 1.0625rem;
   font-weight: 400;
   line-height: 1.7;

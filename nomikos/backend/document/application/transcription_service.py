@@ -265,12 +265,25 @@ class TranscriptionService:
         *,
         text: str,
         previous_text: str | None = None,
+        seeded_from_transcription_id: UUID | None = None,
     ) -> LineTranscription:
         context = await self._access.require_document(session, user, project_id, document_id)
         document = context.document
         transcription = await self._transcription_or_404(session, document, transcription_id)
         if transcription.kind != TranscriptionKind.ground_truth:
             raise ConflictError("Only Ground truth transcription lines can be edited")
+        if seeded_from_transcription_id is not None:
+            # A correction of a model reading saved in one write names the model
+            # layer it corrected. It has to be a model layer of this document, or
+            # the provenance note would point at someone else's layer or at text
+            # nobody generated.
+            seed = await self._documents.get_transcription_in_document(
+                session, document.id, seeded_from_transcription_id
+            )
+            if seed is None or seed.kind != TranscriptionKind.model:
+                raise ValidationError(
+                    "seeded_from_transcription_id must be a model layer of this document"
+                )
         line = await self._line_in_document_or_404(session, document, line_id)
         # Ground-truth text is the other thing that makes a line untouchable by
         # segment health, so writing it takes the same lock a delete holds. The
@@ -304,12 +317,18 @@ class TranscriptionService:
                 text=text,
                 confidence=None,
                 character_confidences=None,
+                seeded_from_transcription_id=seeded_from_transcription_id,
             )
             session.add(line_transcription)
         else:
             line_transcription.text = text
             line_transcription.confidence = None
             line_transcription.character_confidences = None
+            # The seed records where the accepted text started. A row that
+            # already has one keeps it: a later correction does not rewrite
+            # where the text came from.
+            if line_transcription.seeded_from_transcription_id is None:
+                line_transcription.seeded_from_transcription_id = seeded_from_transcription_id
         await session.commit()
         await session.refresh(line_transcription)
         # The API serialises the row's layer kind from the relationship, which

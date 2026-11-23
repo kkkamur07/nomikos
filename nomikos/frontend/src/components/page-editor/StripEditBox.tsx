@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import type { LineTranscriptionResponse } from "../../api/client";
-import { textDirection } from "../../utils/scriptDirection";
+import { dominantScript, textDirection } from "../../utils/scriptDirection";
 import { CharacterConfidenceText } from "./CharacterConfidenceText";
 import {
   caretAfterFirstLowConfidence,
@@ -24,7 +24,9 @@ type StripEditBoxProps = {
  * mirror stacked behind the transparent textarea tints each letter by the
  * model's confidence. The mirror copies the textarea's box, font and wrapping
  * and follows its scroll, so a tint stays under its letter; it renders nothing
- * once the text is the researcher's.
+ * once the text is the researcher's. Both layers take the bundled script font
+ * the same way (``script-text`` plus ``data-script``, see
+ * styles/script-fonts.css), so a font choice on the page moves them together.
  */
 export function StripEditBox({
   segmentId,
@@ -40,6 +42,11 @@ export function StripEditBox({
   const mirrorRef = useRef<HTMLDivElement>(null);
   const coloured = showsModelReading && modelReading !== null;
   const direction = textDirection(draft);
+  // The script follows the text as typed, like a transcript row; an empty box
+  // takes the model reading's, so the caret font matches what comes next.
+  const script =
+    dominantScript(draft) ?? dominantScript(modelReading?.text ?? "");
+  const scriptAttribute = script ?? undefined;
 
   function syncScroll() {
     const textarea = textareaRef.current;
@@ -75,9 +82,10 @@ export function StripEditBox({
     >
       <div
         ref={mirrorRef}
-        className="pe-strip__mirror"
+        className="pe-strip__mirror script-text"
         aria-hidden="true"
         dir={direction}
+        data-script={scriptAttribute}
         data-testid="strip-edit-mirror"
       >
         {coloured && (
@@ -92,12 +100,13 @@ export function StripEditBox({
       </div>
       <textarea
         ref={textareaRef}
-        className="pe-strip__edit"
+        className="pe-strip__edit script-text"
         id="strip-edit"
         aria-label={ariaLabel}
         aria-describedby={coloured ? "confidence-legend" : undefined}
         spellCheck={false}
         dir={direction}
+        data-script={scriptAttribute}
         placeholder="Type the transcription…"
         value={draft}
         disabled={disabled}

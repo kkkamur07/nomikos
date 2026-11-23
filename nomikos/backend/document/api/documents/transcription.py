@@ -188,5 +188,6 @@ async def patch_ground_truth_line_text(
         line_id,
         text=body.text,
         previous_text=body.previous_text,
+        seeded_from_transcription_id=body.seeded_from_transcription_id,
     )
     return line_transcription_response(line_transcription)

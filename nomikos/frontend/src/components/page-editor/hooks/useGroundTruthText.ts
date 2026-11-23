@@ -13,6 +13,7 @@ import {
   type TextLinesSetter,
 } from "./editorHookTypes";
 import {
+  approvedText,
   initialDraftFor,
   modelLayerIdForPromotion,
   modelReadingFor,
@@ -107,12 +108,15 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
    * saves any row. Throws when the save fails and leaves reporting it to the
    * caller: a transcript row says it in the row, the strip in the page alert.
    * ``previousText`` is the text the edit started from; the server answers
-   * 409 when it no longer holds it.
+   * 409 when it no longer holds it. ``seededFromTranscriptionId`` names the
+   * model layer a corrected reading came from; the server records it on a
+   * Ground truth row that has no seed yet, in the same write.
    */
   async function commitLineText(
     lineId: string,
     text: string,
     previousText?: string,
+    seededFromTranscriptionId?: string,
   ): Promise<void> {
     if (!projectId || !documentId || !partId) {
       throw new Error("Page context is missing. Reload and try again.");
@@ -125,9 +129,13 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
       documentId,
       groundTruthTranscriptionId,
       lineId,
-      previousText === undefined
-        ? { text }
-        : { text, previous_text: previousText },
+      {
+        text,
+        ...(previousText === undefined ? {} : { previous_text: previousText }),
+        ...(seededFromTranscriptionId === undefined
+          ? {}
+          : { seeded_from_transcription_id: seededFromTranscriptionId }),
+      },
     );
     foldGroundTruth(lineId, updated.text);
     const pairing = await api.getPagePairing(projectId, documentId, partId);
@@ -150,10 +158,12 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
 
   /**
    * Saves the strip's draft as the open Segment's Ground truth. A Segment with
-   * no Ground truth yet whose draft started as the model's reading gets that
-   * reading copied in first and the correction written over it, so the saved
-   * text still records the model output it corrected. Resolves true when the
-   * text was saved, false when the save failed.
+   * no Ground truth yet whose draft started as the model's reading is saved in
+   * one checked write that names the model layer it corrected, so the saved
+   * text records the model output it came from. A failed write leaves no
+   * Ground truth behind, and text another browser wrote meanwhile is a 409,
+   * not an overwrite. Resolves true when the text was saved, false when the
+   * save failed.
    */
   async function saveSelectedSegmentText(): Promise<boolean> {
     const segment = input.selectedSegment;
@@ -167,8 +177,15 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
       : modelReadingFor(segment, input.selectedTranscriptionLayer);
     try {
       if (reading?.text) {
-        await copyModelReading(segment.id, reading.transcription_id);
-        await commitLineText(segment.id, input.approvedTextDraft, reading.text);
+        // No Ground truth to speak of yet: the edit started from whatever
+        // the row holds now (usually nothing), and the server refuses the
+        // save if someone else wrote text there since.
+        await commitLineText(
+          segment.id,
+          input.approvedTextDraft,
+          approvedText(segment) ?? "",
+          reading.transcription_id,
+        );
       } else {
         await commitLineText(segment.id, input.approvedTextDraft);
       }
