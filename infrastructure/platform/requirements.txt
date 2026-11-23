@@ -31,7 +31,7 @@ deprecation==2.1.0
     # via
     #   postgrest
     #   storage3
-dnspython==2.9.1
+dnspython==2.9.2
     # via email-validator
 email-validator==2.3.0
 fastapi==0.136.3
