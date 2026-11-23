@@ -1,0 +1,138 @@
+/*
+ * Script fonts: the one place the frontend names the fonts used for
+ * transcript text.
+ *
+ * Contract used by other code:
+ *   - An element with class `script-text` and `data-script="<script>"`
+ *     (latin, greek, coptic, armenian, syriac) gets
+ *     `font-family: var(--script-font-<script>)`.
+ *   - The variables default (on :root) to the script's default choice.
+ *   - An ancestor carrying `data-font-<script>="<choice id>"` switches the
+ *     variable for its whole subtree.
+ *
+ * The fonts are served by the frontend from /fonts/ and are the same files
+ * the PDF and Word exports embed or name (backend
+ * nomikos/backend/core/assets/fonts, registry in
+ * nomikos/backend/core/fonts.py).
+ *
+ * Adding a font is data only: copy the file to public/fonts and to the
+ * backend, add an @font-face and a [data-font-...] rule here, a registry
+ * entry in fonts.py and in src/components/document/scriptFonts.ts. A test
+ * enforces that they agree.
+ */
+
+@font-face {
+  font-family: "Nomikos Sans";
+  src: url("/fonts/NotoSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0000-024F, U+0300-036F, U+0370-03FF, U+1F00-1FFF, U+2000-206F, U+FE20-FE2F;
+}
+
+@font-face {
+  font-family: "Nomikos Coptic";
+  src: url("/fonts/NotoSansCoptic-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+2C80-2CFF, U+03E2-03EF, U+0300-036F, U+FE20-FE2F;
+}
+
+@font-face {
+  font-family: "Nomikos Armenian";
+  src: url("/fonts/NotoSansArmenian-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0530-058F, U+FB13-FB17;
+}
+
+@font-face {
+  font-family: "Nomikos Syriac Estrangela";
+  src: url("/fonts/NotoSansSyriac-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0700-074F;
+}
+
+@font-face {
+  font-family: "Nomikos Syriac Eastern";
+  src: url("/fonts/NotoSansSyriacEastern-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0700-074F;
+}
+
+@font-face {
+  font-family: "Nomikos Syriac Western";
+  src: url("/fonts/NotoSansSyriacWestern-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0700-074F;
+}
+
+:root {
+  --script-font-latin: "Nomikos Sans", serif;
+  --script-font-greek: "Nomikos Sans", serif;
+  --script-font-coptic: "Nomikos Coptic", "Nomikos Sans", serif;
+  --script-font-armenian: "Nomikos Armenian", "Nomikos Sans", serif;
+  --script-font-syriac: "Nomikos Syriac Estrangela", "Nomikos Sans", serif;
+}
+
+[data-font-syriac="estrangela"] {
+  --script-font-syriac: "Nomikos Syriac Estrangela", "Nomikos Sans", serif;
+}
+
+[data-font-syriac="eastern"] {
+  --script-font-syriac: "Nomikos Syriac Eastern", "Nomikos Sans", serif;
+}
+
+[data-font-syriac="western"] {
+  --script-font-syriac: "Nomikos Syriac Western", "Nomikos Sans", serif;
+}
+
+[data-font-latin="noto-sans"] {
+  --script-font-latin: "Nomikos Sans", serif;
+}
+
+[data-font-greek="noto-sans"] {
+  --script-font-greek: "Nomikos Sans", serif;
+}
+
+[data-font-coptic="noto-sans-coptic"] {
+  --script-font-coptic: "Nomikos Coptic", "Nomikos Sans", serif;
+}
+
+[data-font-armenian="noto-sans-armenian"] {
+  --script-font-armenian: "Nomikos Armenian", "Nomikos Sans", serif;
+}
+
+.script-text[data-script="latin"] {
+  font-family: var(--script-font-latin);
+}
+
+.script-text[data-script="greek"] {
+  font-family: var(--script-font-greek);
+}
+
+.script-text[data-script="coptic"] {
+  font-family: var(--script-font-coptic);
+}
+
+.script-text[data-script="armenian"] {
+  font-family: var(--script-font-armenian);
+}
+
+.script-text[data-script="syriac"] {
+  font-family: var(--script-font-syriac);
+}
+
+/* Joining scripts must never be letter-spaced. */
+.script-text[dir="rtl"] {
+  letter-spacing: normal;
+}

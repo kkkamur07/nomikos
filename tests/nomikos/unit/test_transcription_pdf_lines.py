@@ -114,7 +114,7 @@ def test_each_script_is_drawn_in_its_own_bundled_font():
     page = _render("Ἐν ἀρχῇ", "ܫܠܡܐ ܥܠܝܟܘܢ", "Բարեւ աշխարհ", "ⲡⲛⲟⲩⲧⲉ ⲡⲉ")
     assert {
         "NotoSans",
-        "NotoSansSyriacEastern",
+        "NotoSansSyriac",
         "NotoSansArmenian",
         "NotoSansCoptic",
     } <= _font_names(page)
@@ -125,4 +125,5 @@ def test_each_script_is_drawn_in_its_own_bundled_font():
 
 
 def test_a_page_without_syriac_does_not_embed_the_syriac_font():
-    assert "NotoSansSyriacEastern" not in _font_names(_render("alpha", "Ἐν ἀρχῇ"))
+    names = _font_names(_render("alpha", "Ἐν ἀρχῇ"))
+    assert not names & {"NotoSansSyriac", "NotoSansSyriacEastern", "NotoSansSyriacWestern"}
