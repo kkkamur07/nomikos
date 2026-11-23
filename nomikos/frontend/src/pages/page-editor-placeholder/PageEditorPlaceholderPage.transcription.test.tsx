@@ -121,12 +121,10 @@ describe("PageEditorPlaceholderPage transcription", () => {
     expect(
       await screen.findByText("Pairing progress: 1/2 Lines paired"),
     ).toBeTruthy();
-    // The typing panel closes once the text is saved; the segment stays selected.
-    await waitFor(() => {
-      expect(
-        screen.queryByLabelText(/approved text for selected segment/i),
-      ).toBeNull();
-    });
+    // The strip stays open and says the line is done.
+    expect(
+      await screen.findByRole("button", { name: /^approved$/i }),
+    ).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Segment 1/ })).toHaveAttribute(
       "aria-current",
       "true",
@@ -374,9 +372,12 @@ describe("PageEditorPlaceholderPage transcription", () => {
     renderPageEditor();
 
     fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
-    // Ground truth is the open layer and the segment has none yet, so the
-    // model output is there to be accepted rather than merely read.
-    fireEvent.click(await screen.findByRole("button", { name: /^accept$/i }));
+    // The segment has no Ground truth yet, so the box opens holding the model
+    // output, ready to approve as it stands or to correct.
+    expect(
+      screen.getByLabelText(/approved text for selected segment/i),
+    ).toHaveValue("model suggestion");
+    fireEvent.click(await screen.findByRole("button", { name: /^approve$/i }));
 
     await waitFor(() => {
       expect(mockedApi.copyToGroundTruth).toHaveBeenCalledWith(
@@ -388,7 +389,7 @@ describe("PageEditorPlaceholderPage transcription", () => {
     });
   });
 
-  it("saves what the researcher typed instead of accepting the suggestion", async () => {
+  it("saves a correction of the model output and keeps its link to it", async () => {
     mockedApi.getDocument.mockResolvedValue(DOCUMENT);
     mockedApi.listPartLines.mockResolvedValue([
       line({
@@ -412,7 +413,8 @@ describe("PageEditorPlaceholderPage transcription", () => {
       screen.getByLabelText(/approved text for selected segment/i),
       { target: { value: "my own reading" } },
     );
-    // Accepting here would throw the typing away, so the button saves it.
+    // The model output is copied in first, which records where the Ground
+    // truth came from, and the correction is written over it.
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
@@ -421,10 +423,73 @@ describe("PageEditorPlaceholderPage transcription", () => {
         "doc-1",
         "ground-truth-1",
         "line-1",
-        { text: "my own reading" },
+        { text: "my own reading", previous_text: "model suggestion" },
       );
     });
+    expect(mockedApi.copyToGroundTruth).toHaveBeenCalledWith(
+      "project-1",
+      "doc-1",
+      "model-1",
+      { line_ids: ["line-1"] },
+    );
+  });
+
+  it("approves with Ctrl+Enter and moves on to the next Segment", async () => {
+    const modelRow = (lineId: string, text: string) => ({
+      id: `tx-${lineId}`,
+      transcription_id: "model-1",
+      transcription_kind: "model" as const,
+      text,
+      confidence: 0.88,
+      character_confidences: null,
+    });
+    mockedApi.getDocument.mockResolvedValue(DOCUMENT);
+    mockedApi.listPartLines.mockResolvedValue([
+      line({ line_transcriptions: [modelRow("line-1", "first reading")] }),
+      line({
+        id: "line-2",
+        order: 1,
+        line_transcriptions: [modelRow("line-2", "second reading")],
+      }),
+    ]);
+
+    renderPageEditor();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
+    const box = screen.getByLabelText(/approved text for selected segment/i);
+    expect(box).toHaveValue("first reading");
+    fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(mockedApi.copyToGroundTruth).toHaveBeenCalledWith(
+        "project-1",
+        "doc-1",
+        "model-1",
+        { line_ids: ["line-1"] },
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText(/approved text for selected segment/i),
+      ).toHaveValue("second reading");
+    });
+    expect(mockedApi.updateGroundTruthLineText).not.toHaveBeenCalled();
+  });
+
+  it("leaves plain Enter to the text box", async () => {
+    mockedApi.getDocument.mockResolvedValue(DOCUMENT);
+    mockedApi.listPartLines.mockResolvedValue([line()]);
+
+    renderPageEditor();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Segment 1/ }));
+    fireEvent.keyDown(
+      screen.getByLabelText(/approved text for selected segment/i),
+      { key: "Enter" },
+    );
+
     expect(mockedApi.copyToGroundTruth).not.toHaveBeenCalled();
+    expect(mockedApi.updateGroundTruthLineText).not.toHaveBeenCalled();
   });
 
   it("surfaces Ground truth save API errors and keeps the typed text visible", async () => {

@@ -3,121 +3,70 @@ import type {
   LineTranscriptionResponse,
   TranscriptionLayerResponse,
 } from "../../api/client";
-import { groundTruthLayer } from "../../utils/transcriptionLayerLabel";
-import {
-  lineTranscriptionForLayer,
-  modelTranscriptionForLine,
-  showsModelSourceReview,
-  transcriptionForOcrReview,
-} from "./hooks/utils";
+import { approvedText, modelReadingFor } from "./hooks/utils";
 
 type StripViewInput = {
-  transcriptionLayers: TranscriptionLayerResponse[];
   selectedSegment: LineResponse | null;
-  selectedSegmentNumber: number | null;
   selectedTranscriptionLayer: TranscriptionLayerResponse | null;
   approvedTextDraft: string;
 };
 
-/** What the strip's primary button does, and what it says. */
+/**
+ * The strip's one primary button. "Approve" copies the model's reading into
+ * Ground truth unchanged, "Save" writes the draft, and "Approved" (disabled)
+ * says the draft is what Ground truth already holds.
+ */
 export type StripAccept =
-  | { action: "save-ground-truth"; label: "Save" }
-  | { action: "promote"; label: "Accept" }
-  | { action: "save-approved"; label: "Save" };
+  | { action: "approve"; label: "Approve"; disabled: false }
+  | { action: "save"; label: "Save"; disabled: boolean }
+  | { action: "approved"; label: "Approved"; disabled: true };
 
 type StripView = {
   modelOutputTranscription: LineTranscriptionResponse | null;
   /** The accessible name of the text box, which says what a save writes. */
   editLabel: string;
-  /** Null when the strip offers no save at all. */
+  /** Null when no Segment is selected. */
   accept: StripAccept | null;
+  /** The box holds the model's reading untouched, shown like a suggestion. */
+  showsModelReading: boolean;
 };
-
-function groundTruthTranscriptionFor({
-  transcriptionLayers,
-  selectedSegment,
-  selectedTranscriptionLayer,
-}: StripViewInput): LineTranscriptionResponse | null {
-  const layer =
-    groundTruthLayer(transcriptionLayers) ?? selectedTranscriptionLayer;
-  if (!selectedSegment || layer?.kind !== "ground_truth") return null;
-  return lineTranscriptionForLayer(selectedSegment, layer.id);
-}
-
-function modelOutputFor({
-  selectedSegment,
-  selectedTranscriptionLayer,
-}: StripViewInput): LineTranscriptionResponse | null {
-  if (!selectedSegment) return null;
-  const modelLayerId =
-    selectedTranscriptionLayer?.kind === "model"
-      ? selectedTranscriptionLayer.id
-      : null;
-  return modelTranscriptionForLine(selectedSegment, modelLayerId);
-}
-
-function showsOcrReview({
-  selectedSegment,
-  selectedTranscriptionLayer,
-}: StripViewInput): boolean {
-  if (!selectedSegment || !selectedTranscriptionLayer) return false;
-  return Boolean(
-    transcriptionForOcrReview(selectedSegment, selectedTranscriptionLayer),
-  );
-}
-
-/**
- * Whether the footer offers to accept the model output as Ground truth.
- *
- * The output is a suggestion wherever it is shown, so the offer does not wait
- * for the model layer to be the selected one: a segment with no Ground truth
- * yet gets "Accept" while Ground truth is the open layer. Once the researcher
- * has typed into the box the button saves what they typed instead, because
- * accepting there would throw that typing away.
- */
-function canPromoteModelOutput(
-  input: StripViewInput,
-  modelOutput: LineTranscriptionResponse | null,
-  ocrReview: boolean,
-): boolean {
-  if (!modelOutput?.text) return false;
-  return (
-    input.selectedTranscriptionLayer?.kind === "model" ||
-    ocrReview ||
-    input.approvedTextDraft.trim() === ""
-  );
-}
 
 /**
  * The strip for one selected Segment: which text is the model's suggestion,
- * and whether its primary button saves Ground truth, accepts the suggestion,
- * or saves approved text.
+ * and what its one primary button does with the draft.
  */
 export function transcriptionStripView(input: StripViewInput): StripView {
-  const modelOutputTranscription = modelOutputFor(input);
-  const groundTruth = groundTruthTranscriptionFor(input);
-  if (groundTruth && !showsModelSourceReview(groundTruth)) {
+  const { selectedSegment, approvedTextDraft } = input;
+  const modelOutputTranscription = selectedSegment
+    ? modelReadingFor(selectedSegment, input.selectedTranscriptionLayer)
+    : null;
+  if (!selectedSegment) {
     return {
       modelOutputTranscription,
-      editLabel: "Ground truth text for selected Segment",
-      accept: { action: "save-ground-truth", label: "Save" },
+      editLabel: "Edit transcription",
+      accept: null,
+      showsModelReading: false,
     };
   }
-  const ocrReview = showsOcrReview(input);
-  const approvedEditor = Boolean(input.selectedSegmentNumber) && !ocrReview;
-  const editLabel = approvedEditor
-    ? "Approved text for selected Segment"
-    : "Edit transcription";
-  if (canPromoteModelOutput(input, modelOutputTranscription, ocrReview)) {
-    return {
-      modelOutputTranscription,
-      editLabel,
-      accept: { action: "promote", label: "Accept" },
+  const saved = approvedText(selectedSegment) ?? "";
+  const hasGroundTruth = saved.trim() !== "";
+  const editLabel = hasGroundTruth
+    ? "Ground truth text for selected Segment"
+    : "Approved text for selected Segment";
+  const modelText = modelOutputTranscription?.text ?? "";
+  const showsModelReading =
+    !hasGroundTruth && modelText !== "" && approvedTextDraft === modelText;
+  let accept: StripAccept;
+  if (showsModelReading) {
+    accept = { action: "approve", label: "Approve", disabled: false };
+  } else if (hasGroundTruth && approvedTextDraft === saved) {
+    accept = { action: "approved", label: "Approved", disabled: true };
+  } else {
+    accept = {
+      action: "save",
+      label: "Save",
+      disabled: !hasGroundTruth && approvedTextDraft.trim() === "",
     };
   }
-  return {
-    modelOutputTranscription,
-    editLabel,
-    accept: approvedEditor ? { action: "save-approved", label: "Save" } : null,
-  };
+  return { modelOutputTranscription, editLabel, accept, showsModelReading };
 }

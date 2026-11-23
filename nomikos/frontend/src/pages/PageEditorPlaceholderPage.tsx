@@ -714,20 +714,13 @@ export function PageEditorPlaceholderPage() {
             selectedTranscriptionLayer={pairing.selectedTranscriptionLayer}
             approvedTextDraft={pairing.approvedTextDraft}
             onApprovedTextDraftChange={pairing.setApprovedTextDraft}
-            onSaveGroundTruthText={() =>
-              selection.dismissAfterSave(pairing.saveGroundTruthText)
-            }
-            onPromoteSelectedSegmentToGroundTruth={
-              pairing.promoteSelectedSegmentToGroundTruth
-            }
+            onSaveText={pairing.saveSelectedSegmentText}
+            onApproveModelReading={pairing.promoteSelectedSegmentToGroundTruth}
             onRunSegmentOcr={pairing.runSegmentOcr}
             onNavigateSegment={pairing.navigateSegment}
             onDismiss={() => setStripDismissed(true)}
             lines={lines}
             selectedSegmentId={selectedSegmentId}
-            onSaveApprovedText={() =>
-              selection.dismissAfterSave(pairing.saveApprovedText)
-            }
             transcribeModels={transcribeModels}
             selectedTranscribeModelId={selectedTranscribeModelId}
             onSelectedTranscribeModelIdChange={setSelectedTranscribeModelId}

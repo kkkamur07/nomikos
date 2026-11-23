@@ -185,7 +185,7 @@ describe("usePairingState after a selection change", () => {
     expect(view.result.current.selectedSegmentId).toBe("B");
     expect(view.result.current.approvedTextDraft).toBe("text of B");
     await act(async () => {
-      await view.result.current.saveGroundTruthText();
+      await view.result.current.saveSelectedSegmentText();
     });
     expect(api.updateGroundTruthLineText).toHaveBeenCalledWith(
       "project-1",

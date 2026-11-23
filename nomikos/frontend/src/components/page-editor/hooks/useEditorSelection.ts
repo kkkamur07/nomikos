@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import type { LayoutLineResponse, LineResponse } from "../../../api/client";
 import { removePolygonVertex } from "../canvasGeometry";
 import type { SetState } from "./editorHookTypes";
@@ -41,11 +41,6 @@ export function useEditorSelection({
   } = pairing;
   const { selectedLineId, setSelectedLineId } = mutations;
   const [vertexCommitSignal, setVertexCommitSignal] = useState(0);
-
-  // Latest selection, readable after an await: a save may resolve after the user
-  // has switched segments, and the strip must not be dismissed on the new one.
-  const selectedSegmentIdRef = useRef(selectedSegmentId);
-  selectedSegmentIdRef.current = selectedSegmentId;
 
   /** ``additive`` is a shift-click or cmd/ctrl-click: toggle, do not replace. */
   function selectSegment(lineId: string, additive = false) {
@@ -112,14 +107,6 @@ export function useEditorSelection({
     if (selectedLineId) void mutations.resetSelectedLine();
   }
 
-  /** Close the strip after a save, unless the researcher has moved on. */
-  async function dismissAfterSave(save: () => Promise<boolean>) {
-    const savedSegmentId = selectedSegmentId;
-    if ((await save()) && selectedSegmentIdRef.current === savedSegmentId) {
-      setStripDismissed(true);
-    }
-  }
-
   return {
     hasSelection: Boolean(selectedSegmentId || selectedLineId),
     vertexCommitSignal,
@@ -129,6 +116,5 @@ export function useEditorSelection({
     clearSelection,
     removeSelectedVertex,
     deleteSelection,
-    dismissAfterSave,
   };
 }

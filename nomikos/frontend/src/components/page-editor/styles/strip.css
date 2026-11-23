@@ -168,3 +168,9 @@
   font-family: var(--font-serif);
   word-break: break-word;
 }
+
+/* The model's reading, untouched: a suggestion, like .is-model in the transcript. */
+.pe-strip__edit.pe-strip__edit--model {
+  color: #78716c;
+  font-style: italic;
+}

@@ -22,14 +22,6 @@ export function segmentIdsWithGroundTruth(lines: LineResponse[]): Set<string> {
   return new Set(lines.filter(segmentHasGroundTruth).map((line) => line.id));
 }
 
-export function lineTextForLayer(
-  line: LineResponse,
-  transcriptionLayerId: string | null,
-): string {
-  if (!transcriptionLayerId) return "";
-  return lineTranscriptionForLayer(line, transcriptionLayerId)?.text ?? "";
-}
-
 export function lineTranscriptionForLayer(
   line: LineResponse,
   transcriptionLayerId: string | null,
@@ -60,35 +52,41 @@ export function modelTranscriptionForLine(
   return modelTranscriptions[modelTranscriptions.length - 1] ?? null;
 }
 
-export function showsModelSourceReview(
-  transcription: LineTranscriptionResponse | null,
-): boolean {
-  return transcription?.transcription_kind === "model";
+/**
+ * What the strip's edit box opens with for a Segment: its Ground truth when it
+ * has any, else the model's newest reading (the text the Model output block
+ * shows), else nothing. The researcher corrects the reading in place instead
+ * of retyping the line. ``selectedLayerId`` picks the model reading when a
+ * model layer is the open one.
+ */
+export function initialDraftFor(
+  line: LineResponse,
+  selectedLayerId: string | null,
+): string {
+  const groundTruth = approvedText(line);
+  if (groundTruth?.trim()) return groundTruth;
+  return modelTranscriptionForLine(line, selectedLayerId)?.text ?? "";
 }
 
-export function transcriptionForOcrReview(
+/**
+ * The model reading the strip offers for a Segment: the open model layer's
+ * when it has one for this line, else the newest. Approve copies this one.
+ */
+export function modelReadingFor(
   line: LineResponse,
   selectedLayer: TranscriptionLayerResponse | null,
 ): LineTranscriptionResponse | null {
-  if (!selectedLayer) return null;
-  const layerTranscription = lineTranscriptionForLayer(line, selectedLayer.id);
-  if (selectedLayer.kind === "model") {
-    return layerTranscription;
-  }
-  if (layerTranscription && showsModelSourceReview(layerTranscription)) {
-    return modelTranscriptionForLine(line) ?? layerTranscription;
-  }
-  return null;
+  return modelTranscriptionForLine(
+    line,
+    selectedLayer?.kind === "model" ? selectedLayer.id : null,
+  );
 }
 
 export function modelLayerIdForPromotion(
   line: LineResponse,
   selectedLayer: TranscriptionLayerResponse | null,
 ): string | null {
-  if (selectedLayer?.kind === "model") {
-    return selectedLayer.id;
-  }
-  return modelTranscriptionForLine(line)?.transcription_id ?? null;
+  return modelReadingFor(line, selectedLayer)?.transcription_id ?? null;
 }
 
 export function mergeSavedLine(

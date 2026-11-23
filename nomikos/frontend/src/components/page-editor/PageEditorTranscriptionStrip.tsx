@@ -1,4 +1,4 @@
-import type { ChangeEventHandler } from "react";
+import type { ChangeEventHandler, KeyboardEvent } from "react";
 import type {
   InferenceModelResponse,
   LineResponse,
@@ -23,9 +23,10 @@ type PageEditorTranscriptionStripProps = {
   selectedTranscriptionLayer: TranscriptionLayerResponse | null;
   approvedTextDraft: string;
   onApprovedTextDraftChange: (value: string) => void;
-  onSaveGroundTruthText: () => void;
-  onSaveApprovedText: () => void;
-  onPromoteSelectedSegmentToGroundTruth: () => void;
+  /** Writes the draft as Ground truth; resolves true when it was saved. */
+  onSaveText: () => Promise<boolean>;
+  /** Copies the model's reading into Ground truth; true when it landed. */
+  onApproveModelReading: () => Promise<boolean>;
   onRunSegmentOcr: () => void;
   onNavigateSegment: (direction: -1 | 1) => void;
   onDismiss: () => void;
@@ -170,17 +171,18 @@ function ConfidenceLegend() {
   );
 }
 
-function acceptHandler(
+/** Runs the primary button's action; resolves true when it succeeded. */
+function runAccept(
   accept: StripAccept,
   props: PageEditorTranscriptionStripProps,
-): () => void {
+): Promise<boolean> {
   switch (accept.action) {
-    case "save-ground-truth":
-      return props.onSaveGroundTruthText;
-    case "promote":
-      return props.onPromoteSelectedSegmentToGroundTruth;
-    case "save-approved":
-      return props.onSaveApprovedText;
+    case "approve":
+      return props.onApproveModelReading();
+    case "save":
+      return props.onSaveText();
+    case "approved":
+      return Promise.resolve(false);
   }
 }
 
@@ -219,6 +221,18 @@ export function PageEditorTranscriptionStrip(
       )?.name ?? "HTR model")
     : null;
   const accept = view.accept;
+  const acceptEnabled =
+    accept !== null && !accept.disabled && Boolean(selectedSegmentNumber);
+
+  // Cmd/Ctrl+Enter: approve or save, then move on to the next Segment.
+  function onEditKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    if (!accept || !acceptEnabled) return;
+    void runAccept(accept, props).then((done) => {
+      if (done) props.onNavigateSegment(1);
+    });
+  }
 
   return (
     <section
@@ -266,14 +280,19 @@ export function PageEditorTranscriptionStrip(
             </label>
           </div>
           <textarea
-            className="pe-strip__edit"
+            className={
+              view.showsModelReading
+                ? "pe-strip__edit pe-strip__edit--model"
+                : "pe-strip__edit"
+            }
             id="strip-edit"
             aria-label={view.editLabel}
             spellCheck={false}
-            placeholder="Accept model output or edit…"
+            placeholder="Type the transcription…"
             value={approvedTextDraft}
             disabled={!selectedSegmentNumber}
             onChange={(e) => props.onApprovedTextDraftChange(e.target.value)}
+            onKeyDown={onEditKeyDown}
           />
         </div>
 
@@ -292,9 +311,12 @@ export function PageEditorTranscriptionStrip(
               <button
                 type="button"
                 className="btn btn-accent btn-xs"
-                disabled={!selectedSegmentNumber}
+                disabled={!acceptEnabled}
                 aria-label={accept.label}
-                onClick={() => void acceptHandler(accept, props)()}
+                title={
+                  accept.disabled ? undefined : `${accept.label} (⌘/Ctrl+Enter)`
+                }
+                onClick={() => void runAccept(accept, props)}
               >
                 {accept.label}
               </button>
