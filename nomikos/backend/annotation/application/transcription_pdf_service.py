@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import statistics
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -18,6 +19,8 @@ from fpdf import FPDF
 from fpdf.fonts import TTFFont
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Imported for its side effect: fpdf2 must keep combining marks with their letters.
+import backend.core.fpdf_marks  # noqa: F401
 from backend.core.exceptions import NotFoundError, ValidationError
 from backend.core.fonts import font_for_script, resolve_unicode_font
 from backend.document.application.document_service import DocumentService
@@ -41,6 +44,14 @@ _MODEL_TEXT_FILL = (0.55, 0.55, 0.6)
 # The range a line's text is sized within to fit its box, in points.
 _MIN_FONT_SIZE = 8
 _MAX_FONT_SIZE = 48
+# A page's text size as a share of the distance between consecutive baselines: room for
+# ascenders and descenders without touching the next line.
+_LINE_GAP_FONT_SHARE = 0.7
+# How much of its baseline's length a line may fill before it is drawn smaller.
+_BASELINE_WIDTH_SHARE = 0.98
+# A baseline that climbs more than this many line gaps is a malformed polyline, not one
+# line's baseline (some segmenters wrap it round the polygon).
+_MAX_BASELINE_RISE_IN_GAPS = 1.5
 
 
 @dataclass(frozen=True)
@@ -54,6 +65,7 @@ class _PdfLine:
     text: str
     points: list[list[float]]
     approved: bool = True
+    baseline: list[list[float]] | None = None
 
     @property
     def fill(self) -> tuple[float, float, float]:
@@ -129,12 +141,19 @@ class TranscriptionPdfService:
         prepared: list[_PdfLine] = []
         for line in lines:
             text = self._ground_truth_text(line)
+            # Read leniently: callers that stub a line with only text and points still
+            # render, falling back to the line's box.
+            baseline = _baseline_points(getattr(line, "baseline", None))
             if text is not None:
-                prepared.append(_PdfLine(text=text, points=line.points, approved=True))
+                prepared.append(
+                    _PdfLine(text=text, points=line.points, approved=True, baseline=baseline)
+                )
                 continue
             text = self._model_text(line)
             if text is not None:
-                prepared.append(_PdfLine(text=text, points=line.points, approved=False))
+                prepared.append(
+                    _PdfLine(text=text, points=line.points, approved=False, baseline=baseline)
+                )
         return prepared
 
     def _render_pdf(self, *, width: int, height: int, lines: list[_PdfLine]) -> bytes:
@@ -163,6 +182,16 @@ class TranscriptionPdfService:
             return None
         newest = max(candidates, key=_layer_age)
         return newest.text
+
+
+def _baseline_points(baseline: object) -> list[list[float]] | None:
+    """The points of a stored ``{"points": [[x, y], ...]}`` baseline, or None."""
+    if not isinstance(baseline, dict):
+        return None
+    points = baseline.get("points")
+    if not isinstance(points, list):
+        return None
+    return [list(point[:2]) for point in points if isinstance(point, list | tuple)]
 
 
 def _layer_age(transcription: LineTranscription) -> float:
@@ -208,30 +237,132 @@ def draw_page(pdf: _TranscriptionPdf, *, width: int, height: int, lines: list[_P
 
     The single drawing routine both the per-page and the whole-document PDF use, so a
     page reads the same whichever endpoint produced it.
+
+    Each line's text sits on the line's own baseline, and the page uses one size, set by
+    how far apart its baselines are. Fitting every line to its polygon instead made sizes
+    jump from 8 to 48 points down one page and stacked lines on top of each other,
+    because segmenter polygons overlap their neighbours and some are malformed; the
+    baseline is the part of the geometry that reliably says where the writing is. A
+    page with fewer than two usable baselines keeps the old fit to each line's box.
     """
     pdf.add_page(format=(width, height))
     pdf.set_fill_color(*_rgb(_PAGE_FILL))
     pdf.rect(0, 0, width, height, style="F")
+    gap = _line_gap(lines)
+    page_size = _page_font_size(gap) if gap is not None else None
     for line in lines:
         script = detect_script(line.text)
         rtl = is_rtl(script)
         family = pdf.family_for(script)
-        x0, y0, x1, y1 = _line_bbox(line.points)
-        box_w = max(x1 - x0, 1)
-        box_h = max(y1 - y0, 1)
         # Font, fallback and shaping are set before sizing so the line is measured as it
         # will be drawn: shaped by HarfBuzz, with the base font filling in missing glyphs.
         pdf.set_font(family, size=_MAX_FONT_SIZE)
         pdf.set_fallback_fonts([] if family == _BASE_FAMILY else [_BASE_FAMILY])
         pdf.set_text_shaping(use_shaping_engine=True, direction="rtl" if rtl else "ltr")
-        font_size = _fit_font_size(pdf, line.text, box_w * 0.95, box_h * 0.85)
-        pdf.set_font_size(font_size)
         pdf.set_text_color(*_rgb(line.fill))
-        # A cell of one font size high puts the baseline 0.8 em below its top, so the
-        # top sits 0.2 em down to keep the baseline one em under the line's top edge.
-        pdf.set_xy(x0, y0 + 0.2 * font_size)
-        # A right-to-left line starts at the right edge of its box, as it does on the page.
-        pdf.cell(w=box_w, h=font_size, text=line.text, align="R" if rtl else "L")
+        if page_size is None or gap is None:
+            _draw_in_box(pdf, line, rtl=rtl)
+        else:
+            _draw_on_baseline(pdf, line, rtl=rtl, page_size=page_size, gap=gap)
+
+
+def _draw_on_baseline(
+    pdf: _TranscriptionPdf, line: _PdfLine, *, rtl: bool, page_size: int, gap: float
+) -> None:
+    """``line`` in the page's size on its baseline, smaller only if it would overflow.
+
+    A baseline that cannot be trusted (see :func:`_baseline_anchor`) leaves the text on
+    the bottom of the line's box, raised by the font's descent so descenders stay inside.
+    """
+    anchor = _baseline_anchor(line, gap)
+    if anchor is None:
+        left, _, right, bottom = _line_bbox(line.points)
+    else:
+        left, right, baseline_y = anchor
+    length = max(right - left, 1)
+    unit_width = pdf.get_string_width(line.text) / pdf.font_size_pt
+    size = page_size
+    if unit_width * size > length * _BASELINE_WIDTH_SHARE:
+        size = max(_MIN_FONT_SIZE, math.floor(length * _BASELINE_WIDTH_SHARE / unit_width))
+    if anchor is None:
+        baseline_y = bottom - abs(pdf.current_font.desc.descent) / 1000 * size
+    pdf.set_font_size(size)
+    # A cell of one font size high puts the baseline 0.8 em below its top.
+    pdf.set_xy(left, baseline_y - 0.8 * size)
+    # A right-to-left line starts at the right end of its baseline, as it does on the page.
+    pdf.cell(w=length, h=size, text=line.text, align="R" if rtl else "L")
+
+
+def _draw_in_box(pdf: _TranscriptionPdf, line: _PdfLine, *, rtl: bool) -> None:
+    """``line`` fitted to its own box, for a page without enough baselines to go by."""
+    x0, y0, x1, y1 = _line_bbox(line.points)
+    box_w = max(x1 - x0, 1)
+    box_h = max(y1 - y0, 1)
+    font_size = _fit_font_size(pdf, line.text, box_w * 0.95, box_h * 0.85)
+    pdf.set_font_size(font_size)
+    # A cell of one font size high puts the baseline 0.8 em below its top, so the
+    # top sits 0.2 em down to keep the baseline one em under the line's top edge.
+    pdf.set_xy(x0, y0 + 0.2 * font_size)
+    pdf.cell(w=box_w, h=font_size, text=line.text, align="R" if rtl else "L")
+
+
+def _usable_baseline(line: _PdfLine) -> list[list[float]] | None:
+    """``line``'s baseline when it is a polyline at all, else None.
+
+    A hand-drawn line stores its polygon as its baseline (see ``page_xml_geometry``),
+    which says nothing about where the text sits inside the box.
+    """
+    baseline = line.baseline
+    if not baseline or len(baseline) < 2 or baseline == line.points:
+        return None
+    return baseline
+
+
+def _baseline_y(baseline: list[list[float]]) -> float:
+    """The height a baseline's text sits at: the mean of its points."""
+    return statistics.fmean(point[1] for point in baseline)
+
+
+def _line_gap(lines: list[_PdfLine]) -> float | None:
+    """The typical distance between consecutive baselines in reading order, or None.
+
+    Only steps down the page count: the jump back up to the top of the next column is
+    not a line gap. Steps under half or over twice the first median (a line missed by
+    the segmenter, two baselines on one line of writing) are dropped before the final
+    median is taken.
+    """
+    heights = [_baseline_y(baseline) for line in lines if (baseline := _usable_baseline(line))]
+    if len(heights) < 2:
+        return None
+    steps = [lower - upper for upper, lower in zip(heights, heights[1:], strict=False)]
+    steps = [step for step in steps if step > 0]
+    if not steps:
+        return None
+    rough = statistics.median(steps)
+    typical = [step for step in steps if rough / 2 <= step <= rough * 2]
+    return statistics.median(typical)
+
+
+def _page_font_size(gap: float) -> int:
+    size = math.floor(gap * _LINE_GAP_FONT_SHARE)
+    return max(_MIN_FONT_SIZE, min(_MAX_FONT_SIZE, size))
+
+
+def _baseline_anchor(line: _PdfLine, gap: float) -> tuple[float, float, float] | None:
+    """Left end, right end and height of ``line``'s baseline, or None when it is malformed.
+
+    Malformed is fewer than two points, or a polyline that climbs more than
+    ``_MAX_BASELINE_RISE_IN_GAPS`` line gaps: that is a trace round the line's polygon,
+    not the line its letters stand on.
+    """
+    baseline = _usable_baseline(line)
+    if baseline is None:
+        return None
+    xs = [point[0] for point in baseline]
+    ys = [point[1] for point in baseline]
+    if max(ys) - min(ys) > gap * _MAX_BASELINE_RISE_IN_GAPS or max(xs) - min(xs) < 1:
+        return None
+    return min(xs), max(xs), _baseline_y(baseline)
 
 
 def _rgb(fill: tuple[float, float, float]) -> tuple[int, int, int]:

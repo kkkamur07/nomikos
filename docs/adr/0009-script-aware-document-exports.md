@@ -85,3 +85,26 @@ bundled (`NotoSansSyriacEastern-Regular.ttf` and `NotoSansSyriacWestern-Regular.
 v3.001 unhinted TTFs from the notofonts syriac releases, next to the v3.000 Estrangela
 file) with `core/fonts.py::SYRIAC_STYLE_FONT_FILES` mapping each style to its file, so a
 later per-document style choice has somewhere to plug in. No per-document setting yet.
+
+## Update 2026-11-22: combining marks and baseline layout
+
+**Combining marks stay on their letters.** fpdf2 2.8.9 splits a line into shaping runs
+wherever the Unicode script changes, and combining marks (U+0300 to U+036F, U+FE20 to U+FE2F)
+report the `Inherited` script, so each mark was shaped alone: Coptic overlines and dots were drawn
+beside their letters instead of over them, and a Syriac seyame broke the cursive join of its word.
+`backend/core/fpdf_marks.py` replaces fpdf2's script lookup (once, at import) with one that maps
+`Inherited` to `Common`, which fpdf2 already lets join the run around it; that is Unicode's own
+rule for inherited characters. A canary test fails once upstream stops splitting, and the module
+can then be deleted.
+
+**Lines sit on their baselines, in one size per page.** Fitting each line to its own polygon made
+sizes jump from 8 to 48 points down one Coptic page and stacked lines on each other, because
+segmenter polygons overlap and some are malformed. `draw_page` now takes the page's text size as
+0.7 of the median gap between consecutive baselines (steps under half or over twice a first
+median are dropped, as is the jump to the next column), shrinks a line below it only when the
+line is wider than 0.98 of its baseline, and sets the text baseline at the mean height of the
+line's baseline points, from its left end (right end for Syriac). A baseline with fewer than two
+points, one that is the stored polygon itself (a hand-drawn line), or one that climbs more than
+1.5 line gaps falls back to the bottom of the line's box, lifted by the font's descent. A page
+with fewer than two usable baselines keeps the previous fit to each box. Lines whose polygons
+overlap in the source data can still touch.
