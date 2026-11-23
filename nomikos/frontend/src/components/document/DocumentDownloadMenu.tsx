@@ -101,6 +101,13 @@ export function DocumentDownloadMenu({
     return pageCountLabel(count);
   }
 
+  // The Word export carries every line, unapproved ones in grey italic, so the
+  // whole-chapter item says how much of it is reviewed.
+  function docxMeta(ticket: string): string {
+    if (downloading === ticket) return "preparing…";
+    return `${pageCountLabel(total)}, ${reviewed} reviewed`;
+  }
+
   return (
     <ActionMenu label="Download" menuLabel="Download this document" wide>
       {(close) => (
@@ -129,7 +136,7 @@ export function DocumentDownloadMenu({
           <ActionMenuItem
             label="Word (.docx)"
             ariaLabel="Word (.docx), whole chapter"
-            meta={downloading === "docx:false" ? "preparing…" : undefined}
+            meta={docxMeta("docx:false")}
             disabled={busy || total === 0}
             onSelect={() => void download("docx", false, close)}
           />
