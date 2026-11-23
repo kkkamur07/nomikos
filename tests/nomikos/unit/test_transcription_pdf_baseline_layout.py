@@ -7,8 +7,12 @@ import io
 from pypdf import PdfReader
 
 from backend.annotation.application.transcription_pdf_service import (
+    _BASE_FAMILY,
+    _MAX_FONT_SIZE,
     TranscriptionPdfService,
     _PdfLine,
+    _TranscriptionPdf,
+    draw_page,
 )
 
 _PAGE_W = 1000
@@ -91,10 +95,50 @@ def test_a_right_to_left_line_ends_at_the_right_end_of_its_baseline():
     assert syriac[2] > _RIGHT - 200
 
 
-def test_a_page_without_baselines_keeps_fitting_each_line_to_its_box():
-    lines = [
-        _PdfLine(text="alpha", points=[[0, 0], [400, 0], [400, 20], [0, 20]]),
-        _PdfLine(text="alpha", points=[[0, 100], [400, 100], [400, 160], [0, 160]]),
-    ]
-    sizes = [size for _, size, _, _ in _drawn(lines)]
-    assert sizes[0] < sizes[1]
+def _stub_line(text: str, top: float, *, left: float = _LEFT, right: float = _RIGHT) -> _PdfLine:
+    """A line whose baseline is a stub: two equal points, as some segmenters store."""
+    polygon = [[left, top], [right, top], [right, top + 30], [left, top + 30]]
+    return _PdfLine(text=text, points=polygon, baseline=[[right - 50, top + 25]] * 2)
+
+
+def test_a_page_of_stub_baselines_still_gets_one_size_from_the_box_pitch():
+    lines = [_stub_line(text, 100 + 25 * index) for index, text in enumerate("abcdefgh")]
+    # One short box among them must not pull its line to a size of its own.
+    lines[3] = _PdfLine(text="d", points=[[_LEFT, 180], [_RIGHT, 180], [_RIGHT, 186], [_LEFT, 186]])
+    sizes = {size for _, size, _, _ in _drawn(lines)}
+    assert sizes == {17}  # 0.7 of the 25 point pitch between box centres
+
+
+def test_a_baseline_stub_under_one_word_is_not_taken_for_the_whole_line():
+    lines = _page("alpha", "beta", "gamma")
+    # A real baseline that spans 30 of the box's 800 points.
+    lines[1] = _line("beta", 140, baseline=[[_RIGHT - 30, 140], [_RIGHT, 140]])
+    runs = _drawn(lines)
+    assert runs[1][1] == 28
+    assert round(runs[1][2], 1) == _LEFT + 2
+
+
+def test_a_line_near_the_right_edge_never_ends_past_the_page():
+    text = "οὕτω καὶ οἷα περ ἂν τὰ παρ' ἡμῶν ᾖ, ἐκ τῶν ὁμοίων παρέχεται"
+    # The box itself runs past the page, as a crooked polygon on a page's margin can.
+    lines = [_stub_line(text, 100 + 25 * index, left=700, right=1100) for index in range(4)]
+    pdf = _TranscriptionPdf()
+    draw_page(pdf, width=_PAGE_W, height=_PAGE_H, lines=lines)
+    runs = _drawn(lines)
+    pdf.set_font(_BASE_FAMILY, size=_MAX_FONT_SIZE)
+    pdf.set_text_shaping(use_shaping_engine=True, direction="ltr")
+    for _, size, x, _ in runs:
+        pdf.set_font_size(size)
+        assert x + pdf.get_string_width(text) <= _PAGE_W
+
+
+def test_a_long_line_never_ends_past_its_own_box():
+    text = "alpha beta gamma delta " * 8
+    lines = [_stub_line(text, 100 + 25 * index, left=100, right=400) for index in range(3)]
+    pdf = _TranscriptionPdf()
+    pdf.add_page(format=(_PAGE_W, _PAGE_H))
+    pdf.set_font(_BASE_FAMILY, size=_MAX_FONT_SIZE)
+    pdf.set_text_shaping(use_shaping_engine=True, direction="ltr")
+    for _, size, x, _ in _drawn(lines):
+        pdf.set_font_size(size)
+        assert x + pdf.get_string_width(text) <= 400
