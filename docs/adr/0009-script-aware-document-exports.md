@@ -120,3 +120,8 @@ and clamped as before, and capped at the size where three lines in four fit thei
 page whose text runs wider than its boxes does not end up with every line shrunk to a size of its
 own. A line still too wide shrinks alone, with no lower bound, to fit its span cut to the page
 (4 points from each edge): no text runs past the page or its box.
+
+**Unapproved lines print like approved ones.** Researchers leave most lines unapproved, so a PDF
+that drew a model's unapproved output in grey made a finished page look like a draft. The
+selection rule is unchanged (approved text, else the newest model output), but every line is now
+drawn in the same ink and the grey path is gone.

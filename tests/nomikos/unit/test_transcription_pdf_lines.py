@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import UTC, datetime, timedelta
 
 from pypdf import PdfReader
 
 from backend.annotation.application.transcription_pdf_service import (
-    _MODEL_TEXT_FILL,
     _TEXT_FILL,
     TranscriptionPdfService,
     _PdfLine,
@@ -38,7 +38,7 @@ def _line(*layers: tuple[Transcription, str]) -> Line:
     return line
 
 
-def test_approved_text_wins_and_is_drawn_in_ink():
+def test_approved_text_wins_over_model_text():
     lines = TranscriptionPdfService()._pdf_lines(
         [
             _line(
@@ -48,16 +48,31 @@ def test_approved_text_wins_and_is_drawn_in_ink():
         ]
     )
     assert [(line.text, line.approved) for line in lines] == [("word", True)]
-    assert lines[0].fill == _TEXT_FILL
 
 
-def test_unapproved_model_text_is_drawn_in_grey_not_dropped():
+def test_unapproved_model_text_is_kept_not_dropped():
     lines = TranscriptionPdfService()._pdf_lines(
         [_line((_layer(TranscriptionKind.model), "guess"))]
     )
     assert [(line.text, line.approved) for line in lines] == [("guess", False)]
-    assert lines[0].fill == _MODEL_TEXT_FILL
-    assert _MODEL_TEXT_FILL != _TEXT_FILL
+
+
+def test_approved_and_unapproved_lines_are_drawn_in_the_same_ink():
+    box = [[0, 0], [400, 0], [400, 40], [0, 40]]
+    lines = [
+        _PdfLine(text="word", points=box, approved=True),
+        _PdfLine(text="guess", points=[[x, y + 60] for x, y in box], approved=False),
+    ]
+    content = TranscriptionPdfService()._render_pdf(width=500, height=200, lines=lines)
+    stream = PdfReader(io.BytesIO(content)).pages[0].get_contents().get_data().decode("latin-1")
+    # Colours set inside text objects are the colours text is drawn in.
+    text_colours = [
+        tuple(round(float(value), 2) for value in colour)
+        for block in re.findall(r"BT(.*?)ET", stream, flags=re.S)
+        for colour in re.findall(r"([\d.]+) ([\d.]+) ([\d.]+) rg", block)
+    ]
+    assert len(text_colours) == 2
+    assert set(text_colours) == {tuple(round(channel, 2) for channel in _TEXT_FILL)}
 
 
 def test_newest_model_layer_is_the_one_shown():

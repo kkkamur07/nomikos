@@ -4,7 +4,7 @@
 wrapping it, so a page in the chapter PDF is built from exactly the values a page in the
 single-page PDF is built from: the page size off the same row (with the same lazy
 backfill for parts uploaded before dimensions were persisted), the same text selection
-(approved text in ink, a model's unapproved output in grey), the same font fitting.
+(approved text, else a model's output, drawn alike), the same font fitting.
 
 What is *not* reused is ``generate_part_pdf`` itself, and the reason is the dependency
 closure. That method returns a finished one-page PDF, and turning eighteen of those into

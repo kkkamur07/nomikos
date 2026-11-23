@@ -37,10 +37,9 @@ from backend.users.infrastructure.orm_models import User
 # The family every page falls back to for characters a script font does not carry.
 _BASE_FAMILY = "nomikos-base"
 _PAGE_FILL = (1.0, 1.0, 1.0)
+# Every line's ink, approved or not: researchers leave most lines unapproved, and an
+# export that greyed them out read as a page of drafts.
 _TEXT_FILL = (0.1, 0.1, 0.35)
-# Machine text nobody has approved yet. Legible, but unmistakably not the ink colour of
-# approved text: a reader must be able to tell a model's guess from a researcher's word.
-_MODEL_TEXT_FILL = (0.55, 0.55, 0.6)
 # The range a page's text size is chosen within, in points.
 _MIN_FONT_SIZE = 8
 _MAX_FONT_SIZE = 48
@@ -71,10 +70,6 @@ class _PdfLine:
     points: list[list[float]]
     approved: bool = True
     baseline: list[list[float]] | None = None
-
-    @property
-    def fill(self) -> tuple[float, float, float]:
-        return _TEXT_FILL if self.approved else _MODEL_TEXT_FILL
 
 
 class TranscriptionPdfService:
@@ -138,10 +133,9 @@ class TranscriptionPdfService:
         """Every line that has any text at all, approved text first.
 
         A line with ground truth renders that and nothing else. A line with only a
-        model's output renders the model's output, marked unapproved, because a page
-        that has been transcribed but not yet reviewed used to come back as a blank PDF
-        with no error, and "blank" is not a way to say "nothing here is approved yet".
-        A line with no text of either kind is skipped.
+        model's output renders the model's output, because a page that has been
+        transcribed but not yet reviewed used to come back as a blank PDF with no error.
+        Both are drawn alike. A line with no text of either kind is skipped.
         """
         prepared: list[_PdfLine] = []
         for line in lines:
@@ -284,7 +278,7 @@ def _set_line_font(pdf: _TranscriptionPdf, line: _PdfLine) -> bool:
     pdf.set_font(family, size=_MAX_FONT_SIZE)
     pdf.set_fallback_fonts([] if family == _BASE_FAMILY else [_BASE_FAMILY])
     pdf.set_text_shaping(use_shaping_engine=True, direction="rtl" if rtl else "ltr")
-    pdf.set_text_color(*_rgb(line.fill))
+    pdf.set_text_color(*_rgb(_TEXT_FILL))
     return rtl
 
 
