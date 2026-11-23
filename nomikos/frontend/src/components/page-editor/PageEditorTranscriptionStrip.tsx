@@ -4,9 +4,9 @@ import type {
   LineResponse,
   TranscriptionLayerResponse,
 } from "../../api/client";
-import { ModelOutputBlock } from "./ModelOutputBlock";
 import { PageEditorModelSelect } from "./PageEditorModelSelect";
 import { PageEditorSegmentNav } from "./PageEditorSegmentNav";
+import { StripEditBox } from "./StripEditBox";
 import { useStripResize } from "./hooks/useStripResize";
 import {
   transcriptionStripView,
@@ -264,34 +264,20 @@ export function PageEditorTranscriptionStrip(
       />
 
       <div className="pe-strip__content">
-        <ModelOutputBlock
-          transcription={output}
-          segmentNumber={selectedSegmentNumber}
-          onRerunOcr={onRunSegmentOcr}
-          ocrRunning={segmentOcrRunning}
-          ocrDisabled={rerunDisabled}
-          ocrDisabledReason={rerunReason}
-        />
-
         <div className="pe-tx-block pe-tx-block--edit pe-tx-block--compact">
           <div className="pe-tx-block__head">
             <label className="pe-tx-block__label" htmlFor="strip-edit">
               Ground truth
             </label>
           </div>
-          <textarea
-            className={
-              view.showsModelReading
-                ? "pe-strip__edit pe-strip__edit--model"
-                : "pe-strip__edit"
-            }
-            id="strip-edit"
-            aria-label={view.editLabel}
-            spellCheck={false}
-            placeholder="Type the transcription…"
-            value={approvedTextDraft}
+          <StripEditBox
+            segmentId={selectedSegmentId}
+            draft={approvedTextDraft}
+            modelReading={output}
+            showsModelReading={view.showsModelReading}
+            ariaLabel={view.editLabel}
             disabled={!selectedSegmentNumber}
-            onChange={(e) => props.onApprovedTextDraftChange(e.target.value)}
+            onChange={props.onApprovedTextDraftChange}
             onKeyDown={onEditKeyDown}
           />
         </div>

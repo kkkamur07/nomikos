@@ -143,34 +143,11 @@
   text-align: center;
 }
 
-.pe-model-inline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 8px;
-  padding: 8px var(--space-3);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-.pe-model-inline__label {
-  flex-shrink: 0;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-.pe-model-inline__body {
-  flex: 1;
-  min-width: 120px;
-  font-size: 1rem;
-  line-height: 1.75;
-  font-family: var(--font-serif);
-  word-break: break-word;
-}
-
 /* The model's reading, untouched: a suggestion, like .is-model in the transcript. */
-.pe-strip__edit.pe-strip__edit--model {
-  color: #78716c;
+.pe-strip__edit-box--model .pe-strip__edit,
+.pe-strip__edit-box--model .pe-strip__mirror {
   font-style: italic;
+}
+.pe-strip__edit-box--model .pe-strip__edit {
+  color: #78716c;
 }

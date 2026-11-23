@@ -54,8 +54,8 @@ export function modelTranscriptionForLine(
 
 /**
  * What the strip's edit box opens with for a Segment: its Ground truth when it
- * has any, else the model's newest reading (the text the Model output block
- * shows), else nothing. The researcher corrects the reading in place instead
+ * has any, else the model's newest reading (the text the strip colours by
+ * confidence), else nothing. The researcher corrects the reading in place instead
  * of retyping the line. ``selectedLayerId`` picks the model reading when a
  * model layer is the open one.
  */

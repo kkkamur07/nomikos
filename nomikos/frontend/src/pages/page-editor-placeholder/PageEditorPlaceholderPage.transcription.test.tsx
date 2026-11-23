@@ -322,16 +322,18 @@ describe("PageEditorPlaceholderPage transcription", () => {
       expect(mockedApi.getJob).toHaveBeenCalledWith("job-ocr-1");
     });
 
-    // The run produced a suggestion, so the fresh output shows as model output
-    // while the researcher's Ground truth stays exactly as they left it.
+    // The line has Ground truth, so the fresh output does not replace it and
+    // is not coloured into the box: the researcher's text stays as they left it.
     await waitFor(() => {
-      expect(
-        screen.getByLabelText(/ocr model output for segment 1/i),
-      ).toHaveTextContent("fresh ocr");
+      expect(mockedApi.listPartLines.mock.calls.length).toBeGreaterThan(1);
     });
     expect(
       screen.getByLabelText(/ground truth text for selected segment/i),
     ).toHaveValue("hand-checked text");
+    expect(
+      screen.getByTestId("strip-edit-mirror").querySelector("[data-conf]"),
+    ).toBeNull();
+    expect(screen.queryByText(/model output/i)).toBeNull();
   });
 
   it("offers the model output as a suggestion to accept while Ground truth is open", async () => {
