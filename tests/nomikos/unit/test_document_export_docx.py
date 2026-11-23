@@ -10,12 +10,15 @@ from docx import Document as open_word_document
 from docx.oxml.ns import qn
 
 from backend.document.application.document_export_docx import (
+    UNAPPROVED_COLOR,
+    UNAPPROVED_NOTE,
     DocumentDocxExportService,
     DocxPage,
     render_docx,
 )
 from backend.document.application.document_export_selection import DocumentExportSelection
 from backend.document.application.document_export_text import DocumentTextExportService
+from backend.document.application.line_text_selection import LineText, reading_text
 from backend.document.application.regions import RegionHeading
 from backend.document.infrastructure.orm_models import (
     Block,
@@ -120,11 +123,13 @@ async def test_document_docx_has_a_heading_per_page_and_ground_truth_lines() -> 
     assert export.filename == "codex-syriacus-1-transcription.docx"
     word = _word(export.content)
     paragraphs = [(p.style.name, p.text) for p in word.paragraphs]
-    # Unapproved model text and blank lines are not ground truth, as in the text export.
+    # Model text prints too, under the note; a blank line is still dropped.
     # The empty Normal paragraph between pages is the page break starting page 3.
     assert paragraphs == [
         ("Heading 2", "Page 1"),
+        ("Normal", UNAPPROVED_NOTE),
         ("Normal", _SYRIAC),
+        ("Normal", "guess"),
         ("Normal", ""),
         ("Heading 2", "Page 3"),
         ("Normal", _GREEK),
@@ -205,7 +210,7 @@ def test_one_page_holds_no_page_break() -> None:
 
 
 @pytest.mark.asyncio
-async def test_member_part_docx_names_the_page_stem_and_keeps_ground_truth() -> None:
+async def test_member_part_docx_names_the_page_stem_and_prints_the_whole_page() -> None:
     document = Document(id=uuid.uuid4(), project_id=uuid.uuid4(), name="Codex Syriacus 1")
     part = DocumentPart(id=uuid.uuid4(), document_id=document.id, order=1)
     repository = _Repository(
@@ -225,7 +230,9 @@ async def test_member_part_docx_names_the_page_stem_and_keeps_ground_truth() -> 
     word = _word(export.content)
     assert [(p.style.name, p.text) for p in word.paragraphs] == [
         ("Heading 2", "Page 2"),
+        ("Normal", UNAPPROVED_NOTE),
         ("Normal", _SYRIAC),
+        ("Normal", "guess"),
     ]
 
 
@@ -304,3 +311,128 @@ def test_xml_invalid_characters_are_dropped_not_a_failed_export() -> None:
         render_docx([DocxPage(number=1, lines=[RegionHeading("fol.\x001r"), "a\x00b\x07c￾￿d"])])
     )
     assert [p.text for p in word.paragraphs] == ["Page 1", "fol.1r", "abcd"]
+
+
+# --- Unapproved lines: model output in grey italic, under a note ---
+
+
+def _is_grey_italic(paragraph) -> bool:
+    run = paragraph.runs[0]
+    return bool(run.italic) and run.font.color.rgb == UNAPPROVED_COLOR
+
+
+def test_an_approved_only_page_has_no_note_and_no_grey_lines() -> None:
+    page = DocxPage(number=1, lines=[LineText(_GREEK), LineText(_COPTIC, approved=True)])
+    word = _word(render_docx([page]))
+
+    assert [p.text for p in word.paragraphs] == ["Page 1", _GREEK, _COPTIC]
+    assert not any(_is_grey_italic(p) for p in word.paragraphs[1:])
+
+
+def test_a_mixed_page_has_the_note_once_and_grey_italic_on_exactly_the_unapproved_lines() -> None:
+    page = DocxPage(
+        number=1,
+        lines=[
+            LineText(_GREEK),
+            LineText(_COPTIC, approved=False),
+            RegionHeading("5r"),
+            LineText(_ARMENIAN),
+            LineText(_GREEK + " bis", approved=False),
+        ],
+    )
+    word = _word(render_docx([page]))
+    paragraphs = word.paragraphs
+
+    assert [p.text for p in paragraphs] == [
+        "Page 1",
+        UNAPPROVED_NOTE,
+        _GREEK,
+        _COPTIC,
+        "5r",
+        _ARMENIAN,
+        _GREEK + " bis",
+    ]
+    note = paragraphs[1].runs[0]
+    assert note.font.color.rgb == UNAPPROVED_COLOR
+    assert note.font.size.pt < 12
+    assert not note.italic
+    grey = [p.text for p in paragraphs[2:] if _is_grey_italic(p)]
+    assert grey == [_COPTIC, _GREEK + " bis"]
+    # The region label stays bold and black.
+    assert paragraphs[4].runs[0].bold and not _is_grey_italic(paragraphs[4])
+
+
+def test_the_note_is_per_page_only_where_a_page_has_an_unapproved_line() -> None:
+    word = _word(
+        render_docx(
+            [
+                DocxPage(number=1, lines=[LineText("a")]),
+                DocxPage(number=2, lines=[LineText("b", approved=False)]),
+            ]
+        )
+    )
+    assert [p.text for p in word.paragraphs] == ["Page 1", "a", "", "Page 2", UNAPPROVED_NOTE, "b"]
+
+
+@pytest.mark.asyncio
+async def test_a_model_only_page_prints_its_lines_not_the_placeholder() -> None:
+    document = Document(id=uuid.uuid4(), project_id=uuid.uuid4(), name="Codex")
+    part = DocumentPart(id=uuid.uuid4(), document_id=document.id, order=0)
+    selection = DocumentExportSelection(document=document, parts=[part], page_numbers={part.id: 1})
+    repository = _Repository(
+        {
+            part.id: [
+                _line(_COPTIC, TranscriptionKind.model),
+                _line(_SYRIAC, TranscriptionKind.model),
+                _line(None),
+            ]
+        }
+    )
+    service = DocumentDocxExportService(documents=repository, selector=_Selector(selection))
+
+    export = await service.export_document_docx(
+        object(), object(), document.project_id, document.id
+    )
+
+    word = _word(export.content)
+    assert [p.text for p in word.paragraphs] == ["Page 1", UNAPPROVED_NOTE, _COPTIC, _SYRIAC]
+    assert "(no transcribed lines)" not in [p.text for p in word.paragraphs]
+    assert all(_is_grey_italic(p) for p in word.paragraphs[2:])
+
+
+def test_a_ground_truth_line_wins_over_its_model_output() -> None:
+    line = _line(_GREEK)
+    model = Transcription(name="model", kind=TranscriptionKind.model)
+    line.transcriptions.append(LineTranscription(transcription=model, text="guess"))
+    word = _word(render_docx([DocxPage(number=1, lines=[_page_line(line)])]))
+
+    assert [p.text for p in word.paragraphs] == ["Page 1", _GREEK]
+
+
+def _page_line(line: Line) -> LineText:
+    selected = reading_text(line)
+    assert selected is not None
+    return selected
+
+
+def test_an_unapproved_syriac_line_keeps_its_font_and_right_to_left_layout() -> None:
+    word = _word(render_docx([DocxPage(number=1, lines=[LineText(_SYRIAC, approved=False)])]))
+    syriac = word.paragraphs[2]
+
+    assert _is_grey_italic(syriac)
+    assert syriac.runs[0]._r.rPr.find(qn("w:iCs")) is not None
+    assert _fonts(syriac) == dict.fromkeys(("ascii", "hAnsi", "cs"), "Noto Sans Syriac Eastern")
+    assert syriac._p.pPr.find(qn("w:bidi")) is not None
+    assert syriac.runs[0].font.rtl is True
+
+
+def test_unapproved_run_properties_are_in_schema_order() -> None:
+    word = _word(render_docx([DocxPage(number=1, lines=[LineText(_SYRIAC, approved=False)])]))
+    tags = [child.tag for child in word.paragraphs[2].runs[0]._r.rPr]
+    expected = [qn(f"w:{name}") for name in ("rFonts", "i", "iCs", "color", "rtl")]
+    assert tags == expected
+
+
+def test_xml_invalid_characters_in_an_unapproved_line_are_dropped() -> None:
+    word = _word(render_docx([DocxPage(number=1, lines=[LineText("a\x00b\x07c", approved=False)])]))
+    assert [p.text for p in word.paragraphs] == ["Page 1", UNAPPROVED_NOTE, "abc"]

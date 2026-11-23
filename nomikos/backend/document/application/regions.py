@@ -16,6 +16,7 @@ from typing import TypeVar
 
 B = TypeVar("B")
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 def box_polygon(box: dict | None) -> list[list[float]]:
@@ -138,11 +139,26 @@ def region_text(
     Lines with no text are dropped, as the text exports always have; a region whose
     lines are all empty gets no heading either, so it does not print as an empty folio.
     """
-    out: list[str | RegionHeading] = []
+
+    def item_of(line: T) -> str | None:
+        text = text_of(line)
+        return text if text.strip() else None
+
+    return region_items(blocks, lines, item_of)
+
+
+def region_items(
+    blocks: Sequence[object], lines: Sequence[T], item_of: Callable[[T], U | None]
+) -> list[U | RegionHeading]:
+    """:func:`region_text` for any per-line item: a line whose ``item_of`` is None is dropped.
+
+    The Word export uses it to carry each line's approved flag next to its text.
+    """
+    out: list[U | RegionHeading] = []
     for block, members in lines_by_region(blocks, lines):
-        texts = [text for text in (text_of(line) for line in members) if text.strip()]
+        items = [item for item in (item_of(line) for line in members) if item is not None]
         label = getattr(block, "label", None) if block is not None else None
-        if label and texts:
+        if label and items:
             out.append(RegionHeading(label))
-        out.extend(texts)
+        out.extend(items)
     return out
