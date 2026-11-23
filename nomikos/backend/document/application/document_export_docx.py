@@ -12,9 +12,10 @@ position-based numbering are shared, not restated. So is the region grouping (AD
 a labelled region's lines follow its label in bold.
 
 Unlike the text export, this one is for reading, so it carries the whole page: a line
-with approved text prints that, and a line with only model output prints the output in
-grey italic (``line_text_selection``, the rule the transcription PDF applies). A page
-with any such line opens with a one-line note saying what the grey means.
+with approved text prints that, and a line with only model output prints the model's
+output (``line_text_selection``, the rule the transcription PDF applies). Both print in
+the same style: researchers leave most lines unapproved, so marking them would mark
+nearly the whole document.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from docx import Document as new_word_document
 from docx.document import Document as WordDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt
 from docx.text.paragraph import Paragraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,7 +42,7 @@ from backend.document.application.document_export_selection import (
 )
 from backend.document.application.document_export_text import NO_LINES_PLACEHOLDER
 from backend.document.application.document_service import DocumentService
-from backend.document.application.line_text_selection import LineText, reading_text
+from backend.document.application.line_text_selection import reading_text
 from backend.document.application.regions import RegionHeading, region_items
 from backend.document.application.script_detection import Script, detect_script, is_rtl
 from backend.document.infrastructure.document_repository import DocumentRepository
@@ -50,10 +51,6 @@ from backend.users.infrastructure.orm_models import User
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 _BODY_FONT_SIZE = Pt(12)
-_NOTE_FONT_SIZE = Pt(9)
-# Grey enough to read as "not final", dark enough to print and to read on screen.
-UNAPPROVED_COLOR = RGBColor(0x8A, 0x8F, 0x99)
-UNAPPROVED_NOTE = "Grey italic lines are model output that has not been approved yet."
 # C0 controls other than tab, newline and carriage return (which python-docx turns into
 # w:tab and w:br), and the two Unicode non-characters XML 1.0 forbids.
 _XML_INVALID = dict.fromkeys(
@@ -71,12 +68,11 @@ class DocumentDocxExport:
 class DocxPage:
     """One page reduced to its number and its transcribed lines, off the session.
 
-    A :class:`RegionHeading` among the lines opens a labelled region. A plain ``str`` is
-    an approved line; a :class:`LineText` says whether it is approved.
+    A :class:`RegionHeading` among the lines opens a labelled region.
     """
 
     number: int
-    lines: list[str | LineText | RegionHeading]
+    lines: list[str | RegionHeading]
 
 
 class DocumentDocxExportService:
@@ -167,8 +163,13 @@ class DocumentDocxExportService:
         return DocxPage(number=number, lines=_page_text(blocks, lines))
 
 
-def _page_text(blocks, lines) -> list[str | LineText | RegionHeading]:
-    return list(region_items(blocks, lines, reading_text))
+def _page_text(blocks, lines) -> list[str | RegionHeading]:
+    return region_items(blocks, lines, _line_text)
+
+
+def _line_text(line) -> str | None:
+    selected = reading_text(line)
+    return selected.text if selected is not None else None
 
 
 def render_docx(pages: list[DocxPage]) -> bytes:
@@ -185,13 +186,9 @@ def render_docx(pages: list[DocxPage]) -> bytes:
         word.add_heading(f"Page {page.number}", level=2)
         if all(isinstance(item, RegionHeading) for item in page.lines):
             word.add_paragraph(NO_LINES_PLACEHOLDER)
-        elif any(isinstance(item, LineText) and not item.approved for item in page.lines):
-            _add_unapproved_note(word)
         for item in page.lines:
             if isinstance(item, RegionHeading):
                 _add_region_heading(word, item.label)
-            elif isinstance(item, LineText):
-                _add_line(word, item.text, approved=item.approved)
             else:
                 _add_line(word, item)
     buffer = io.BytesIO()
@@ -227,27 +224,13 @@ def _add_region_heading(word: WordDocument, label: str) -> Paragraph:
     return paragraph
 
 
-def _add_unapproved_note(word: WordDocument) -> Paragraph:
-    """Once under the page heading, so the grey lines below it explain themselves."""
-    paragraph = word.add_paragraph()
-    run = paragraph.add_run(UNAPPROVED_NOTE)
-    run.font.size = _NOTE_FONT_SIZE
-    run.font.color.rgb = UNAPPROVED_COLOR
-    return paragraph
-
-
-def _add_line(word: WordDocument, text: str, *, approved: bool = True) -> Paragraph:
+def _add_line(word: WordDocument, text: str) -> Paragraph:
     text = _xml_safe(text)
     script = detect_script(text)
     paragraph = word.add_paragraph()
     run = paragraph.add_run(text)
     run_properties = run._r.get_or_add_rPr()
     _set_fonts(run_properties, SCRIPT_FONT_FAMILIES[script.value])
-    if not approved:
-        run.italic = True
-        # Word slants complex-script runs (Syriac among them) by ``iCs``, not ``i``.
-        _add_in_schema_order(run_properties, "w:iCs")
-        run.font.color.rgb = UNAPPROVED_COLOR
     if is_rtl(script):
         # ``w:bidi`` makes the paragraph right to left, which also makes its natural
         # alignment the right margin; ``w:rtl`` tells Word the run's characters are a
@@ -271,15 +254,8 @@ def _set_fonts(run_properties, family: str) -> None:
 
 # What may follow each element we add, in OOXML schema order (ECMA-376 part 1, CT_RPr
 # and CT_PPrBase). Word refuses a file whose property children are out of order, and
-# python-docx has no setter for ``iCs``, ``szCs`` or ``bidi``.
+# python-docx has no setter for ``szCs`` or ``bidi``.
 _SUCCESSORS = {
-    "w:iCs": (
-        "w:caps", "w:smallCaps", "w:strike", "w:dstrike", "w:outline", "w:shadow",
-        "w:emboss", "w:imprint", "w:noProof", "w:snapToGrid", "w:vanish", "w:webHidden",
-        "w:color", "w:spacing", "w:w", "w:kern", "w:position", "w:sz", "w:szCs",
-        "w:highlight", "w:u", "w:effect", "w:bdr", "w:shd", "w:fitText", "w:vertAlign",
-        "w:rtl", "w:cs", "w:em", "w:lang", "w:eastAsianLayout", "w:specVanish", "w:oMath",
-    ),
     "w:szCs": (
         "w:highlight", "w:u", "w:effect", "w:bdr", "w:shd", "w:fitText", "w:vertAlign",
         "w:rtl", "w:cs", "w:em", "w:lang", "w:eastAsianLayout", "w:specVanish", "w:oMath",
