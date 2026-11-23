@@ -13,8 +13,10 @@ import {
   type TextLinesSetter,
 } from "./editorHookTypes";
 import {
-  lineTextForLayer,
+  initialDraftFor,
   modelLayerIdForPromotion,
+  modelReadingFor,
+  segmentHasGroundTruth,
   withLocalGroundTruth,
 } from "./utils";
 
@@ -39,17 +41,9 @@ type GroundTruthTextInput = {
   notePartContentChanged: () => void;
 };
 
-type GroundTruthWrite = {
-  /** Why this write may not run, or null when it may. */
-  refusal: string | null;
-  fallback: string;
-  /** Shown once the write lands; a write without one leaves the line alone. */
-  successMessage?: string;
-};
-
 /**
  * Every write of a segment's Ground truth text: pairing a text line, saving
- * the draft, and promoting a model line. A write that resolves after the
+ * the draft, and approving a model line. A write that resolves after the
  * researcher opened another segment never touches the new segment's draft.
  */
 export function useGroundTruthText(input: GroundTruthTextInput) {
@@ -141,56 +135,57 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
     notePartContentChanged();
   }
 
-  /** Resolves true when the text was saved, false when the save failed. */
-  async function writeGroundTruthText({
-    refusal,
-    fallback,
-    successMessage,
-  }: GroundTruthWrite): Promise<boolean> {
-    if (!projectId || !documentId || !partId || !selectedSegmentId) {
+  /**
+   * Copies the model's reading of one Segment into Ground truth. Recording the
+   * copy is what keeps the link from the approved text to the model layer it
+   * came from (``seeded_from_transcription_id``), which a later correction of
+   * the same row keeps.
+   */
+  async function copyModelReading(segmentId: string, modelLayerId: string) {
+    if (!projectId || !documentId) return;
+    await api.copyToGroundTruth(projectId, documentId, modelLayerId, {
+      line_ids: [segmentId],
+    });
+  }
+
+  /**
+   * Saves the strip's draft as the open Segment's Ground truth. A Segment with
+   * no Ground truth yet whose draft started as the model's reading gets that
+   * reading copied in first and the correction written over it, so the saved
+   * text still records the model output it corrected. Resolves true when the
+   * text was saved, false when the save failed.
+   */
+  async function saveSelectedSegmentText(): Promise<boolean> {
+    const segment = input.selectedSegment;
+    if (!projectId || !documentId || !partId || !segment) return false;
+    if (!groundTruthTranscriptionId) {
+      setPairingError("Ground truth transcription layer is not available.");
       return false;
     }
-    if (refusal !== null || !groundTruthTranscriptionId) {
-      setPairingError(refusal);
-      return false;
-    }
+    const reading = segmentHasGroundTruth(segment)
+      ? null
+      : modelReadingFor(segment, input.selectedTranscriptionLayer);
     try {
-      await commitLineText(selectedSegmentId, input.approvedTextDraft);
-      setPairingError(null);
-      if (successMessage) {
-        setTranscriptionSaveMessage(statusMessage(successMessage));
+      if (reading?.text) {
+        await copyModelReading(segment.id, reading.transcription_id);
+        await commitLineText(segment.id, input.approvedTextDraft, reading.text);
+      } else {
+        await commitLineText(segment.id, input.approvedTextDraft);
       }
+      setPairingError(null);
+      setTranscriptionSaveMessage(statusMessage("Ground truth text saved"));
       return true;
     } catch (err) {
-      if (successMessage) setTranscriptionSaveMessage(null);
-      setPairingError(errorMessage(err, fallback));
+      setTranscriptionSaveMessage(null);
+      setPairingError(errorMessage(err, "Failed to save Ground truth text."));
       return false;
     }
   }
 
-  function saveApprovedText(): Promise<boolean> {
-    return writeGroundTruthText({
-      refusal: groundTruthTranscriptionId
-        ? null
-        : "Ground truth transcription layer is not available.",
-      fallback: "Failed to save approved text.",
-    });
-  }
-
-  function saveGroundTruthText(): Promise<boolean> {
-    const editable =
-      groundTruthTranscriptionId &&
-      input.selectedTranscriptionLayer?.kind === "ground_truth";
-    return writeGroundTruthText({
-      refusal: editable ? null : "Only Ground truth can be edited.",
-      fallback: "Failed to save Ground truth text.",
-      successMessage: "Ground truth text saved",
-    });
-  }
-
-  async function promoteSelectedSegmentToGroundTruth() {
+  /** Resolves true when the model output was approved, false otherwise. */
+  async function promoteSelectedSegmentToGroundTruth(): Promise<boolean> {
     const segment = input.selectedSegment;
-    if (!projectId || !documentId || !partId || !segment) return;
+    if (!projectId || !documentId || !partId || !segment) return false;
     const modelLayerId = modelLayerIdForPromotion(
       segment,
       input.selectedTranscriptionLayer,
@@ -199,12 +194,10 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
       setPairingError(
         "Model transcription is not available to save as Ground truth.",
       );
-      return;
+      return false;
     }
     try {
-      await api.copyToGroundTruth(projectId, documentId, modelLayerId, {
-        line_ids: [segment.id],
-      });
+      await copyModelReading(segment.id, modelLayerId);
       const [reloadedLines, pairing] = await Promise.all([
         api.listPartLines(projectId, documentId, partId),
         api.getPagePairing(projectId, documentId, partId),
@@ -218,22 +211,23 @@ export function useGroundTruthText(input: GroundTruthTextInput) {
         const reloaded = reloadedLines.find((line) => line.id === segment.id);
         if (reloaded && stillSelected(segment.id)) {
           setApprovedTextDraft(
-            lineTextForLayer(reloaded, groundTruthTranscriptionId),
+            initialDraftFor(reloaded, groundTruthTranscriptionId),
           );
         }
       }
       setTranscriptionSaveMessage(statusMessage("Saved to Ground truth"));
+      return true;
     } catch (err) {
       setTranscriptionSaveMessage(null);
       setPairingError(errorMessage(err, "Failed to save to Ground truth."));
+      return false;
     }
   }
 
   return {
     pairTextLine,
     commitLineText,
-    saveApprovedText,
-    saveGroundTruthText,
+    saveSelectedSegmentText,
     promoteSelectedSegmentToGroundTruth,
   };
 }

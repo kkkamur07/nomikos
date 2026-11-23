@@ -23,6 +23,12 @@ const MODEL: TranscriptionLayerResponse = {
   kind: "model",
 };
 
+const NEWER_MODEL: TranscriptionLayerResponse = {
+  ...MODEL,
+  id: "model-2",
+  name: "Newer model",
+};
+
 function text(
   layer: TranscriptionLayerResponse,
   value: string,
@@ -62,92 +68,130 @@ function view(
   approvedTextDraft = "",
 ) {
   const result = transcriptionStripView({
-    transcriptionLayers: [GROUND_TRUTH, MODEL],
     selectedSegment,
-    selectedSegmentNumber: selectedSegment ? 1 : null,
     selectedTranscriptionLayer,
     approvedTextDraft,
   });
   return {
     output: result.modelOutputTranscription?.text ?? null,
     editLabel: result.editLabel,
-    accept: result.accept?.action ?? null,
-    label: result.accept?.label ?? null,
+    accept: result.accept,
+    showsModelReading: result.showsModelReading,
   };
 }
 
 describe("transcriptionStripView", () => {
-  it("saves Ground truth when the segment has its own", () => {
-    expect(
-      view(
-        segment(text(GROUND_TRUTH, "typed"), text(MODEL, "read")),
-        GROUND_TRUTH,
-      ),
-    ).toEqual({
-      output: "read",
-      editLabel: "Ground truth text for selected Segment",
-      accept: "save-ground-truth",
-      label: "Save",
-    });
-  });
-
-  it("offers the model output while the Ground truth box is empty", () => {
-    expect(view(segment(text(MODEL, "read")), GROUND_TRUTH)).toEqual({
-      output: "read",
-      editLabel: "Approved text for selected Segment",
-      accept: "promote",
-      label: "Accept",
-    });
-  });
-
-  it("saves what the researcher typed instead of accepting over it", () => {
-    expect(view(segment(text(MODEL, "read")), GROUND_TRUTH, "mine")).toEqual({
-      output: "read",
-      editLabel: "Approved text for selected Segment",
-      accept: "save-approved",
-      label: "Save",
-    });
-  });
-
-  it("accepts from the model layer even with a typed draft", () => {
-    expect(view(segment(text(MODEL, "read")), MODEL, "mine")).toEqual({
-      output: "read",
-      editLabel: "Edit transcription",
-      accept: "promote",
-      label: "Accept",
-    });
-  });
-
-  it("reviews model text that was copied into Ground truth", () => {
-    expect(
-      view(
-        segment(text(GROUND_TRUTH, "read", "model"), text(MODEL, "read")),
-        GROUND_TRUTH,
-        "mine",
-      ),
-    ).toEqual({
-      output: "read",
-      editLabel: "Edit transcription",
-      accept: "promote",
-      label: "Accept",
-    });
-  });
-
-  it("offers no save with an empty model layer open", () => {
-    expect(view(segment(text(MODEL, "")), MODEL, "mine")).toEqual({
-      output: "",
-      editLabel: "Edit transcription",
-      accept: null,
-      label: null,
-    });
-  });
-
-  it("offers no save with nothing selected", () => {
+  it("offers no accept with no segment selected", () => {
     expect(view(null, GROUND_TRUTH)).toEqual({
       output: null,
       editLabel: "Edit transcription",
       accept: null,
-      label: null,
+      showsModelReading: false,
     });
+  });
+
+  it("approves an untouched model reading when there is no Ground truth", () => {
+    expect(view(segment(text(MODEL, "read")), null, "read")).toEqual({
+      output: "read",
+      editLabel: "Approved text for selected Segment",
+      accept: { action: "approve", label: "Approve", disabled: false },
+      showsModelReading: true,
+    });
+  });
+
+  it("saves an edited draft of a model-only line", () => {
+    expect(view(segment(text(MODEL, "read")), null, "mine")).toEqual({
+      output: "read",
+      editLabel: "Approved text for selected Segment",
+      accept: { action: "save", label: "Save", disabled: false },
+      showsModelReading: false,
+    });
+  });
+
+  it("shows Approved and disabled when the draft is the saved Ground truth", () => {
+    expect(
+      view(
+        segment(text(GROUND_TRUTH, "typed"), text(MODEL, "read")),
+        null,
+        "typed",
+      ),
+    ).toEqual({
+      output: "read",
+      editLabel: "Ground truth text for selected Segment",
+      accept: { action: "approved", label: "Approved", disabled: true },
+      showsModelReading: false,
+    });
+  });
+
+  it("does not offer Approve when Ground truth equals the model text", () => {
+    const result = view(
+      segment(text(GROUND_TRUTH, "read", "ground_truth"), text(MODEL, "read")),
+      null,
+      "read",
+    );
+    expect(result.accept).toEqual({
+      action: "approved",
+      label: "Approved",
+      disabled: true,
+    });
+    expect(result.showsModelReading).toBe(false);
+  });
+
+  it("enables Save when the draft differs from saved Ground truth", () => {
+    const line = segment(text(GROUND_TRUTH, "typed"), text(MODEL, "read"));
+    expect(view(line, null, "changed").accept).toEqual({
+      action: "save",
+      label: "Save",
+      disabled: false,
+    });
+    expect(view(line, null, "").accept).toEqual({
+      action: "save",
+      label: "Save",
+      disabled: false,
+    });
+  });
+
+  it("disables Save with no Ground truth, no model text and a blank draft", () => {
+    const line = segment(text(MODEL, ""));
+    for (const draft of ["", "   "]) {
+      expect(view(line, null, draft).accept).toEqual({
+        action: "save",
+        label: "Save",
+        disabled: true,
+      });
+    }
+    expect(view(segment(), null, "").accept?.disabled).toBe(true);
+  });
+
+  it("enables Save for typed text with no Ground truth and no model text", () => {
+    expect(view(segment(), null, "typed").accept).toEqual({
+      action: "save",
+      label: "Save",
+      disabled: false,
+    });
+  });
+
+  it("treats blank Ground truth as no Ground truth", () => {
+    const result = view(
+      segment(text(GROUND_TRUTH, "  "), text(MODEL, "read")),
+      null,
+      "read",
+    );
+    expect(result.accept?.action).toBe("approve");
+    expect(result.editLabel).toBe("Approved text for selected Segment");
+  });
+
+  it("uses the selected model layer's row, else the newest model row", () => {
+    const line = segment(text(MODEL, "older"), text(NEWER_MODEL, "newer"));
+    expect(view(line, MODEL).output).toBe("older");
+    expect(view(line, NEWER_MODEL).output).toBe("newer");
+    expect(view(line, null).output).toBe("newer");
+    expect(view(line, GROUND_TRUTH).output).toBe("newer");
+  });
+
+  it("approves the selected layer's reading, not the newest", () => {
+    const line = segment(text(MODEL, "older"), text(NEWER_MODEL, "newer"));
+    expect(view(line, MODEL, "older").accept?.action).toBe("approve");
+    expect(view(line, MODEL, "newer").accept?.action).toBe("save");
   });
 });

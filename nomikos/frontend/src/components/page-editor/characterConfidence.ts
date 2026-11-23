@@ -103,7 +103,7 @@ const CONTINUES_CLUSTER = /[\p{M}\u200c\u200d]/u;
  * different tier than its base letter would then be rendered in its own span
  * and drift off the letter it belongs to.
  */
-function graphemeClusters(text: string): string[] {
+export function graphemeClusters(text: string): string[] {
   const segmenter = (
     Intl as typeof Intl & { Segmenter?: typeof Intl.Segmenter }
   ).Segmenter;
@@ -196,4 +196,28 @@ export function confidenceRunTitle(run: ConfidenceRun): string {
     return `${lowest} confidence (${tier})`;
   }
   return `${lowest} to ${formatConfidencePercent(run.maxConfidence)} confidence (${tier})`;
+}
+
+/**
+ * Where the caret goes in a box holding the model's reading: right after the
+ * first grapheme cluster scored low, which is the letter most likely to need a
+ * fix, or at the end when none is. Only real per-character scores count: a
+ * line scored as a whole says nothing about which letter is weak. The offset
+ * is in UTF-16 units, as ``setSelectionRange`` takes it.
+ */
+export function caretAfterFirstLowConfidence(
+  transcription: LineTranscriptionWithCharacterConfidence,
+): number {
+  const text = transcription.text;
+  if (!hasDistinctCharacterConfidences(transcription)) return text.length;
+  let offset = 0;
+  for (const run of groupConfidenceRuns(
+    characterConfidencesForTranscription(transcription),
+  )) {
+    if (confidenceTierClass(run.confidence) === "ch-low") {
+      return offset + (graphemeClusters(run.text)[0]?.length ?? 0);
+    }
+    offset += run.text.length;
+  }
+  return text.length;
 }
